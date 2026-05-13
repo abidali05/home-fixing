@@ -1,0 +1,9 @@
+INSERT INTO `faqs` (`question`, `answer`, `sort_order`, `is_active`, `created_at`, `updated_at`) VALUES
+('How do I book a service?', 'Open the app, choose your required service category, add job details, select your preferred date and time, and confirm the request. A suitable provider will be assigned based on availability.', 1, 1, NOW(), NOW()),
+('How are service charges calculated?', 'Service charges depend on the selected category, job complexity, location, and estimated duration. Final pricing is shown before confirmation or shared by the provider after job review.', 2, 1, NOW(), NOW()),
+('Can I reschedule my booking?', 'Yes. You can reschedule from your active order details before the provider reaches your location. If the provider is already en route, rescheduling may depend on provider approval.', 3, 1, NOW(), NOW()),
+('How can I cancel an order?', 'Go to My Orders, open the relevant booking, and tap Cancel Order. Cancellation may be restricted for in-progress jobs or jobs that are already accepted and started.', 4, 1, NOW(), NOW()),
+('How do I contact support?', 'You can reach support through the Support section in the app using email, phone, WhatsApp, or office address details provided there.', 5, 1, NOW(), NOW()),
+('Are providers verified?', 'Yes. Providers are onboarded after profile verification and skill checks. Ratings and customer feedback are also monitored to maintain service quality.', 6, 1, NOW(), NOW()),
+('How can I track my order status?', 'You can track status updates such as pending, on the way, arrived, working, and completed from the order tracking screen in real time.', 7, 1, NOW(), NOW()),
+('What if I am not satisfied with the service?', 'If your issue is unresolved, report it through support with your order ID and concern details. Our team will review the case and provide an appropriate resolution.', 8, 1, NOW(), NOW());

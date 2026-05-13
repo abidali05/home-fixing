@@ -1,0 +1,307 @@
+.admin-panel-card {
+    border: 1px solid #e8edf3;
+    border-radius: 18px;
+    overflow: hidden;
+}
+
+.admin-panel-header {
+    padding: 1.25rem 1.5rem 1rem;
+    border-bottom: 1px solid #edf2f7;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
+}
+
+.admin-panel-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #20303c;
+}
+
+.admin-panel-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.825rem;
+    color: #7b8a97;
+}
+
+.admin-filter-card {
+    padding: 1rem;
+    margin-bottom: 1.25rem;
+    border: 1px solid #edf2f7;
+    border-radius: 16px;
+    background: #f9fbfc;
+}
+
+.admin-filter-card .form-label {
+    margin-bottom: 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #5b6b79;
+    text-transform: uppercase;
+}
+
+.admin-filter-card .form-control,
+.admin-filter-card .form-select,
+.admin-compact-control {
+    min-height: 42px;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid #d7e0e8;
+    border-radius: 12px;
+    font-size: 0.92rem;
+    background-color: #fff;
+    box-shadow: none;
+}
+
+.admin-filter-card .btn,
+.admin-action-stack .btn,
+.admin-inline-form .btn {
+    min-height: 40px;
+    border-radius: 12px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    padding: 0.55rem 0.9rem;
+}
+
+.admin-filter-actions {
+    display: flex;
+    align-items: end;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.admin-table {
+    margin-bottom: 0;
+}
+
+.admin-table thead th {
+    padding: 0.85rem 0.9rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: #5f6f7d;
+    background: #f7fafc;
+    border-bottom: 1px solid #e8edf3;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.admin-table tbody td {
+    padding: 0.9rem;
+    font-size: 0.9rem;
+    color: #344452;
+    vertical-align: middle;
+}
+
+.admin-table tbody tr:hover {
+    background: #fbfdff;
+}
+
+.admin-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 84px;
+    padding: 0.45rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.admin-action-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 210px;
+    align-items: center;
+}
+
+.admin-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.admin-inline-form {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.admin-inline-form .form-select {
+    min-width: 124px;
+    max-width: 138px;
+    min-height: 36px;
+    padding: 0.35rem 2rem 0.35rem 0.7rem;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    line-height: 1.2;
+    appearance: auto;
+    -webkit-appearance: menulist;
+    -moz-appearance: menulist;
+}
+
+.admin-inline-form .btn {
+    min-width: 84px;
+    min-height: 36px;
+    padding: 0.45rem 0.8rem;
+}
+
+.admin-action-cell {
+    min-width: 120px;
+}
+
+.admin-status-cell {
+    min-width: 150px;
+}
+
+.admin-status-form {
+    margin: 0;
+}
+
+.admin-status-form .form-select {
+    min-width: 132px;
+    max-width: 150px;
+    min-height: 36px;
+    padding: 0.35rem 2rem 0.35rem 0.75rem;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background-color: #fff;
+}
+
+.admin-icon-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    flex-wrap: nowrap;
+}
+
+.admin-icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid #d8e3ea;
+    background: #fff;
+    color: #3a4b57;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.admin-icon-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(33, 51, 67, 0.08);
+}
+
+.admin-icon-btn i {
+    font-size: 0.95rem;
+}
+
+button.admin-icon-btn {
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.admin-icon-btn.info {
+    color: #1294c7;
+    border-color: rgba(18, 148, 199, 0.22);
+}
+
+.admin-icon-btn.primary {
+    color: #5568ff;
+    border-color: rgba(85, 104, 255, 0.22);
+}
+
+.admin-icon-btn.danger {
+    color: #e14d6d;
+    border-color: rgba(225, 77, 109, 0.22);
+}
+
+.admin-thumb {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 14px;
+    border: 1px solid #e4ebf1;
+    background: #fff;
+}
+
+.admin-avatar {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 1px solid #e4ebf1;
+    background: #fff;
+}
+
+.admin-meta {
+    font-size: 0.78rem;
+    color: #7a8996;
+}
+
+.admin-pagination-summary {
+    font-size: 0.82rem;
+    color: #72808d;
+}
+
+.select2-container--default .select2-selection--single,
+.select2-container--default .select2-selection--multiple {
+    min-height: 42px;
+    border: 1px solid #d7e0e8 !important;
+    border-radius: 12px !important;
+    background: #fff !important;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 40px !important;
+    padding-left: 0.8rem !important;
+    color: #344452 !important;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 40px !important;
+}
+
+.select2-container--default .select2-selection--multiple {
+    padding: 0.25rem 0.4rem !important;
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__choice {
+    border: 0 !important;
+    background: #eaf7f9 !important;
+    color: #1f6d76 !important;
+    border-radius: 999px !important;
+    padding: 0.2rem 0.55rem !important;
+    font-size: 0.78rem !important;
+}
+
+@media (max-width: 991.98px) {
+    .admin-action-stack {
+        min-width: 170px;
+    }
+
+    .admin-inline-form,
+    .admin-action-row {
+        flex-wrap: wrap;
+    }
+
+    .admin-status-cell,
+    .admin-action-cell {
+        min-width: 110px;
+    }
+
+    .admin-table thead th,
+    .admin-table tbody td {
+        white-space: nowrap;
+    }
+}

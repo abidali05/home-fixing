@@ -73,6 +73,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
     // ================================================================== Provider Routes Start==================================================================
     Route::get('view-all-post-requests', [GeneralContoller::class, 'view_all_post_requests']);
+    Route::get('job/{id}', [GeneralContoller::class, 'getJobDetail']);
     Route::middleware('Role:1')->group(function () {
         Route::get('service-requests', [GeneralContoller::class, 'service_requests']);
 

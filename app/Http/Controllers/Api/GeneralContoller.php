@@ -749,6 +749,37 @@ class GeneralContoller extends Controller
         }
     }
 
+    public function getJobDetail($id)
+    {
+        try {
+            $job = JobRequestModel::with([
+                'images',
+                'user',
+                'category',
+                'providerBids'
+            ])->where('id', $id)->first();
+
+            if (!$job) {
+                return $this->error('Job not found', 404);
+            }
+
+            foreach ($job->images ?? [] as $image) {
+                $image->path = asset('uploads/job_gallery/' . $image->path);
+            }
+
+            if ($job->category && $job->category->path && !str_starts_with($job->category->path, 'http')) {
+                $job->category->path = asset('uploads/service_category/' . $job->category->path);
+            }
+
+            return $this->success($job, 'Job detail fetched successfully');
+        } catch (\Throwable $e) {
+            return $this->error('Failed to fetch job detail', 500, [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+
     // public function view_all_direct_requests()
     // {
     //     try {
@@ -1157,7 +1188,7 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth()->user();
-            $bids = BidModel::with(['job.category', 'job.user','order'])
+            $bids = BidModel::with(['job.category', 'job.user', 'order'])
                 ->where('provider_id', $user->id)->get();
 
             if ($bids->isEmpty()) {

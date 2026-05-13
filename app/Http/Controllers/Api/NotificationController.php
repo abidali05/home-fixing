@@ -27,8 +27,18 @@ class NotificationController extends Controller
 
     public function index(Request $request)
     {
-        $notifications = $request->user()
+        $user = $request->user();
+        $allowedTypes = $this->allowedTypesByRole((string) $user->role);
+
+        $notifications = $user
             ->notifications()
+            ->when(!empty($allowedTypes), function ($query) use ($allowedTypes) {
+                $query->where(function ($innerQuery) use ($allowedTypes) {
+                    foreach ($allowedTypes as $type) {
+                        $innerQuery->orWhere('data', 'like', '%"type":"' . $type . '"%');
+                    }
+                });
+            })
             ->latest()
             ->get()
             ->map(fn($n) => $this->formatNotification($n))
@@ -69,7 +79,21 @@ class NotificationController extends Controller
 
     public function mark_all_as_read(Request $request)
     {
-        $request->user()->unreadNotifications->markAsRead();
+        $user = $request->user();
+        $allowedTypes = $this->allowedTypesByRole((string) $user->role);
+
+        $query = $user->unreadNotifications();
+
+        if (!empty($allowedTypes)) {
+            $query->where(function ($innerQuery) use ($allowedTypes) {
+                foreach ($allowedTypes as $type) {
+                    $innerQuery->orWhere('data', 'like', '%"type":"' . $type . '"%');
+                }
+            });
+        }
+
+        $query->update(['read_at' => now()]);
+
         return $this->success(null, 'All notifications marked as read');
     }
 
@@ -87,5 +111,14 @@ class NotificationController extends Controller
             'created_at' => optional($notification->created_at)?->toDateString(),
         ];
     }
-}
 
+    private function allowedTypesByRole(string $role): array
+    {
+        return match ($role) {
+            '0' => ['bid_received', 'payment_update', 'system_alert'],
+            '1' => ['job_post', 'direct_hire', 'payment_update', 'system_alert'],
+            '2' => ['payment_update', 'system_alert'],
+            default => ['system_alert'],
+        };
+    }
+}

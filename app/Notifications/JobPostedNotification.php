@@ -19,7 +19,13 @@ class JobPostedNotification extends Notification implements ShouldQueue
 
     public function via(object $notifiable): array
     {
-        return ['database', FcmChannel::class];
+        $channels = ['database'];
+
+        if ((int) ($notifiable->role ?? -1) === 1) {
+            $channels[] = FcmChannel::class;
+        }
+
+        return $channels;
     }
 
     public function toArray(object $notifiable): array

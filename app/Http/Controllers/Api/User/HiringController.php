@@ -9,6 +9,8 @@ use App\Models\JobRequestImages;
 use App\Models\JobRequestModel;
 use App\Models\Orders;
 use App\Models\User;
+use App\Notifications\BidAcceptedNotification;
+use App\Notifications\BidRejectedNotification;
 use App\Notifications\DirectHireNotification;
 use App\Notifications\JobPostedNotification;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -44,6 +46,10 @@ class HiringController extends Controller
 
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
             $provider = User::findOrFail($request->provider_id);
 
             $job = JobRequestModel::create([
@@ -76,6 +82,7 @@ class HiringController extends Controller
 
             DB::commit();
 
+            // DirectHireNotification uses database channel, so it is saved in job_notifications.
             $provider->notify((new DirectHireNotification($job, $user))->afterCommit());
 
             return $this->success($job, 'Request Submitted successfully.');
@@ -96,7 +103,6 @@ class HiringController extends Controller
             'description' => 'required|string',
             'date' => 'required|date',
             'time' => 'required|date_format:H:i',
-            // 'price' => 'required|numeric|min:0',
             'address' => 'required|string|max:255',
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
@@ -145,9 +151,6 @@ class HiringController extends Controller
             DB::commit();
 
             $providers = User::query()
-                ->where('role', 1)
-                ->whereNotNull('fcm_token')
-                ->where('fcm_token', '!=', '')
                 ->whereHas('providerProfile', function ($q) use ($jobRequest) {
                     $categoryId = (int) $jobRequest->category_id;
 
@@ -229,6 +232,13 @@ class HiringController extends Controller
     {
         try {
             DB::beginTransaction();
+            $customer = auth('sanctum')->user();
+            if (!$customer) {
+                return $this->error('Unauthorized.', 401);
+            }
+            if ((int) $customer->role !== 0) {
+                return $this->error('Only customers can accept or reject bids.', 403);
+            }
 
             $action = $request->input('status', 'accepted');
 
@@ -247,11 +257,25 @@ class HiringController extends Controller
                 return $this->error('This job request is not available.', 400);
             }
 
+            if ((int) $job->user_id !== (int) $customer->id) {
+                return $this->error('You are not allowed to update this bid.', 403);
+            }
+
             if ($action === 'rejected') {
                 $bid->status = 'rejected';
                 $bid->save();
 
                 DB::commit();
+
+                $provider = User::find($bid->provider_id);
+                if ($provider) {
+                    try {
+                        $provider->notify((new BidRejectedNotification($job, $customer))->afterCommit());
+                    } catch (\Throwable $notificationException) {
+                        Log::error('Failed to send bid rejected notification: ' . $notificationException->getMessage());
+                    }
+                }
+
                 return $this->success(null, 'Bid rejected successfully.');
             }
 
@@ -284,6 +308,15 @@ class HiringController extends Controller
 
             DB::commit();
 
+            $provider = User::find($bid->provider_id);
+            if ($provider) {
+                try {
+                    $provider->notify((new BidAcceptedNotification($job, $customer))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send bid accepted notification: ' . $notificationException->getMessage());
+                }
+            }
+
             return $this->success(null, 'Bid accepted successfully.');
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -292,6 +325,3 @@ class HiringController extends Controller
         }
     }
 }
-
-
-

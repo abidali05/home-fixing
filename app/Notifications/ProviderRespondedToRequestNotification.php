@@ -9,13 +9,14 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 
-class DirectHireNotification extends Notification implements ShouldQueue
+class ProviderRespondedToRequestNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
-        private readonly JobRequestModel $job,
-        private readonly User $requestingUser
+        private readonly JobRequestModel $jobRequest,
+        private readonly User $provider,
+        private readonly string $status
     ) {
         $this->onQueue('notifications');
     }
@@ -24,7 +25,7 @@ class DirectHireNotification extends Notification implements ShouldQueue
     {
         $channels = ['database'];
 
-        if ((int) ($notifiable->role ?? -1) === 1) {
+        if ((int) ($notifiable->role ?? -1) === 0) {
             $channels[] = FcmChannel::class;
         }
 
@@ -33,13 +34,18 @@ class DirectHireNotification extends Notification implements ShouldQueue
 
     public function toArray(object $notifiable): array
     {
+        $isAccepted = $this->status === 'accepted';
+
         return [
-            'type' => 'direct_hire',
-            'title' => 'Direct Hire Request',
-            'message' => $this->requestingUser->name . ' wants to hire you',
+            'type' => $isAccepted ? 'provider_request_accepted' : 'provider_request_rejected',
+            'title' => $isAccepted ? 'Request Accepted' : 'Request Rejected',
+            'message' => $this->provider->name . ($isAccepted
+                ? ' accepted your job request.'
+                : ' rejected your job request.'),
             'data' => [
-                'job_id' => (int) $this->job->id,
-                'provider_id' => (int) $notifiable->id,
+                'job_id' => (int) $this->jobRequest->id,
+                'provider_id' => (int) $this->provider->id,
+                'status' => $this->status,
             ],
         ];
     }

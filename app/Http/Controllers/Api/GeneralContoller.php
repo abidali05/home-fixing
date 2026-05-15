@@ -16,6 +16,10 @@ use App\Models\JobRequestModel;
 use App\Models\ProviderGallery;
 use App\Models\JobRequestImages;
 use App\Models\SupportItemModel;
+use App\Notifications\BidReceivedNotification;
+use App\Notifications\OrderCancelledByCustomerNotification;
+use App\Notifications\OrderStatusUpdatedNotification;
+use App\Notifications\ProviderRespondedToRequestNotification;
 use Illuminate\Support\Facades\DB;
 use App\Models\Admin\MobileBanners;
 use Illuminate\Support\Facades\Log;
@@ -898,21 +902,38 @@ class GeneralContoller extends Controller
             'date' => 'required_if:status,accepted',
         ]);
         try {
+            $provider = auth('sanctum')->user();
+            if (!$provider) {
+                return $this->error('Unauthorized.', 401);
+            }
+
             $jobRequest = JobRequestModel::findOrFail($request->request_id);
-            // $jobRequest->job_date = $request->date;
-            // $jobRequest->job_time = $request->time;
+
+            if ((int) $jobRequest->provider_id !== (int) $provider->id) {
+                return $this->error('You are not allowed to update this request.', 403);
+            }
+
             $jobRequest->price = $request->price;
             $jobRequest->status = $request->status == 'accepted' ? 'pending' : 'cancelled';
             $jobRequest->save();
 
             $bid = new BidModel();
             $bid->job_id = $jobRequest->id;
-            $bid->provider_id = auth()->id();
+            $bid->provider_id = $provider->id;
             $bid->price = $request->price;
             $bid->bid_time = $request->time;
             $bid->bid_date = $request->date;
             $bid->status = $request->status == 'accepted' ? 'pending' : 'rejected';
             $bid->save();
+
+            $customer = User::find($jobRequest->user_id);
+            if ($customer) {
+                try {
+                    $customer->notify((new ProviderRespondedToRequestNotification($jobRequest, $provider, $request->status))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send provider response notification: ' . $notificationException->getMessage());
+                }
+            }
 
             return $this->success(null, 'Request status updated successfully');
         } catch (\Exception $e) {
@@ -973,6 +994,33 @@ class GeneralContoller extends Controller
             if ($order->status == 'pending') {
                 $order->status = 'cancelled';
                 $order->save();
+
+                $canceller = auth('sanctum')->user();
+                if (!$canceller) {
+                    return $this->error('Unauthorized.', 401);
+                }
+
+                if ((int) $canceller->id === (int) $order->user_id) {
+                    if ((int) $canceller->role !== 0) {
+                        return $this->error('Only customers can cancel their own order.', 403);
+                    }
+                    $recipient = User::find($order->provider_id);
+                } elseif ((int) $canceller->id === (int) $order->provider_id) {
+                    if ((int) $canceller->role !== 1) {
+                        return $this->error('Only providers can cancel their assigned order.', 403);
+                    }
+                    $recipient = User::find($order->user_id);
+                } else {
+                    return $this->error('You are not allowed to cancel this order.', 403);
+                }
+
+                if ($recipient) {
+                    try {
+                        $recipient->notify((new OrderCancelledByCustomerNotification($order, $canceller))->afterCommit());
+                    } catch (\Throwable $notificationException) {
+                        Log::error('Failed to send order cancelled notification: ' . $notificationException->getMessage());
+                    }
+                }
 
                 return $this->success(null, 'Order cancelled successfully.');
             } else {
@@ -1037,6 +1085,18 @@ class GeneralContoller extends Controller
                 return $this->notFound('Order not found');
             }
 
+            $actor = auth('sanctum')->user();
+            if (!$actor) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $isCustomerActor = (int) $actor->role === 0 && (int) $actor->id === (int) $order->user_id;
+            $isProviderActor = (int) $actor->role === 1 && (int) $actor->id === (int) $order->provider_id;
+
+            if (!$isCustomerActor && !$isProviderActor) {
+                return $this->error('Only the assigned customer or provider can update this order status.', 403);
+            }
+
             if ($request->filled('type')) {
                 if ($request->type === 'accept') {
                     $order->status = 'completed';
@@ -1080,6 +1140,18 @@ class GeneralContoller extends Controller
                 $tracking->latitude = $request->latitude ?? null;
                 $tracking->longitude = $request->longitude ?? null;
                 $tracking->save();
+            }
+
+            $recipient = $isProviderActor
+                ? User::find($order->user_id)
+                : User::find($order->provider_id);
+
+            if ($recipient) {
+                try {
+                    $recipient->notify((new OrderStatusUpdatedNotification($order, $actor, $order->status))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send order status updated notification: ' . $notificationException->getMessage());
+                }
             }
 
 
@@ -1142,6 +1214,15 @@ class GeneralContoller extends Controller
         }
 
         try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            if ((int) $user->role !== 1) {
+                return $this->error('Only providers can submit bids.', 403);
+            }
+
             $job = JobRequestModel::where('id', $id)->first();
             if (!$job) {
                 return $this->notFound('Job request not found.');
@@ -1160,7 +1241,6 @@ class GeneralContoller extends Controller
 
 
             DB::beginTransaction();
-            $user = auth('sanctum')->user();
 
             if ($job->provider_id) {
                 return $this->error('This job has already been assigned to a provider.', 400);
@@ -1176,6 +1256,16 @@ class GeneralContoller extends Controller
             $bid->save();
 
             DB::commit();
+
+            $jobOwner = User::find($job->user_id);
+            if ($jobOwner) {
+                try {
+                    $jobOwner->notify((new BidReceivedNotification($job, $user))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send bid notification: ' . $notificationException->getMessage());
+                }
+            }
+
             return $this->success(null, 'Bid submitted successfully.');
         } catch (Exception $e) {
             DB::rollBack();

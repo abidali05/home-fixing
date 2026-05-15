@@ -115,9 +115,33 @@ class NotificationController extends Controller
     private function allowedTypesByRole(string $role): array
     {
         return match ($role) {
-            '0' => ['bid_received', 'payment_update', 'system_alert'],
-            '1' => ['job_post', 'direct_hire', 'payment_update', 'system_alert'],
-            '2' => ['payment_update', 'system_alert'],
+            '0' => [
+                'bid_received',
+                'provider_request_accepted',
+                'provider_request_rejected',
+                'order_cancelled_by_provider',
+                'order_status_updated',
+                'marketplace_order_status_updated',
+                'payment_update',
+                'system_alert',
+            ],
+            '1' => [
+                'job_post',
+                'direct_hire',
+                'bid_accepted',
+                'bid_rejected',
+                'order_cancelled_by_customer',
+                'order_status_updated',
+                'provider_feedback_received',
+                'payment_update',
+                'system_alert',
+            ],
+            '2' => [
+                'marketplace_order_received',
+                'marketplace_shop_review_submitted',
+                'payment_update',
+                'system_alert',
+            ],
             default => ['system_alert'],
         };
     }

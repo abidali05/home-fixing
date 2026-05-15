@@ -2,44 +2,43 @@
 
 namespace App\Notifications;
 
-use App\Models\JobRequestModel;
+use App\Models\MarketplaceOrder;
 use App\Models\User;
 use App\Notifications\Channels\FcmChannel;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 
-class DirectHireNotification extends Notification implements ShouldQueue
+class MarketplaceOrderReceivedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
-        private readonly JobRequestModel $job,
-        private readonly User $requestingUser
+        private readonly MarketplaceOrder $order,
+        private readonly User $customer
     ) {
         $this->onQueue('notifications');
     }
 
     public function via(object $notifiable): array
     {
-        $channels = ['database'];
-
-        if ((int) ($notifiable->role ?? -1) === 1) {
-            $channels[] = FcmChannel::class;
+        if ((int) ($notifiable->role ?? -1) === 2) {
+            return [FcmChannel::class, 'database'];
         }
 
-        return $channels;
+        return ['database'];
     }
 
     public function toArray(object $notifiable): array
     {
         return [
-            'type' => 'direct_hire',
-            'title' => 'Direct Hire Request',
-            'message' => $this->requestingUser->name . ' wants to hire you',
+            'type' => 'marketplace_order_received',
+            'title' => 'New Order Received',
+            'message' => 'You received an order from ' . $this->customer->name . '.',
             'data' => [
-                'job_id' => (int) $this->job->id,
-                'provider_id' => (int) $notifiable->id,
+                'order_id' => (int) $this->order->id,
+                'order_number' => (string) $this->order->order_number,
+                'customer_id' => (int) $this->customer->id,
             ],
         ];
     }

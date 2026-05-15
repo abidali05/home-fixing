@@ -9,37 +9,35 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 
-class DirectHireNotification extends Notification implements ShouldQueue
+class BidRejectedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
         private readonly JobRequestModel $job,
-        private readonly User $requestingUser
+        private readonly User $customer
     ) {
         $this->onQueue('notifications');
     }
 
     public function via(object $notifiable): array
     {
-        $channels = ['database'];
-
         if ((int) ($notifiable->role ?? -1) === 1) {
-            $channels[] = FcmChannel::class;
+            return [FcmChannel::class, 'database'];
         }
 
-        return $channels;
+        return ['database'];
     }
 
     public function toArray(object $notifiable): array
     {
         return [
-            'type' => 'direct_hire',
-            'title' => 'Direct Hire Request',
-            'message' => $this->requestingUser->name . ' wants to hire you',
+            'type' => 'bid_rejected',
+            'title' => 'Bid Rejected',
+            'message' => $this->customer->name . ' rejected your bid request.',
             'data' => [
                 'job_id' => (int) $this->job->id,
-                'provider_id' => (int) $notifiable->id,
+                'customer_id' => (int) $this->customer->id,
             ],
         ];
     }

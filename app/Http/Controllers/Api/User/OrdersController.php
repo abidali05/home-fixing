@@ -10,6 +10,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Admin\ServiceCategoryModel;
 use App\Models\Reviews;
+use App\Models\User;
+use App\Notifications\ProviderFeedbackReceivedNotification;
 use Illuminate\Support\Facades\DB;
 
 class OrdersController extends Controller
@@ -71,7 +73,23 @@ class OrdersController extends Controller
         DB::beginTransaction();
 
         try {
-            $userId = auth('sanctum')->user()->id;
+            $customer = auth('sanctum')->user();
+            if (!$customer) {
+                return $this->error('Unauthorized.', 401);
+            }
+            if ((int) $customer->role !== 0) {
+                return $this->error('Only customers can submit feedback.', 403);
+            }
+
+            $userId = $customer->id;
+            $order = Orders::where('id', $request->order_id)
+                ->where('user_id', $userId)
+                ->where('provider_id', $request->provider_id)
+                ->first();
+
+            if (!$order) {
+                return $this->error('Order not found for this customer/provider.', 404);
+            }
 
             $existingReview = Reviews::where('order_id', $request->order_id)
                 ->where('user_id', $userId)
@@ -90,6 +108,16 @@ class OrdersController extends Controller
             ]);
 
             DB::commit();
+
+            $provider = User::find($request->provider_id);
+            if ($provider) {
+                try {
+                    $provider->notify((new ProviderFeedbackReceivedNotification($order, $customer, (float) $request->rating))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send provider feedback notification: ' . $notificationException->getMessage());
+                }
+            }
+
             return $this->success(null, 'Review submitted successfully.');
         } catch (\Throwable $e) {
             DB::rollBack();

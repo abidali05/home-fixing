@@ -19,6 +19,9 @@ use App\Models\ProviderSkills;
 use App\Models\Reviews;
 use App\Models\StoreVisit;
 use App\Models\User;
+use App\Notifications\MarketplaceOrderReceivedNotification;
+use App\Notifications\MarketplaceOrderStatusUpdatedNotification;
+use App\Notifications\MarketplaceShopReviewSubmittedNotification;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -2519,6 +2522,23 @@ class AuthController extends Controller
 
             DB::commit();
 
+            $shopId = $order->items
+                ->pluck('shop_id')
+                ->filter()
+                ->first();
+
+            if ($shopId) {
+                $shop = User::find($shopId);
+
+                if ($shop) {
+                    try {
+                        $shop->notify((new MarketplaceOrderReceivedNotification($order, $user))->afterCommit());
+                    } catch (\Throwable $notificationException) {
+                        Log::error('Failed to send marketplace order received notification: ' . $notificationException->getMessage());
+                    }
+                }
+            }
+
             return $this->success($order, 'Checkout completed successfully');
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -2738,6 +2758,15 @@ class AuthController extends Controller
                 'rating' => $request->rating,
                 'review' => $request->review,
             ]);
+
+            $shop = User::find($request->shop_id);
+            if ($shop) {
+                try {
+                    $shop->notify((new MarketplaceShopReviewSubmittedNotification($order, $user, (float) $request->rating))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send marketplace shop review notification: ' . $notificationException->getMessage());
+                }
+            }
 
             return $this->success(null, 'Marketplace shop review submitted successfully');
         } catch (\Throwable $e) {
@@ -2998,6 +3027,12 @@ class AuthController extends Controller
 
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+            if ((int) $user->role !== 2) {
+                return $this->error('Only marketplace users can update order status.', 403);
+            }
 
             $order = MarketplaceOrder::query()
                 ->where('id', $id)
@@ -3012,6 +3047,15 @@ class AuthController extends Controller
 
             $order->status = $request->status;
             $order->save();
+
+            $customer = User::find($order->user_id);
+            if ($customer) {
+                try {
+                    $customer->notify((new MarketplaceOrderStatusUpdatedNotification($order, $user, $order->status))->afterCommit());
+                } catch (\Throwable $notificationException) {
+                    Log::error('Failed to send marketplace order status notification: ' . $notificationException->getMessage());
+                }
+            }
 
             return $this->success($order, 'Marketplace order status updated successfully');
         } catch (\Throwable $e) {
@@ -3610,3 +3654,5 @@ class AuthController extends Controller
         return $user;
     }
 }
+
+

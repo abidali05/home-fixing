@@ -25,6 +25,7 @@ Route::prefix('v1')->group(function () {
     Route::get('user-home', [GeneralContoller::class, 'user_home']);
     Route::get('view-all-services', [GeneralContoller::class, 'view_all_services']);
     Route::get('view-all-providers', [GeneralContoller::class, 'view_all_providers']);
+    Route::get('view-all-providers-data', [GeneralContoller::class, 'view_all_providers_data']);
     Route::get('get-providers-by-service/{id}', [GeneralContoller::class, 'get_providers_by_service']);
     Route::get('providers-details/{id}', [GeneralContoller::class, 'get_providers_details']);
     Route::get('autocomplete-search', [GeneralContoller::class, 'autocomplete_search']);
@@ -91,7 +92,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('/marketplace/product/add', [AuthController::class, 'addProduct']);
     Route::get('/marketplace/products', [AuthController::class, 'getProducts']);
     Route::get('/product/{id}', [AuthController::class, 'getProductDetail']);
-    Route::put('/marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
+    Route::post('/marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
     Route::post('/marketplace/post-campaigns', [CampaignController::class, 'store']);
     Route::get('/marketplace/get-campaigns', [CampaignController::class, 'index']);
     Route::get('/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);

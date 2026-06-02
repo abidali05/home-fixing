@@ -274,6 +274,34 @@ class GeneralContoller extends Controller
         }
     }
 
+    public function view_all_providers_data()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $users = User::select('id', 'name', 'profile_image')
+                ->with(['reviews', 'providerProfile'])
+                ->whereHas('providerProfile')
+                ->where('id', '!=', $user->id)
+                ->where('provider_status', 'active')
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'All services fetched successfully',
+                'data' => $users
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'An error occurred while fetching all services',
+                'data' => [
+                    'exception' => $e->getMessage()
+                ]
+            ], 500);
+        }
+    }
+
     public function get_providers_by_service($id)
     {
         try {

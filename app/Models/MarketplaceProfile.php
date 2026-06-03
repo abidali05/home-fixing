@@ -25,7 +25,9 @@ class MarketplaceProfile extends Model
 
     public function serviceCategories()
     {
-        return ServiceCategoryModel::query()->whereIn('id', $this->service_category_ids);
+        return ServiceCategoryModel::query()
+            ->whereIn('id', $this->service_category_ids)
+            ->get();
     }
 
     public function getServiceCategoryIdsAttribute(): array

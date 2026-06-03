@@ -16,7 +16,6 @@ use App\Models\ProductView;
 use App\Models\ProviderGallery;
 use App\Models\ProviderProfile;
 use App\Models\ProviderSkills;
-use App\Models\Reviews;
 use App\Models\StoreVisit;
 use App\Models\User;
 use App\Notifications\MarketplaceOrderReceivedNotification;
@@ -114,148 +113,6 @@ class AuthController extends Controller
 
         return $this->success(null, 'Account Exists');
     }
-
-
-    // public function register(Request $request)
-    // {
-    //     $validator = Validator::make($request->all(), [
-    //         'is_otp_verified' => 'required|in:true,false',
-    //         'phone' => 'required|regex:/^\+9665[0-9]{8}$/|unique:users,phone',
-    //         'role' => 'required|in:0,1',
-
-    //         'provider_type' => $request->role == '1' ? 'required|in:individual,company' : 'nullable',
-    //         'company_name' => ($request->role == '1' && $request->provider_type == 'company') ? 'required|string|max:255' : 'nullable',
-    //         'company_logo' => ($request->role == '1' && $request->provider_type == 'company') ? 'required|image|mimes:jpeg,png,jpg|max:8192' : 'nullable',
-
-    //         'latitude' => $request->role == '1' ? 'required' : 'nullable',
-    //         'longitude' => $request->role == '1' ? 'required' : 'nullable',
-    //         'address' => $request->role == '1' ? 'required' : 'nullable',
-    //         // 'service_id' => $request->role == '1' ? 'required|exists:categories,id' : 'nullable',
-    //         'service_id' => 'nullable|array',
-    //         'service_id.*' => 'nullable|exists:categories,id',
-    //         // 'experience' => $request->role == '1' ? 'required' : 'nullable',
-    //         'experience' => 'nullable',
-    //         // 'start_time' => $request->role == '1' ? 'required' : 'nullable',
-    //         'start_time' => 'nullable',
-    //         // 'end_time' => $request->role == '1' ? 'required' : 'nullable',
-    //         'end_time' => 'nullable',
-    //         // 'service_license' => $request->role == '1' ? 'required|mimes:pdf,jpg,jpeg,png|max:8192' : 'nullable',
-    //         // 'certification' => $request->role == '1' ? 'required|mimes:pdf,jpg,jpeg,png|max:8192' : 'nullable',
-    //         // 'gallery_images' => $request->role == '1' ? 'required|array' : 'nullable',
-    //         // 'gallery_images.*' => $request->role == '1' ? 'image|mimes:jpeg,png,jpg|max:8192' : 'nullable',
-    //         // 'bio' => $request->role == '1' ? 'required' : 'nullable',
-    //         // 'charge_type' => $request->role == '1' ? 'required|in:hourly,fixed' : 'nullable',
-    //         // 'charge_amount' => $request->role == '1' ? 'required' : 'nullable',
-
-    //         // 'certification' => 'nullable|mimes:pdf,jpg,jpeg,png|max:8192',
-    //         'gallery_images' => 'nullable|array',
-    //         'gallery_images.*' => $request->role == '1' ? 'image|mimes:jpeg,png,jpg|max:8192' : 'nullable',
-    //         'bio' =>  'nullable',
-    //         'charge_type' => 'nullable|in:hourly,fixed',
-    //         'charge_amount' => 'nullable',
-    //         'document_type' => 'sometimes|nullable|string',
-    //         'document_number' => 'sometimes|nullable|string',
-    //     ]);
-
-    //     if ($validator->fails()) {
-    //         return $this->validationError($validator->errors());
-    //     }
-
-    //     DB::beginTransaction();
-
-    //     try {
-    //         // $licenseFilename = null;
-    //         // if ($request->hasFile('service_license')) {
-    //         //     $file = $request->file('service_license');
-    //         //     $licenseFilename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-    //         //     $file->move(public_path('uploads/license_files/'), $licenseFilename);
-    //         // }
-
-    //         // $certificationFilename = null;
-    //         // if ($request->hasFile('certification')) {
-    //         //     $file = $request->file('certification');
-    //         //     $certificationFilename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-    //         //     $file->move(public_path('uploads/certification_files/'), $certificationFilename);
-    //         // }
-
-    //         $companyLogoFilename = null;
-
-    //         if ($request->role == '1' && $request->provider_type == 'company') {
-    //             if ($request->hasFile('company_logo')) {
-    //                 $file = $request->file('company_logo');
-    //                 $companyLogoFilename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-    //                 $file->move(public_path('uploads/company_logos/'), $companyLogoFilename);
-    //             }
-    //         }
-
-    //         $displayName = ($request->role == '1' && $request->provider_type == 'company')
-    //             ? $request->company_name
-    //             : ($request->name ?? '');
-
-    //         $profileImage = ($request->role == '1' && $request->provider_type == 'company' && $companyLogoFilename)
-    //             ? $companyLogoFilename
-    //             : null;
-
-    //         $user = User::create([
-    //             'name' => $displayName,
-    //             'phone' => $request->phone,
-    //             'role' => $request->role,
-    //             'provider_type' => $request->provider_type,
-    //             'company_name' => $request->provider_type == 'company' ? $request->company_name : null,
-    //             'company_logo' => $companyLogoFilename,
-    //             'profile_image' => $profileImage,
-    //             'latitude' => $request->latitude,
-    //             'longitude' => $request->longitude,
-    //             'address' => $request->address,
-    //             'service_category' => $request->service_id ?? [],
-    //             'experience' => $request->experience,
-    //             'work_hour_start' => $request->start_time,
-    //             'work_hour_end' => $request->end_time,
-    //             'bio' => $request->bio,
-    //             'charge_type' => $request->charge_type,
-    //             'charge_amount' => $request->charge_amount,
-    //             'status' => $request->role == '1' ? 'inactive' : 'active',
-    //             'document_type' => $request->document_type ?? '',
-    //             'document_number' => $request->document_number ?? '',
-    //         ]);
-
-
-    //         $user->user_code = 'AZ' . (1000 + $user->id);
-    //         $user->save();
-
-    //         // if ($request->hasFile('gallery_images')) {
-    //         //     foreach ($request->file('gallery_images') as $image) {
-    //         //         $filename = time() . '_' . Str::random(10) . '.' . $image->getClientOriginalExtension();
-    //         //         $image->move(public_path('uploads/provider_gallery/'), $filename);
-
-    //         //         ProviderGallery::create([
-    //         //             'user_id' => $user->id,
-    //         //             'path' => $filename,
-    //         //         ]);
-    //         // }
-
-    //         $token = $user->createToken('auth:sanctum')->plainTextToken;
-
-    //         $gallery = ProviderGallery::where('user_id', $user->id)->get();
-    //         foreach ($gallery as $image) {
-    //             $image->path = asset('uploads/provider_gallery/' . $image->path);
-    //         }
-    //         $user->gallery = $gallery;
-    //         // $user->service_license = asset('uploads/license_files/' . $user->service_license);
-    //         // $user->certification = asset('uploads/certification_files/' . $user->certification);
-    //         $user->profile_image = $user->profile_image != null ? asset('uploads/profile_images/' . $user->profile_image) : asset('assets/img/default.jpg');
-
-    //         DB::commit();
-    //         return $this->success([
-    //             'token' => $token,
-    //             'user' => $user,
-    //         ], 'Register successfully');
-    //     } catch (\Exception $e) {
-    //         Log::info($e->getMessage());
-    //         DB::rollBack();
-    //         return $this->error('Registration failed. Please try again later.', 500);
-    //     }
-    // }
 
     public function register(Request $request)
     {
@@ -2121,6 +1978,7 @@ class AuthController extends Controller
             $products = Product::query()
                 ->with('category')
                 ->where('user_id', $marketplace->id)
+                ->where('status', 'publish')
                 ->latest()
                 ->get()
                 ->map(function ($product) {
@@ -2980,12 +2838,14 @@ class AuthController extends Controller
                 ->orderBy('created_at')
                 ->get();
 
-            $rating = Reviews::query()
-                ->where('provider_id', $user->id)
+            $rating = MarketplaceShopReview::query()
+                ->where('shop_id', $user->id)
                 ->when($startDate && $endDate, function ($query) use ($startDate, $endDate) {
                     $query->whereBetween('created_at', [$startDate, $endDate]);
                 })
                 ->avg('rating');
+
+                $rating = $rating ? round($rating, 1) : 0;
 
             $storeVisits = StoreVisit::query()
                 ->where('shop_id', $user->id)

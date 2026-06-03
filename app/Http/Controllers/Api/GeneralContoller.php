@@ -286,6 +286,29 @@ class GeneralContoller extends Controller
                 ->where('provider_status', 'active')
                 ->get();
 
+            $users = $users->map(function ($provider) {
+                $provider->loadMissing('providerProfile');
+                $providerProfile = $provider->providerProfile;
+
+                if ($providerProfile) {
+                    $serviceIds = $this->getProviderServiceCategories($provider);
+
+                    $providerProfile->services = ServiceCategoryModel::query()
+                        ->whereIn('id', $serviceIds)
+                        ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                        ->map(function ($category) {
+                            $category->path = $category->path && !str_starts_with($category->path, 'http')
+                                ? asset('uploads/service_category/' . $category->path)
+                                : $category->path;
+
+                            return $category;
+                        })
+                        ->values();
+                }
+
+                return $provider;
+            });
+
             return response()->json([
                 'status' => true,
                 'message' => 'All services fetched successfully',

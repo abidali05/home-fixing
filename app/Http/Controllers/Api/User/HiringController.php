@@ -253,7 +253,7 @@ class HiringController extends Controller
 
             $job = $bid->job;
 
-            if ($job->status != 'pending') {
+            if (!in_array($job->status, ['pending', 'quoted'])) {
                 return $this->error('This job request is not available.', 400);
             }
 
@@ -280,18 +280,17 @@ class HiringController extends Controller
             }
 
             $job->job_time = $bid->bid_time;
-            $job->save();
-
-            $bid->status = 'accepted';
-            $bid->save();
-
             $job->status = 'quoted';
             $job->save();
 
-            // Reject other pending bids
+            // Reject other pending bids before accepting
             BidModel::where('job_id', $job->id)
+                ->where('id', '!=', $bid->id)
                 ->where('status', 'pending')
                 ->update(['status' => 'rejected']);
+
+            $bid->status = 'accepted';
+            $bid->save();
 
             // Create order
             $order = new Orders();

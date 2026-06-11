@@ -949,8 +949,8 @@ class GeneralContoller extends Controller
             'request_id' => 'required|exists:jobss,id',
             'status' => 'required|in:accepted,rejected',
             'price' => 'required_if:status,accepted|numeric|min:0',
-            'time' => 'required_if:status,accepted',
-            'date' => 'required_if:status,accepted',
+            'time' => 'nullable|string',
+            'date' => 'nullable|string',
         ]);
         try {
             $provider = auth('sanctum')->user();
@@ -1257,7 +1257,7 @@ class GeneralContoller extends Controller
         $validator = Validator::make($request->all(), [
             'details' => 'nullable|string|max:500',
             'price' => 'required|numeric|min:0',
-            'time' => 'required|date_format:H:i',
+            'time' => 'nullable|date_format:H:i',
         ]);
 
         if ($validator->fails()) {

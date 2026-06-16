@@ -21,9 +21,9 @@
         <i class="fas fa-times p-3 cursor-pointer text-secondary opacity-5 position-absolute end-0 top-0 d-none d-xl-none"
             id="iconSidenav"></i>
         <a class="navbar-brand m-0" href="{{ url('/') }}">
-            <img src="{{ $setting->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('assets/img/logo.png') }}"
+            <img src="{{ optional($setting)->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('assets/img/logo.png') }}"
                 width="30px" height="26px" class="navbar-brand-img h-100" alt="main_logo" />
-            <span class="ms-1 font-weight-bold">{{ $setting->system_name }}</span>
+            <span class="ms-1 font-weight-bold">{{ optional($setting)->system_name ?? 'Home Fixing' }}</span>
 
         </a>
         </li>
@@ -106,6 +106,7 @@
                     'sellers.index',
                     'sellers.show',
                     'sellers.edit',
+                    'account_active_requests.index',
                 ];
                 $isUserOpen = in_array(Route::currentRouteName(), $UserRoutes);
             @endphp
@@ -133,6 +134,9 @@
                     <li class="nav-item"><a
                             class="nav-link {{ in_array(Route::currentRouteName(), ['sellers.index', 'sellers.show', 'sellers.edit']) ? 'active' : '' }}"
                             href="{{ route('sellers.index') }}">Sellers</a></li>
+                    <li class="nav-item"><a
+                            class="nav-link {{ Route::currentRouteName() == 'account_active_requests.index' ? 'active' : '' }}"
+                            href="{{ route('account_active_requests.index') }}">Account Active Request</a></li>
                 </ul>
             </div>
         </li>

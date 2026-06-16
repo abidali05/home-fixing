@@ -48,6 +48,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
 
     Route::post('logout', [AuthController::class, 'logout']);
+    Route::post('active-account-request', [AuthController::class, 'activeAccountRequest']);
     Route::get('profile', [AuthController::class, 'get_profile']);
     Route::post('switch-role', [AuthController::class, 'switchRole']);
     Route::post('delete-user', [AuthController::class, 'deleteUser']);

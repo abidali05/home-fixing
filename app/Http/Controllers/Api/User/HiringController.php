@@ -35,7 +35,9 @@ class HiringController extends Controller
             'job_date' => 'required|date',
             'job_time' => 'required|date_format:H:i',
             'place_pictures' => 'nullable|array',
-            'place_pictures.*' => 'image|max:8192'
+            'place_pictures.*' => 'image|max:8192',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:5120',
+            'equipment_option' => 'nullable',
         ]);
 
         if ($validator->fails()) {
@@ -52,6 +54,8 @@ class HiringController extends Controller
 
             $provider = User::findOrFail($request->provider_id);
 
+            $equipmentOption = $request->equipment_option;
+
             $job = JobRequestModel::create([
                 'category_id' => $request->service_id,
                 'provider_id' => $request->provider_id,
@@ -65,6 +69,7 @@ class HiringController extends Controller
                 'status' => 'pending',
                 'price_type' => $provider->charge_type,
                 'price' => $provider->charge_amount,
+                'equipment_option' => $equipmentOption,
             ]);
 
             // ✅ SAVE IMAGES
@@ -78,6 +83,16 @@ class HiringController extends Controller
                         'path' => $filename,
                     ]);
                 }
+            }
+
+            // ✅ SAVE VIDEO
+            if ($request->hasFile('video')) {
+                $file = $request->file('video');
+                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                $file->move(public_path('uploads/job_gallery/'), $filename);
+
+                $job->video = $filename;
+                $job->save();
             }
 
             DB::commit();
@@ -107,7 +122,9 @@ class HiringController extends Controller
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
             'place_pictures' => 'required|array',
-            'place_pictures.*' => 'image|max:8192'
+            'place_pictures.*' => 'image|max:8192',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:5120',
+            'equipment_option' => 'nullable',
         ]);
 
         if ($validated->fails()) {
@@ -122,6 +139,8 @@ class HiringController extends Controller
                 return $this->error('Only normal users can create service requests.', 403);
             }
 
+            $equipmentOption = $request->equipment_option;
+
             $jobRequest = JobRequestModel::create([
                 'user_id' => $user->id,
                 'category_id' => $request->service_id,
@@ -134,6 +153,7 @@ class HiringController extends Controller
                 'latitude' => $request->latitude,
                 'longitude' => $request->longitude,
                 'status' => 'pending',
+                'equipment_option' => $equipmentOption,
             ]);
 
             if ($request->hasFile('place_pictures')) {
@@ -146,6 +166,15 @@ class HiringController extends Controller
                         'path' => $filename,
                     ]);
                 }
+            }
+
+            if ($request->hasFile('video')) {
+                $file = $request->file('video');
+                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                $file->move(public_path('uploads/job_gallery/'), $filename);
+
+                $jobRequest->video = $filename;
+                $jobRequest->save();
             }
 
             DB::commit();
@@ -279,15 +308,35 @@ class HiringController extends Controller
                 return $this->success(null, 'Bid rejected successfully.');
             }
 
-            $job->job_time = $bid->bid_time;
+            // $job->job_time = $bid->bid_time;
             $job->status = 'quoted';
             $job->save();
 
-            // Reject other pending bids before accepting
-            BidModel::where('job_id', $job->id)
+            // Reject other pending bids before accepting and send notifications
+            $otherBids = BidModel::where('job_id', $job->id)
                 ->where('id', '!=', $bid->id)
                 ->where('status', 'pending')
-                ->update(['status' => 'rejected']);
+                ->get();
+
+            foreach ($otherBids as $otherBid) {
+                $otherBid->status = 'rejected';
+                $otherBid->save();
+
+                $otherProvider = User::find($otherBid->provider_id);
+                if ($otherProvider) {
+                    try {
+                        $otherProvider->notify(
+                            (new BidRejectedNotification(
+                                $job,
+                                $customer,
+                                'Better luck next time. Your offer was not accepted for this request.'
+                            ))->afterCommit()
+                        );
+                    } catch (\Throwable $notificationException) {
+                        Log::error('Failed to send auto-bid-rejected notification to provider ' . $otherBid->provider_id . ': ' . $notificationException->getMessage());
+                    }
+                }
+            }
 
             $bid->status = 'accepted';
             $bid->save();

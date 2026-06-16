@@ -17,6 +17,7 @@ use App\Http\Controllers\Admin\SupportItemController;
 use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\SystemUserController;
 use App\Http\Controllers\Admin\UsersController;
+use App\Http\Controllers\Admin\AccountActiveRequestController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Artisan;
@@ -240,6 +241,9 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('users/update/{id}', [UsersController::class, 'update'])->name('users.update')->middleware('CheckPermission:16');
     Route::delete('users/delete/{id}', [UsersController::class, 'destroy'])->name('users.delete')->middleware('CheckPermission:17');
 
+    Route::get('account-active-requests', [AccountActiveRequestController::class, 'index'])->name('account_active_requests.index');
+    Route::post('account-active-requests/activate/{id}', [AccountActiveRequestController::class, 'activate'])->name('account_active_requests.activate');
+
     // ====================================================================Users End===============================================================================
 
 
@@ -310,6 +314,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::delete('job-requests/delete/{id}', [JobsController::class, 'destroy'])->name('job_requests.delete')->middleware('CheckPermission:25');
     Route::get('job-requests/details/{id}', [JobsController::class, 'details'])->name('job_requests.details')->middleware('CheckPermission:22');
     Route::get('delete-job-gallery-image/{id}', [JobsController::class, 'deleteJobImage'])->name('job_requests.deleteJobImage')->middleware('CheckPermission:24');
+    Route::get('delete-job-gallery-video/{id}', [JobsController::class, 'deleteJobVideo'])->name('job_requests.deleteJobVideo')->middleware('CheckPermission:24');
 
     // ====================================================================Job Request End===============================================================================
 

@@ -176,15 +176,19 @@
                                 <label class="form-label fw-bold">Existing Banners</label>
                                 <div class="d-flex flex-wrap gap-3 mb-2">
                                     @foreach ($images as $image)
-                                        <div class="position-relative" style="width: 120px;">
+                                        <div class="position-relative" style="width: 120px; height: 100px;">
                                             <img src="{{ asset('uploads/mobile_banners/' . $image->path) }}"
-                                                class="img-thumbnail"
-                                                style="width: 120px; height: 100px; object-fit: cover;">
-
+                                                class="img-thumbnail w-100 h-100"
+                                                style="object-fit: cover;">
+                                            @if ($image->showMarketplace && $image->marketplace)
+                                                <span class="badge bg-primary text-wrap position-absolute bottom-0 start-0 w-100 rounded-0" style="font-size: 8px; opacity: 0.95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; z-index: 5;">
+                                                    {{ $image->marketplace->marketplaceProfile->shop_title ?? $image->marketplace->name }}
+                                                </span>
+                                            @endif
 
                                             <a href="{{ route('mobile_banners.delete', $image->id) }}" type="submit"
                                                 class="btn btn-sm btn-danger p-0 rounded-circle"
-                                                style="width: 24px; height: 24px; position: absolute; top: 0; right: 0; justify-content: center; align-items: center;">
+                                                style="width: 24px; height: 24px; position: absolute; top: 0; right: 0; justify-content: center; align-items: center; display: flex; z-index: 10;">
                                                 &times;
                                             </a>
 
@@ -207,8 +211,36 @@
                                         </button>
                                     </div>
                                 </div>
-                                @error('gallery')
-                                    <small class="text-danger">{{ $message }}</small>
+                                @error('banners')
+                                    <small class="text-danger d-block mt-1">{{ $message }}</small>
+                                @enderror
+                                @error('banners.*')
+                                    <small class="text-danger d-block mt-1">{{ $message }}</small>
+                                @enderror
+                            </div>
+
+                            {{-- showMarketplace Toggle and Marketplace Selection --}}
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="showMarketplace" id="showMarketplace" value="1"
+                                        {{ old('showMarketplace') ? 'checked' : '' }}>
+                                    <label class="form-check-label fw-bold" for="showMarketplace">Link Banner with Marketplace</label>
+                                </div>
+                            </div>
+
+                            <div class="mb-3 {{ old('showMarketplace') ? '' : 'd-none' }}" id="marketplace-select-container">
+                                <label for="marketplace_id" class="form-label fw-bold">Select Marketplace</label>
+                                <select name="marketplace_id" id="marketplace_id" class="form-select @error('marketplace_id') is-invalid @enderror"
+                                    {{ old('showMarketplace') ? 'required' : '' }}>
+                                    <option value="">-- Choose Marketplace --</option>
+                                    @foreach($marketplaces as $marketplace)
+                                        <option value="{{ $marketplace->id }}" {{ old('marketplace_id') == $marketplace->id ? 'selected' : '' }}>
+                                            {{ $marketplace->marketplaceProfile->shop_title ?? $marketplace->name }}
+                                        </option>
+                                    @endforeach
+                                </select>
+                                @error('marketplace_id')
+                                    <div class="invalid-feedback d-block">{{ $message }}</div>
                                 @enderror
                             </div>
 
@@ -247,6 +279,23 @@
             document.getElementById('previewPaymentMethod').innerText = this.value.charAt(0).toUpperCase() + this
                 .value.slice(1);
         });
+
+        const showMarketplaceCheckbox = document.getElementById('showMarketplace');
+        const marketplaceSelectContainer = document.getElementById('marketplace-select-container');
+        const marketplaceSelect = document.getElementById('marketplace_id');
+
+        if (showMarketplaceCheckbox && marketplaceSelectContainer) {
+            showMarketplaceCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    marketplaceSelectContainer.classList.remove('d-none');
+                    marketplaceSelect.setAttribute('required', 'required');
+                } else {
+                    marketplaceSelectContainer.classList.add('d-none');
+                    marketplaceSelect.removeAttribute('required');
+                    marketplaceSelect.value = '';
+                }
+            });
+        }
     </script>
 
     <script src="{{ asset('customjs/system_settings/index.js') }}"></script>

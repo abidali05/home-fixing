@@ -640,6 +640,54 @@ class AuthController extends Controller
         }
     }
 
+    public function activeAccountRequest(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'message' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors());
+        }
+
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            // Determine status based on current active role
+            $role = (int) $user->role;
+            $statusField = 'status';
+            if ($role === 1) {
+                $statusField = 'provider_status';
+            } elseif ($role === 2) {
+                $statusField = 'marketplace_status';
+            }
+
+            $currentStatus = $user->$statusField;
+
+            if ($currentStatus === 'active') {
+                return $this->error('Your account is already active.', 400);
+            }
+
+            $exists = \App\Models\AccountActiveRequest::where('user_id', $user->id)->exists();
+            if ($exists) {
+                return $this->error('You have already submitted an activation request.', 400);
+            }
+
+            $activeRequest = \App\Models\AccountActiveRequest::create([
+                'user_id' => $user->id,
+                'message' => $request->message,
+            ]);
+
+            return $this->success($activeRequest, 'Activation request submitted successfully.');
+        } catch (\Exception $e) {
+            Log::error('Activation request error: ' . $e->getMessage());
+            return $this->error('Something went wrong. Please try again later.', 500);
+        }
+    }
+
     public function deleteUser(Request $request)
     {
         $user = $request->user();
@@ -1055,414 +1103,189 @@ class AuthController extends Controller
         $user = auth('sanctum')->user();
 
         $rules = [
-            'name' => 'sometimes|required|string',
-            'email' => 'sometimes|nullable|email|unique:users,email,' . $user->id,
-            'phone' => 'sometimes|required|regex:/^\+9665[0-9]{8}$/|unique:users,phone,' . $user->id,
-
-            'profile_image' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
-
-            'address' => 'sometimes|nullable|string',
-            'location_label' => 'nullable|string',
-            'latitude' => 'sometimes|nullable',
-            'longitude' => 'sometimes|nullable',
-
-            // Provider fields
-            'service_id' => 'sometimes|nullable|array',
-            'service_id.*' => 'exists:categories,id',
-            'bio' => 'sometimes|nullable|string',
-            'document_type' => 'sometimes|nullable|string',
-            'document_number' => 'sometimes|nullable|string',
-
-            // Shop fields
-            'shop_title' => $user->role == '2' ? 'sometimes|required|string|max:255' : 'nullable',
-            'shop_logo' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'name'             => 'sometimes|nullable|string',
+            'email'            => 'sometimes|nullable|email|unique:users,email,' . $user->id,
+            'phone'            => 'sometimes|nullable|regex:/^\+9665[0-9]{8}$/|unique:users,phone,' . $user->id,
+            'profile_image'    => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'address'          => 'sometimes|nullable|string',
+            'location_label'   => 'sometimes|nullable|string',
+            'latitude'         => 'sometimes|nullable',
+            'longitude'        => 'sometimes|nullable',
+            'service_id'       => 'sometimes|nullable|array',
+            'service_id.*'     => 'exists:categories,id',
+            'bio'              => 'sometimes|nullable|string',
+            'document_type'    => 'sometimes|nullable|string',
+            'document_number'  => 'sometimes|nullable|string',
+            'shop_title'       => 'sometimes|nullable|string|max:255',
+            'shop_logo'        => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
             'shop_banner_image' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
-
-            'shop_tagline' => 'sometimes|nullable|string|max:255',
-            'delivery_charges' => $user->role == '2' ? 'sometimes|nullable|numeric|min:0' : 'nullable',
-
-            'operation_hours' => 'sometimes|nullable|array',
-
-            'shop_status' => 'sometimes|nullable|in:on,off',
+            'shop_tagline'     => 'sometimes|nullable|string|max:255',
+            'delivery_charges' => 'sometimes|nullable|numeric|min:0',
+            'operation_hours'  => 'sometimes|nullable|array',
+            'shop_status'      => 'sometimes|nullable|in:on,off',
         ];
 
         $validator = Validator::make($request->all(), $rules);
-
         if ($validator->fails()) {
             return $this->validationError($validator->errors());
         }
 
         DB::beginTransaction();
-
         try {
-            if ((string) $user->role === '1') {
-                $providerProfile = $user->providerProfile()->firstOrCreate(['user_id' => $user->id]);
+            $role = (string) $user->role;
 
-                if ($request->hasFile('profile_image')) {
-                    if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
-                        File::delete(public_path('uploads/profile_images/' . $user->profile_image));
-                    }
-
-                    $file = $request->file('profile_image');
-                    $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/profile_images/'), $user->profile_image);
-                }
-
-                if ($request->filled('name')) {
-                    $user->name = $request->name;
-                }
-
-                $user->email = $request->email ?? $user->email;
-                $user->phone = $request->phone ?? $user->phone;
-                $user->location_label = $request->location_label ?? $user->location_label;
-                $user->save();
-
-                $providerProfile->service_category = $request->service_id ?? $providerProfile->service_category ?? [];
-                $providerProfile->bio = $request->bio ?? $providerProfile->bio;
-                $providerProfile->document_type = $request->document_type ?? $providerProfile->document_type;
-                $providerProfile->document_number = $request->document_number ?? $providerProfile->document_number;
-                $providerProfile->address = $request->address ?? $providerProfile->address;
-                $providerProfile->latitude = $request->latitude ?? $providerProfile->latitude;
-                $providerProfile->longitude = $request->longitude ?? $providerProfile->longitude;
-                $providerProfile->save();
-
-                $user = $this->decorateProviderUser($user);
-
-                DB::commit();
-
-                return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
-            }
-
-            if ((string) $user->role === '2') {
-                $marketplaceProfile = $user->marketplaceProfile()->firstOrCreate(['user_id' => $user->id]);
-
-                if ($request->hasFile('shop_logo')) {
-                    if ($marketplaceProfile->shop_logo && File::exists(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo))) {
-                        File::delete(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo));
-                    }
-
-                    $file = $request->file('shop_logo');
-                    $marketplaceProfile->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/shop_logos/'), $marketplaceProfile->shop_logo);
-                }
-
-                if ($request->hasFile('shop_banner_image')) {
-                    if ($marketplaceProfile->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image))) {
-                        File::delete(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image));
-                    }
-
-                    $file = $request->file('shop_banner_image');
-                    $marketplaceProfile->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/shop_banners/'), $marketplaceProfile->shop_banner_image);
-                }
-
-                if ($request->filled('name')) {
-                    $user->name = $request->name;
-                }
-
-                $user->email = $request->email ?? $user->email;
-                $user->phone = $request->phone ?? $user->phone;
-                $user->location_label = $request->location_label ?? $user->location_label;
-                $user->save();
-
-                $marketplaceProfile->shop_title = $request->shop_title ?? $marketplaceProfile->shop_title;
-                $marketplaceProfile->tag_line = $request->shop_tagline ?? $marketplaceProfile->tag_line;
-                $marketplaceProfile->bio = $request->bio ?? $marketplaceProfile->bio;
-                $marketplaceProfile->service_category = $request->service_id ?? $marketplaceProfile->service_category ?? [];
-                $marketplaceProfile->delivery_charges = $request->has('delivery_charges') ? $request->delivery_charges : $marketplaceProfile->delivery_charges;
-                $marketplaceProfile->operation_hours = $request->operation_hours ?? $marketplaceProfile->operation_hours;
-                $marketplaceProfile->shop_status = $request->shop_status ? strtolower($request->shop_status) : $marketplaceProfile->shop_status;
-                $marketplaceProfile->document_type = $request->doc_type ?? $request->document_type ?? $marketplaceProfile->document_type;
-                $marketplaceProfile->document_number = $request->doc_number ?? $request->document_number ?? $marketplaceProfile->document_number;
-                $marketplaceProfile->save();
-
-                $user = $this->decorateMarketplaceUser($user);
-                $user->profile_image = asset('assets/img/default.jpg');
-
-                DB::commit();
-
-                return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
-            }
-
-            // ==============================
-            // PROFILE IMAGE
-            // ==============================
-            if ($request->hasFile('profile_image') && $user->role != '2') {
-
-                if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
-                    File::delete(public_path('uploads/profile_images/' . $user->profile_image));
-                }
-
-                $file = $request->file('profile_image');
-                $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/profile_images/'), $user->profile_image);
-            }
-
-            // ==============================
-            // SHOP LOGO
-            // ==============================
-            if ($user->role == '2' && $request->hasFile('shop_logo')) {
-
-                if ($user->shop_logo && File::exists(public_path('uploads/shop_logos/' . $user->shop_logo))) {
-                    File::delete(public_path('uploads/shop_logos/' . $user->shop_logo));
-                }
-
-                $file = $request->file('shop_logo');
-                $user->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/shop_logos/'), $user->shop_logo);
-            }
-
-            // ==============================
-            // SHOP BANNER
-            // ==============================
-            if ($user->role == '2' && $request->hasFile('shop_banner_image')) {
-
-                if ($user->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $user->shop_banner_image))) {
-                    File::delete(public_path('uploads/shop_banners/' . $user->shop_banner_image));
-                }
-
-                $file = $request->file('shop_banner_image');
-                $user->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/shop_banners/'), $user->shop_banner_image);
-            }
-
-            // ==============================
-            // GENERAL FIELDS
-            // ==============================
-            $user->fill([
-                'name' => $request->name ?? $user->name,
-                'email' => $request->email ?? $user->email,
-                'phone' => $request->phone ?? $user->phone,
-                'address' => $request->address ?? $user->address,
-                'location_label' => $request->location_label ?? $user->location_label,
-                'latitude' => $request->latitude ?? $user->latitude,
-                'longitude' => $request->longitude ?? $user->longitude,
-            ]);
-
-            // ==============================
-            // PROVIDER (ROLE 1)
-            // ==============================
-            if ($user->role == '1') {
-                $user->service_category = $request->service_id ?? $user->service_category;
-                $user->bio = $request->bio ?? $user->bio;
-                $user->document_type = $request->document_type ?? $user->document_type;
-                $user->document_number = $request->document_number ?? $user->document_number;
-            }
-
-            // ==============================
-            // SHOP (ROLE 2)
-            // ==============================
-            if ($user->role == '2') {
-
-                $user->shop_title = $request->shop_title ?? $user->shop_title;
-                $user->tag_line = $request->shop_tagline ?? $user->tag_line;
-
-                $user->bio = $request->bio ?? $user->bio;
-
-                $user->service_category = $request->service_id ?? $user->service_category;
-                $user->delivery_charges = $request->has('delivery_charges')
-                    ? $request->delivery_charges
-                    : $user->delivery_charges;
-
-                $user->operation_hours = $request->operation_hours
-                    ? json_encode($request->operation_hours)
-                    : $user->operation_hours;
-
-                $user->shop_status = $request->shop_status
-                    ? strtolower($request->shop_status)
-                    : $user->shop_status;
-
-                $user->document_type = $request->doc_type ?? $user->document_type;
-                $user->document_number = $request->doc_number ?? $user->document_number;
-            }
-
-            $user->save();
-
-            // ==============================
-            // RESPONSE FORMATTING
-            // ==============================
-            if ($user->role == '2') {
-
-                $user->shop_logo = $user->shop_logo
-                    ? asset('uploads/shop_logos/' . $user->shop_logo)
-                    : null;
-
-                $user->shop_banner_image = $user->shop_banner_image
-                    ? asset('uploads/shop_banners/' . $user->shop_banner_image)
-                    : null;
-
-                $user->shop_categories = $user->shop_categories
-                    ? json_decode($user->shop_categories)
-                    : [];
-
-                $user->operation_hours = $user->operation_hours
-                    ? json_decode($user->operation_hours)
-                    : (object)[];
+            if ($role === '1') {
+                $user = $this->updateProviderProfile($user, $request);
+            } elseif ($role === '2') {
+                $user = $this->updateMarketplaceProfile($user, $request);
             } else {
-
-                $user->profile_image = $user->profile_image
-                    ? asset('uploads/profile_images/' . $user->profile_image)
-                    : asset('assets/img/default.jpg');
+                $user = $this->updateCustomerProfile($user, $request);
             }
 
             DB::commit();
-
             return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error($e->getMessage());
-
             return $this->error('Something went wrong', 500);
         }
+    }
+
+    private function updateCustomerProfile(User $user, $request): User
+    {
+        if ($request->hasFile('profile_image')) {
+            if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
+                File::delete(public_path('uploads/profile_images/' . $user->profile_image));
+            }
+            $file = $request->file('profile_image');
+            $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/profile_images/'), $user->profile_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->address        = $request->address ?? $user->address;
+        $user->latitude       = $request->latitude ?? $user->latitude;
+        $user->longitude      = $request->longitude ?? $user->longitude;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->save();
+
+        $user->profile_image = $user->profile_image
+            ? asset('uploads/profile_images/' . $user->profile_image)
+            : asset('assets/img/default.jpg');
+
+        return $user;
+    }
+
+    private function updateProviderProfile(User $user, $request): User
+    {
+        $providerProfile = $user->providerProfile()->firstOrCreate(['user_id' => $user->id]);
+
+        if ($request->hasFile('profile_image')) {
+            if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
+                File::delete(public_path('uploads/profile_images/' . $user->profile_image));
+            }
+            $file = $request->file('profile_image');
+            $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/profile_images/'), $user->profile_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->save();
+
+        $providerProfile->address         = $request->address ?? $providerProfile->address;
+        $providerProfile->latitude        = $request->latitude ?? $providerProfile->latitude;
+        $providerProfile->longitude       = $request->longitude ?? $providerProfile->longitude;
+        $providerProfile->service_category = $request->service_id ?? $providerProfile->service_category ?? [];
+        $providerProfile->bio             = $request->bio ?? $providerProfile->bio;
+        $providerProfile->document_type   = $request->document_type ?? $providerProfile->document_type;
+        $providerProfile->document_number = $request->document_number ?? $providerProfile->document_number;
+        $providerProfile->save();
+
+        return $this->decorateProviderUser($user);
+    }
+
+    private function updateMarketplaceProfile(User $user, $request): User
+    {
+        $marketplaceProfile = $user->marketplaceProfile()->firstOrCreate(['user_id' => $user->id]);
+
+        if ($request->hasFile('shop_logo')) {
+            if ($marketplaceProfile->shop_logo && File::exists(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo))) {
+                File::delete(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo));
+            }
+            $file = $request->file('shop_logo');
+            $marketplaceProfile->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/shop_logos/'), $marketplaceProfile->shop_logo);
+        }
+
+        if ($request->hasFile('shop_banner_image')) {
+            if ($marketplaceProfile->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image))) {
+                File::delete(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image));
+            }
+            $file = $request->file('shop_banner_image');
+            $marketplaceProfile->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/shop_banners/'), $marketplaceProfile->shop_banner_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->save();
+
+        $marketplaceProfile->address        = $request->address ?? $marketplaceProfile->address;
+        $marketplaceProfile->latitude       = $request->latitude ?? $marketplaceProfile->latitude;
+        $marketplaceProfile->longitude      = $request->longitude ?? $marketplaceProfile->longitude;
+        $marketplaceProfile->shop_title     = $request->shop_title ?? $marketplaceProfile->shop_title;
+        $marketplaceProfile->tag_line       = $request->shop_tagline ?? $marketplaceProfile->tag_line;
+        $marketplaceProfile->bio            = $request->bio ?? $marketplaceProfile->bio;
+        $marketplaceProfile->service_category = $request->service_id ?? $marketplaceProfile->service_category ?? [];
+        $marketplaceProfile->delivery_charges = $request->has('delivery_charges') ? $request->delivery_charges : $marketplaceProfile->delivery_charges;
+        $marketplaceProfile->operation_hours  = $request->operation_hours ?? $marketplaceProfile->operation_hours;
+        $marketplaceProfile->shop_status      = $request->shop_status ? strtolower($request->shop_status) : $marketplaceProfile->shop_status;
+        $marketplaceProfile->document_type    = $request->document_type ?? $marketplaceProfile->document_type;
+        $marketplaceProfile->document_number  = $request->document_number ?? $marketplaceProfile->document_number;
+        $marketplaceProfile->save();
+
+        $user = $this->decorateMarketplaceUser($user);
+        $user->profile_image = asset('assets/img/default.jpg');
+
+        return $user;
     }
 
     public function get_profile()
     {
         try {
             $user = auth('sanctum')->user();
+            $role = (string) $user->role;
 
-            if ((string) $user->role === '1') {
-                $user = $this->decorateProviderUser($user);
-
-                $gallery = ProviderGallery::where('user_id', $user->id)->get();
-                foreach ($gallery as $image) {
-                    $image->path = asset('uploads/provider_gallery/' . $image->path);
-                }
-
-                $user->gallery = $gallery;
-                $user->skills = $user->skills()->get();
-                $categoryIds = $this->resolveCategoryIds($user->service_category);
-                $user->active_orders_count = Orders::where('provider_id', $user->id)
-                    ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                    ->count();
-                $user->reviews = $user->reviews()->get();
-                $user->rating = (float) $user->rating;
-
-                return $this->success($this->buildAuthenticatedUserPayload($user));
+            if ($role === '1') {
+                return $this->success($this->buildAuthenticatedUserPayload($this->decorateProviderUser($user)));
             }
 
-            if ((string) $user->role === '2') {
-                $user = $this->decorateMarketplaceUser($user);
-                $user->profile_image = asset('assets/img/default.jpg');
-                $categoryIds = $this->resolveCategoryIds($user->service_category);
-                $user->services = ServiceCategoryModel::whereIn('id', $categoryIds)->pluck('name', 'id')->toArray();
-                $user->active_orders_count = Orders::where('user_id', $user->id)
-                    ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                    ->count();
-
-                $shopReviews = MarketplaceShopReview::query()
-                    ->where('shop_id', $user->id)
-                    ->latest()
-                    ->get()
-                    ->map(function ($review) {
-                        $reviewUser = User::select('id', 'name', 'profile_image')->find($review->user_id);
-
-                        return [
-                            'id' => $review->id,
-                            'marketplace_order_id' => $review->marketplace_order_id,
-                            'user_id' => $review->user_id,
-                            'rating' => $review->rating,
-                            'review' => $review->review,
-                            'created_at' => $review->created_at,
-                            'user' => [
-                                'id' => $reviewUser?->id,
-                                'name' => $reviewUser?->name ?? 'Unknown User',
-                                'profile_image' => !empty($reviewUser?->profile_image)
-                                    ? asset('uploads/profile_images/' . $reviewUser->profile_image)
-                                    : asset('assets/img/default.jpg'),
-                            ],
-                        ];
-                    })
-                    ->values();
-
-                $user->rating = round((float) $shopReviews->avg('rating'), 1);
-                $user->reviews = $shopReviews;
-
-                return $this->success($this->buildAuthenticatedUserPayload($user));
+            if ($role === '2') {
+                return $this->success($this->buildAuthenticatedUserPayload($this->decorateMarketplaceUser($user)));
             }
 
-            $user->service_license = $user->service_license
-                ? asset('uploads/license_files/' . $user->service_license)
-                : null;
-
-            $user->certification = $user->certification
-                ? asset('uploads/certification_files/' . $user->certification)
-                : null;
-
-            $user->profile_image = $user->profile_image
-                ? asset('uploads/profile_images/' . $user->profile_image)
-                : asset('assets/img/default.jpg');
-
-            // Gallery
-            $gallery = ProviderGallery::where('user_id', $user->id)->get();
-            foreach ($gallery as $image) {
-                $image->path = asset('uploads/provider_gallery/' . $image->path);
-            }
-            $user->gallery = $gallery;
-
-            // Skills
-            $user->skills = $user->skills()->get();
-
-            // ðŸ”¥ Service Category handling (safe for all types)
-            $rawCategory = $user->service_category;
-
-            if (is_string($rawCategory)) {
-                $categoryIds = json_decode($rawCategory, true) ?? [];
-            } elseif (is_array($rawCategory)) {
-                $categoryIds = $rawCategory;
-            } else {
-                $categoryIds = [];
-            }
-
-            $user->services = \App\Models\Admin\ServiceCategoryModel::whereIn('id', $categoryIds)
-                ->pluck('name', 'id')
-                ->toArray();
-
-            $orderColumn = (string) $user->role === '1' ? 'provider_id' : 'user_id';
-            $user->active_orders_count = Orders::where($orderColumn, $user->id)
-                ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                ->count();
-
-            if ((string) $user->role === '2') {
-                $shopReviews = MarketplaceShopReview::query()
-                    ->where('shop_id', $user->id)
-                    ->latest()
-                    ->get()
-                    ->map(function ($review) {
-                        $reviewUser = User::select('id', 'name', 'profile_image')->find($review->user_id);
-
-                        return [
-                            'id' => $review->id,
-                            'marketplace_order_id' => $review->marketplace_order_id,
-                            'user_id' => $review->user_id,
-                            'rating' => $review->rating,
-                            'review' => $review->review,
-                            'created_at' => $review->created_at,
-                            'user' => [
-                                'id' => $reviewUser?->id,
-                                'name' => $reviewUser?->name ?? 'Unknown User',
-                                'profile_image' => !empty($reviewUser?->profile_image)
-                                    ? asset('uploads/profile_images/' . $reviewUser->profile_image)
-                                    : asset('assets/img/default.jpg'),
-                            ],
-                        ];
-                    })
-                    ->values();
-
-                $user->rating = round((float) $shopReviews->avg('rating'), 1);
-                $user->reviews = $shopReviews;
-            } else {
-                $user->reviews = $user->reviews()->get();
-                $user->rating = (float) $user->rating;
-            }
-
-            return $this->success($this->buildAuthenticatedUserPayload($user));
+            return $this->success($this->buildAuthenticatedUserPayload($this->decorateCustomerUser($user)));
         } catch (\Throwable $e) {
             Log::error('Error in get_profile: ' . $e->getMessage());
             return $this->error('Failed to load profile.', 500);
         }
     }
 
+    private function decorateCustomerUser(User $user): User
+    {
+        $user->profile_image = $user->profile_image
+            ? asset('uploads/profile_images/' . $user->profile_image)
+            : asset('assets/img/default.jpg');
+
+        return $user;
+    }
 
     public function update_fcm(Request $request)
     {
@@ -1867,29 +1690,32 @@ class AuthController extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
+
             $marketplaces = User::query()
                 ->with('marketplaceProfile')
                 ->whereHas('marketplaceProfile')
                 ->where('id', '!=', $user->id)
                 ->where('marketplace_status', 'active')
+                ->when($lat && $lng, function ($q) use ($lat, $lng) {
+                    $q->whereNotNull('latitude')->whereNotNull('longitude')
+                        ->whereRaw(
+                            '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                            [$lat, $lng, $lat]
+                        );
+                })
                 ->latest()
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplaceUser($marketplace);
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
 
-                    $services = ServiceCategoryModel::query()
+                    $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
                         ->get(['id', 'name'])
-                        ->map(function ($service) {
-                            return [
-                                'id' => $service->id,
-                                'name' => $service->name,
-                            ];
-                        })
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
                         ->values();
-
-                    $marketplace->services = $services;
 
                     return $marketplace;
                 });
@@ -2845,7 +2671,7 @@ class AuthController extends Controller
                 })
                 ->avg('rating');
 
-                $rating = $rating ? round($rating, 1) : 0;
+            $rating = $rating ? round($rating, 1) : 0;
 
             $storeVisits = StoreVisit::query()
                 ->where('shop_id', $user->id)
@@ -3249,9 +3075,9 @@ class AuthController extends Controller
             'location_label' => $user->location_label,
             'country' => $user->country,
             'city_id' => $user->city_id,
-            'address' => $user->providerProfile?->address ?? $user->address ?? null,
-            'latitude' => $user->providerProfile?->latitude ?? $user->latitude ?? null,
-            'longitude' => $user->providerProfile?->longitude ?? $user->longitude ?? null,
+            'address' => $this->resolveAddressForRole($user),
+            'latitude' => $this->resolveLatitudeForRole($user),
+            'longitude' => $this->resolveLongitudeForRole($user),
             'fcm_token' => $user->fcm_token,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
@@ -3401,6 +3227,30 @@ class AuthController extends Controller
         }
 
         return asset(trim($directory, '/') . '/' . ltrim($path, '/'));
+    }
+
+    private function resolveAddressForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->address ?? null;
+        if ($role === '2') return $user->marketplaceProfile?->address ?? $user->address;
+        return $user->address ?? null;
+    }
+
+    private function resolveLatitudeForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->latitude ?? null;
+        if ($role === '2') return $user->marketplaceProfile?->latitude ?? $user->latitude;
+        return $user->latitude ?? null;
+    }
+
+    private function resolveLongitudeForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->longitude ?? null;
+        if ($role === '2') return $user->marketplaceProfile?->longitude ?? $user->longitude;
+        return $user->longitude ?? null;
     }
 
     private function parseRoleList(?string $roles): array

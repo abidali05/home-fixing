@@ -227,6 +227,22 @@ class JobsController extends Controller
         return redirect()->back()->with('success', 'Image deleted successfully.');
     }
 
+    public function deleteJobVideo($id)
+    {
+        $job = JobRequestModel::findOrFail($id);
+
+        $videoFilename = $job->getRawOriginal('video');
+        if ($videoFilename) {
+            $videoPath = public_path('uploads/job_gallery/' . $videoFilename);
+            if (file_exists($videoPath)) {
+                unlink($videoPath);
+            }
+            $job->video = null;
+            $job->save();
+        }
+        return redirect()->back()->with('success', 'Video deleted successfully.');
+    }
+
     public function destroy($id)
     {
         $jobRequest = JobRequestModel::findOrFail($id);
@@ -238,6 +254,16 @@ class JobsController extends Controller
             }
             $image->delete();
         }
+
+        // Delete video file if exists
+        $videoFilename = $jobRequest->getRawOriginal('video');
+        if ($videoFilename) {
+            $videoPath = public_path('uploads/job_gallery/' . $videoFilename);
+            if (file_exists($videoPath)) {
+                unlink($videoPath);
+            }
+        }
+
         $jobRequest->delete();
         return response()->json([
             'status' => 200,

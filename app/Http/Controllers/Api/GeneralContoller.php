@@ -70,12 +70,27 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
-            $banners = MobileBanners::select('path')->orderBy('id', 'desc')->get()->map(function ($banner) {
-                $banner->path = ($banner->path && $banner->path != '' && $banner->path != null) ? asset('uploads/mobile_banners/' . $banner->path) : asset('assets/img/default.jpg');
-                return $banner;
-            });
+            $banners = MobileBanners::select('id', 'path', 'showMarketplace', 'marketplace_id')
+                ->orderBy('id', 'desc')
+                ->get()
+                ->map(function ($banner) {
+                    $bannerPath = ($banner->path && $banner->path != '' && $banner->path != null)
+                        ? asset('uploads/mobile_banners/' . $banner->path)
+                        : asset('assets/img/default.jpg');
 
+                    $data = [
+                        'path' => $bannerPath,
+                    ];
+
+                    if ($banner->showMarketplace) {
+                        $data['marketplace_id'] = $banner->marketplace_id;
+                    }
+
+                    return $data;
+                });
 
             $topCategoryIds = JobRequestModel::where('status', '!=', 'cancelled')
                 ->select('category_id', DB::raw('COUNT(*) as total'))
@@ -103,9 +118,16 @@ class GeneralContoller extends Controller
                     return $service;
                 });
 
-
             $providers = User::with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
                 ->latest()
@@ -114,45 +136,39 @@ class GeneralContoller extends Controller
                 ->map(function ($provider) {
                     $provider = $this->decorateProvider($provider);
                     $serviceCategories = $this->getProviderServiceCategories($provider);
-
                     $provider->categories = ServiceCategoryModel::whereIn('id', $serviceCategories)->get()
                         ->map(function ($cat) {
                             $cat->path = $cat->path && !str_starts_with($cat->path, 'http')
                                 ? asset('uploads/service_category/' . $cat->path)
                                 : $cat->path;
                             return $cat;
-                        })
-                        ->values();
-
+                        })->values();
                     return $provider;
-                })
-                ->values();
+                })->values();
 
             $marketplaces = User::query()
                 ->with('marketplaceProfile')
                 ->whereHas('marketplaceProfile')
                 ->where('id', '!=', $user->id)
                 ->where('marketplace_status', 'active')
+                ->when($lat && $lng, function ($q) use ($lat, $lng) {
+                    $q->whereNotNull('latitude')->whereNotNull('longitude')
+                      ->whereRaw(
+                          '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                          [$lat, $lng, $lat]
+                      );
+                })
                 ->latest()
                 ->limit(4)
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplace($marketplace);
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
-
-                    $services = ServiceCategoryModel::query()
+                    $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
                         ->get(['id', 'name'])
-                        ->map(function ($service) {
-                            return [
-                                'id' => $service->id,
-                                'name' => $service->name,
-                            ];
-                        })
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
                         ->values();
-
-                    $marketplace->services = $services;
-
                     return $marketplace;
                 });
 
@@ -165,16 +181,14 @@ class GeneralContoller extends Controller
 
             $cart_count = Cart::where('user_id', $user->id)->count();
 
-            $data = [
-                'banners' => $banners,
+            return $this->success([
+                'banners'        => $banners,
                 'popular_services' => $popular_services,
-                'providers' => $providers,
-                'marketplaces' => $marketplaces,
-                'active_orders' => $active_orders,
-                'cart_count' => $cart_count,
-            ];
-
-            return $this->success($data, 'Home page fetched successfully');
+                'providers'      => $providers,
+                'marketplaces'   => $marketplaces,
+                'active_orders'  => $active_orders,
+                'cart_count'     => $cart_count,
+            ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
                 'exception' => $e->getMessage()
@@ -278,50 +292,48 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
             $users = User::select('id', 'name', 'profile_image')
                 ->with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
-                ->get();
+                ->get()
+                ->map(function ($provider) {
+                    $provider->loadMissing('providerProfile');
+                    $providerProfile = $provider->providerProfile;
 
-            $users = $users->map(function ($provider) {
-                $provider->loadMissing('providerProfile');
-                $providerProfile = $provider->providerProfile;
+                    if ($providerProfile) {
+                        $serviceIds = $this->getProviderServiceCategories($provider);
+                        $providerProfile->services = ServiceCategoryModel::query()
+                            ->whereIn('id', $serviceIds)
+                            ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                            ->map(function ($category) {
+                                $category->path = $category->path && !str_starts_with($category->path, 'http')
+                                    ? asset('uploads/service_category/' . $category->path)
+                                    : $category->path;
+                                return $category;
+                            })->values();
+                    }
 
-                if ($providerProfile) {
-                    $serviceIds = $this->getProviderServiceCategories($provider);
+                    return $provider;
+                });
 
-                    $providerProfile->services = ServiceCategoryModel::query()
-                        ->whereIn('id', $serviceIds)
-                        ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
-                        ->map(function ($category) {
-                            $category->path = $category->path && !str_starts_with($category->path, 'http')
-                                ? asset('uploads/service_category/' . $category->path)
-                                : $category->path;
-
-                            return $category;
-                        })
-                        ->values();
-                }
-
-                return $provider;
-            });
-
-            return response()->json([
-                'status' => true,
-                'message' => 'All services fetched successfully',
-                'data' => $users
-            ]);
+            return $this->success($users, 'All providers fetched successfully');
         } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'message' => 'An error occurred while fetching all services',
-                'data' => [
-                    'exception' => $e->getMessage()
-                ]
-            ], 500);
+            return $this->error('An error occurred while fetching all providers', 500, [
+                'exception' => $e->getMessage()
+            ]);
         }
     }
 
@@ -634,71 +646,6 @@ class GeneralContoller extends Controller
             ]);
         }
     }
-
-    // public function provider_home()
-    // {
-    //     try {
-    //         $serviceCategories = is_string(auth()->user()->service_category)
-    //             ? json_decode(auth()->user()->service_category, true) ?? []
-    //             : (auth()->user()->service_category ?? []);
-
-
-    //         $post_requests = JobRequestModel::with('images', 'category', 'user')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', null)
-    //             ->whereIn('category_id', $serviceCategories)
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($post_requests as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($post_requests as $post) {
-    //             if ($post->category->path && !str_starts_with($post->category->path, 'http')) {
-    //                 $post->category->path = asset('uploads/service_category/' . $post->category->path);
-    //             }
-    //         }
-
-    //         $direct_hires = JobRequestModel::with('images', 'user', 'category')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', auth()->id())
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($direct_hires as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($direct_hires as $hire) {
-    //             if ($hire->category->path && !str_starts_with($hire->category->path, 'http')) {
-    //                 $hire->category->path = asset('uploads/service_category/' . $hire->category->path);
-    //             }
-    //         }
-
-
-    //         $data = [
-    //             'post_requests' => $post_requests,
-    //             'direct_hires' => $direct_hires,
-    //         ];
-
-    //         return $this->success($data, 'Home page fetched successfully');
-    //     } catch (\Exception $e) {
-    //         return $this->error('An error occurred while fetching home page', 500, [
-    //             'exception' => $e->getMessage()
-    //         ]);
-    //     }
-    // }
 
     public function provider_home()
     {
@@ -1126,8 +1073,8 @@ class GeneralContoller extends Controller
                 'nullable',
                 'in:on_the_way,arrived,working,provider_completed,completed',
             ],
-            'latitude' => 'required_if:status,on_the_way|nullable',
-            'longitude' => 'required_if:status,on_the_way|nullable',
+            'latitude' => 'nullable',
+            'longitude' => 'nullable',
         ]);
 
         try {

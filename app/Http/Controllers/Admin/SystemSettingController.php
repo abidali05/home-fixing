@@ -13,8 +13,13 @@ class SystemSettingController extends Controller
     public function index(Request $request)
     {
         $settings = SystemSettingModel::first();
-        $images = MobileBanners::all();
-        return view('admin.system_setting.index', compact('settings', 'images'));
+        $images = MobileBanners::with('marketplace.marketplaceProfile')->get();
+        $marketplaces = \App\Models\User::query()
+            ->with('marketplaceProfile')
+            ->whereHas('marketplaceProfile')
+            ->orderBy('name')
+            ->get();
+        return view('admin.system_setting.index', compact('settings', 'images', 'marketplaces'));
     }
 
 
@@ -58,7 +63,12 @@ class SystemSettingController extends Controller
         $request->validate([
             'banners' => 'required|array',
             'banners.*' => 'image|max:8192',
+            'showMarketplace' => 'nullable|in:0,1,on,true',
+            'marketplace_id' => 'required_if:showMarketplace,1,on,true|nullable|exists:users,id',
         ]);
+
+        $showMarketplace = $request->boolean('showMarketplace');
+        $marketplaceId = $showMarketplace ? $request->input('marketplace_id') : null;
 
         if ($request->hasFile('banners')) {
             foreach ($request->file('banners') as $banner) {
@@ -67,6 +77,8 @@ class SystemSettingController extends Controller
                 $banner->move(public_path('uploads/mobile_banners/'), $filename);
                 MobileBanners::create([
                     'path' => $filename,
+                    'showMarketplace' => $showMarketplace,
+                    'marketplace_id' => $marketplaceId,
                 ]);
             }
         }

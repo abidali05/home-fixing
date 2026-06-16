@@ -142,6 +142,22 @@
                                         @endforeach
                                     </div>
                                 </div>
+                                {{-- Existing Video --}}
+                                @if ($jobRequest->video)
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Existing Video</label>
+                                        <div class="position-relative" style="width: 200px;">
+                                            <video controls class="img-thumbnail" style="width: 200px; height: 150px; object-fit: cover;">
+                                                <source src="{{ $jobRequest->video }}" type="video/mp4">
+                                                Your browser does not support the video tag.
+                                            </video>
+                                            <a href="{{ route('job_requests.deleteJobVideo', $jobRequest->id) }}" class="btn btn-sm btn-danger p-0 rounded-circle"
+                                                style="width: 24px; height: 24px; position: absolute; top: 0; right: 0; justify-content: center; align-items: center; display: flex;">
+                                                &times;
+                                            </a>
+                                        </div>
+                                    </div>
+                                @endif
 
 
                                 {{-- Upload New Images --}}

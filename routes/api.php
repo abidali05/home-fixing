@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\User\HiringController;
 use App\Http\Controllers\Api\User\OrdersController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\PrivacyController;
+use App\Http\Controllers\TermsConditionController;
 use Illuminate\Support\Facades\Route;
 
 // ===================================================================Public Routes Start===================================================================
@@ -113,6 +114,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('/marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
     Route::post('/marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
     Route::get('/privacy', [PrivacyController::class, 'index']);
+    Route::get('/terms-conditions', [TermsConditionController::class, 'index']);
     Route::get('/marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
     Route::post('store-fcm-token', [NotificationController::class, 'store_fcm_token']);
     Route::get('notifications', [NotificationController::class, 'index']);

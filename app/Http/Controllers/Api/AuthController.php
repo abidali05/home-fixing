@@ -1237,9 +1237,6 @@ class AuthController extends Controller
         $user->location_label = $request->location_label ?? $user->location_label;
         $user->save();
 
-        $marketplaceProfile->address        = $request->address ?? $marketplaceProfile->address;
-        $marketplaceProfile->latitude       = $request->latitude ?? $marketplaceProfile->latitude;
-        $marketplaceProfile->longitude      = $request->longitude ?? $marketplaceProfile->longitude;
         $marketplaceProfile->shop_title     = $request->shop_title ?? $marketplaceProfile->shop_title;
         $marketplaceProfile->tag_line       = $request->shop_tagline ?? $marketplaceProfile->tag_line;
         $marketplaceProfile->bio            = $request->bio ?? $marketplaceProfile->bio;

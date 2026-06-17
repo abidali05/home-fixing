@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Add New Privacy Policy')
+@section('title', 'Add New Terms & Conditions')
 
 <link rel="stylesheet" href="{{ asset('assets/css/admin/providers/create.css') }}">
 
@@ -11,8 +11,8 @@
                 <div class="col-md-10 col-lg-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <h6 class="mb-0">Add New Privacy Policy</h6>
-                            <a href="{{ route('admin.privacy.index') }}" class="btn btn-sm btn-secondary">
+                            <h6 class="mb-0">Add New Terms &amp; Conditions</h6>
+                            <a href="{{ route('admin.terms_conditions.index') }}" class="btn btn-sm btn-secondary">
                                 <i class="bi bi-arrow-left"></i> Back
                             </a>
                         </div>
@@ -44,23 +44,35 @@
                                 </div>
                             @endif
 
-                            <form action="{{ route('admin.privacy.store') }}" method="POST">
+                            <form action="{{ route('admin.terms_conditions.store') }}" method="POST">
                                 @csrf
-                                <div class="form-group">
-                                    <label for="role">Role</label>
-                                    <select name="role" id="role" class="form-control" required>
-                                        <option value="0" {{ old('role', $privacy->role ?? '') == '0' ? 'selected' : '' }}>User</option>
-                                        <option value="1" {{ old('role', $privacy->role ?? '') == '1' ? 'selected' : '' }}>Provider</option>
-                                        <option value="2" {{ old('role', $privacy->role ?? '') == '2' ? 'selected' : '' }}>Shop</option>
+
+                                <div class="form-group mb-3">
+                                    <label for="role" class="form-label fw-semibold">Role</label>
+                                    <select name="role" id="role" class="form-control @error('role') is-invalid @enderror" required>
+                                        <option value="" disabled selected>-- Select Role --</option>
+                                        <option value="0" {{ old('role') == '0' ? 'selected' : '' }}>User</option>
+                                        <option value="1" {{ old('role') == '2' ? 'selected' : '' }}>Provider</option>
+                                        <option value="2" {{ old('role') == '2' ? 'selected' : '' }}>Shop</option>
                                     </select>
+                                    @error('role')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
                                 </div>
 
-                                <div class="form-group">
-                                    <label for="content">Content</label>
-                                    <textarea name="content" id="content" class="form-control" rows="10" required>{{ old('content') }}</textarea>
+                                <div class="form-group mb-3">
+                                    <label for="content" class="form-label fw-semibold">Content</label>
+                                    <textarea name="content" id="content"
+                                        class="form-control @error('content') is-invalid @enderror"
+                                        rows="10">{{ old('content') }}</textarea>
+                                    @error('content')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
                                 </div>
 
-                                <button type="submit" class="btn btn-success mt-3">Save</button>
+                                <button type="submit" class="btn btn-success mt-2">
+                                    <i class="bi bi-check-lg me-1"></i> Save Terms &amp; Conditions
+                                </button>
                             </form>
                         </div>
                     </div>
@@ -85,7 +97,7 @@
                     'insertTable', 'horizontalLine', '|',
                     'undo', 'redo'
                 ],
-                placeholder: 'Enter Privacy Policy content here...',
+                placeholder: 'Enter Terms & Conditions content here...',
             })
             .catch(error => {
                 console.error('CKEditor error:', error);

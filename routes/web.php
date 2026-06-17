@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\MarketplaceOrderController;
 use App\Http\Controllers\Admin\MarketplaceProductController;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\PrivacyController;
+use App\Http\Controllers\Admin\TermsConditionController;
 use App\Http\Controllers\Admin\ProviderController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SellerController;
@@ -138,6 +139,7 @@ Route::middleware(['auth:admin'])->group(function () {
 
     Route::prefix('admin')->name('admin.')->middleware(['auth:admin'])->group(function () {
         Route::resource('privacy', PrivacyController::class);
+        Route::resource('terms_conditions', TermsConditionController::class);
         Route::get('app-versions', [AppVersionController::class, 'index'])->name('app_versions.index');
         Route::post('app-versions/save', [AppVersionController::class, 'save'])->name('app_versions.save');
     });

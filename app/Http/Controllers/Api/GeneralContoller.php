@@ -1273,28 +1273,34 @@ class GeneralContoller extends Controller
     }
 
     public function my_bids(Request $request)
-    {
-        try {
-            $user = auth()->user();
-            $bids = BidModel::with(['job.category', 'job.user', 'order'])
-                ->where('provider_id', $user->id)->get();
+{
+    try {
+        $user = auth()->user();
 
-            if ($bids->isEmpty()) {
-                return $this->notFound('No bids found for this provider.');
-            }
+        $bids = BidModel::with(['job.category', 'job.user', 'order'])
+            ->where('provider_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
 
-            foreach ($bids as $bid) {
-                if ($bid->job->category) {
-                    $bid->job->category->path = $bid->job->category->path ? asset('uploads/service_category/' . $bid->job->category->path) : asset('assets/img/default.jpg');
-                }
-            }
-
-            return $this->success($bids, 'My bids fetched successfully.');
-        } catch (\Exception $e) {
-            Log::error('Error in my_bids: ' . $e->getMessage());
-            return $this->error('Failed to load my bids.', 500);
+        if ($bids->isEmpty()) {
+            return $this->notFound('No bids found for this provider.');
         }
+
+        foreach ($bids as $bid) {
+            if ($bid->job && $bid->job->category) {
+                $bid->job->category->path = $bid->job->category->path
+                    ? asset('uploads/service_category/' . $bid->job->category->path)
+                    : asset('assets/img/default.jpg');
+            }
+        }
+
+        return $this->success($bids, 'My bids fetched successfully.');
+
+    } catch (\Exception $e) {
+        Log::error('Error in my_bids: ' . $e->getMessage());
+        return $this->error('Failed to load my bids.', 500);
     }
+}
 
     private function resolveCategoryIds($raw): array
     {

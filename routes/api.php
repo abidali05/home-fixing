@@ -37,6 +37,9 @@ Route::prefix('v1')->group(function () {
     Route::get('/marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
     Route::post('/marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
     Route::post('/marketplace/product-view', [AuthController::class, 'recordProductView']);
+
+    Route::get('/privacy/{role}', [PrivacyController::class, 'index']);
+    Route::get('/terms-conditions/{role}', [TermsConditionController::class, 'index']);
 });
 
 
@@ -113,8 +116,6 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('/marketplace/orders', [AuthController::class, 'marketplaceOrders']);
     Route::get('/marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
     Route::post('/marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
-    Route::get('/privacy', [PrivacyController::class, 'index']);
-    Route::get('/terms-conditions', [TermsConditionController::class, 'index']);
     Route::get('/marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
     Route::post('store-fcm-token', [NotificationController::class, 'store_fcm_token']);
     Route::get('notifications', [NotificationController::class, 'index']);

@@ -26,6 +26,7 @@ class OrdersController extends Controller
                 'completed_orders' => ['completed'],
                 'scheduled_orders' => ['pending'],
                 'cancelled_orders' => ['cancelled'],
+                'open_orders' => ['open'],
             ];
 
 

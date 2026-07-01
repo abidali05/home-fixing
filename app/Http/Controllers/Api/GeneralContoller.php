@@ -174,7 +174,7 @@ class GeneralContoller extends Controller
 
             $active_orders = Orders::with(['job.category', 'provider'])
                 ->where('user_id', $user->id)
-                ->whereIn('status', ['on_the_way', 'arrived', 'working'])
+                ->whereIn('status', ['open','pending','on_the_way', 'arrived', 'working'])
                 ->latest()
                 ->limit(4)
                 ->get();

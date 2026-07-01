@@ -69,6 +69,7 @@ return new class extends Migration
             $table->string('certification')->nullable();
             $table->string('charge_type')->nullable();
             $table->string('charge_amount')->nullable();
+            $table->string('profile_image')->nullable();
             $table->enum('status', ['active', 'banned', 'suspended', 'inactive'])->default('inactive');
             $table->timestamps();
 
@@ -153,13 +154,13 @@ return new class extends Migration
 
         Schema::create('orders', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('provider_id');
+            $table->unsignedBigInteger('provider_id')->nullable();
             $table->unsignedBigInteger('user_id');
             $table->unsignedBigInteger('job_id')->nullable();
             $table->enum('source', ['bid', 'direct_hiring']);
             $table->text('address')->nullable();
             $table->text('details')->nullable();
-            $table->enum('status', ['pending', 'cancelled', 'on_the_way', 'arrived', 'working', 'provider_completed', 'completed', 'rejected', 'accepted'])->default('pending');
+            $table->enum('status', ['open', 'pending', 'cancelled', 'on_the_way', 'arrived', 'working', 'provider_completed', 'completed', 'rejected', 'accepted'])->default('open');
             $table->decimal('price', 10, 2)->nullable();
             $table->integer('paid_to_system')->nullable();
             $table->timestamps();

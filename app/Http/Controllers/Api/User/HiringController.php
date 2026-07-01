@@ -95,6 +95,19 @@ class HiringController extends Controller
                 $job->save();
             }
 
+            // Create order with status 'open'
+            $order = new Orders();
+            $order->provider_id = $job->provider_id;
+            $order->user_id = $user->id;
+            $order->job_id = $job->id;
+            $order->source = 'direct_hiring';
+            $order->address = $job->address;
+            $order->details = $job->description;
+            $order->price = $job->price ?? 0;
+            $order->status = 'open';
+            $order->paid_to_system = 0;
+            $order->save();
+
             DB::commit();
 
             // DirectHireNotification uses database channel, so it is saved in job_notifications.
@@ -177,6 +190,19 @@ class HiringController extends Controller
                 $jobRequest->save();
             }
 
+            // Create order with status 'open'
+            $order = new Orders();
+            $order->provider_id = null;
+            $order->user_id = $user->id;
+            $order->job_id = $jobRequest->id;
+            $order->source = 'bid';
+            $order->address = $jobRequest->address;
+            $order->details = $jobRequest->description;
+            $order->price = $jobRequest->price ?? 0;
+            $order->status = 'open';
+            $order->paid_to_system = 0;
+            $order->save();
+
             DB::commit();
 
             $providers = User::query()
@@ -235,6 +261,21 @@ class HiringController extends Controller
 
             foreach ($request->images as $image) {
                 $image->path = $image->path != null ? asset('uploads/job_gallery/' . $image->path) : asset('assets/img/default.jpg');
+            }
+
+            $order = Orders::with('provider')->where('job_id', $request->id)->first();
+            if ($order) {
+                $provider = $order->provider;
+                if ($provider) {
+                    $provider->profile_image = $provider->profile_image
+                        ? asset('uploads/profile_images/' . $provider->profile_image)
+                        : asset('assets/img/default.jpg');
+                }
+                $request->setAttribute('hired_provider', $provider);
+                $request->setAttribute('order_status', $order->status);
+            } else {
+                $request->setAttribute('hired_provider', null);
+                $request->setAttribute('order_status', null);
             }
 
             return $this->success($request);

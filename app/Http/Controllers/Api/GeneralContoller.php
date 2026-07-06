@@ -6,6 +6,7 @@ use Exception;
 use App\Models\AppVersion;
 use App\Models\User;
 use App\Models\Orders;
+use App\Models\Reviews;
 use App\Models\BidModel;
 use App\Models\CityModel;
 use App\Models\FaqModel;
@@ -711,9 +712,28 @@ class GeneralContoller extends Controller
                 }
             }
 
+            $orders = Orders::with(['job.category', 'user'])
+                ->where('provider_id', auth()->id())
+                ->latest()
+                ->limit(4)
+                ->get();
+
+            foreach ($orders as $order) {
+                if ($order->job) {
+                    foreach ($order->job->images ?? [] as $image) {
+                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                    }
+                    $category = $order->job->category ?? null;
+                    if ($category && $category->path && !str_starts_with($category->path, 'http')) {
+                        $category->path = asset('uploads/service_category/' . $category->path);
+                    }
+                }
+            }
+
             return $this->success([
                 'post_requests' => $post_requests,
                 'direct_hires'  => $direct_hires,
+                'orders'        => $orders,
             ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
@@ -1346,6 +1366,27 @@ class GeneralContoller extends Controller
             : $provider->name;
 
         return $provider;
+    }
+
+    public function provider_reviews(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if ((int) $user->role !== 1) {
+                return $this->error('Only providers can view their reviews.', 403);
+            }
+
+            $perPage = $request->input('per_page', 10);
+
+            $reviews = Reviews::where('provider_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->paginate($perPage);
+
+            return $this->success($reviews, 'Provider reviews loaded successfully.');
+        } catch (\Throwable $e) {
+            Log::error('Error in provider_reviews: ' . $e->getMessage());
+            return $this->error('Failed to load reviews.', 500);
+        }
     }
 
     private function decorateMarketplace(User $marketplace): User

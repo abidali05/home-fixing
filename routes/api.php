@@ -90,6 +90,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
         Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid']);
         Route::get('my-bids', [GeneralContoller::class, 'my_bids']);
+        Route::get('provider-reviews', [GeneralContoller::class, 'provider_reviews']);
     });
 
     Route::post('update-order-status/{id}', [GeneralContoller::class, 'update_order_status']);

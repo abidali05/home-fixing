@@ -4,6 +4,7 @@ use App\Models\User;
 use App\Models\JobRequestModel;
 use App\Models\BidModel;
 use App\Models\Orders;
+use App\Models\Reviews;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 
@@ -235,4 +236,117 @@ test('my orders endpoint returns open orders list', function () {
 
     $response->assertJsonCount(1, 'data.open_orders');
     $response->assertJsonPath('data.open_orders.0.status', 'open');
+});
+
+test('provider home endpoint returns latest orders of provider', function () {
+    $user = User::factory()->create([
+        'role' => $this->roleCustomer,
+        'country' => $this->country,
+    ]);
+
+    $provider = User::factory()->create([
+        'role' => $this->roleProvider,
+        'country' => $this->country,
+        'provider_status' => 'active',
+    ]);
+
+    // Create provider profile
+    $provider->providerProfile()->create([
+        'service_category' => json_encode([$this->category]),
+        'experience' => '5 years',
+    ]);
+
+    $job = JobRequestModel::create([
+        'user_id' => $user->id,
+        'category_id' => $this->category,
+        'description' => 'Fix leak',
+        'job_date' => '2026-06-20',
+        'job_time' => '14:30',
+        'price' => 100,
+        'status' => 'quoted',
+        'address' => '123 Test St',
+        'latitude' => 37.7749,
+        'longitude' => -122.4194,
+    ]);
+
+    $order = Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price,
+        'status' => 'pending',
+        'paid_to_system' => 0,
+    ]);
+
+    $response = $this->actingAs($provider, 'sanctum')->getJson('/api/v1/provider-home');
+
+    $response->assertStatus(200);
+    $response->assertJsonStructure([
+        'data' => [
+            'post_requests',
+            'direct_hires',
+            'orders',
+        ]
+    ]);
+
+    $response->assertJsonCount(1, 'data.orders');
+    $response->assertJsonPath('data.orders.0.id', $order->id);
+});
+
+test('provider reviews endpoint returns reviews of provider with user details', function () {
+    $user = User::factory()->create([
+        'name' => 'John Doe',
+        'role' => $this->roleCustomer,
+        'country' => $this->country,
+    ]);
+
+    $provider = User::factory()->create([
+        'role' => $this->roleProvider,
+        'country' => $this->country,
+        'provider_status' => 'active',
+    ]);
+
+    $job = JobRequestModel::create([
+        'user_id' => $user->id,
+        'category_id' => $this->category,
+        'description' => 'Fix leak',
+        'job_date' => '2026-06-20',
+        'job_time' => '14:30',
+        'price' => 100,
+        'status' => 'quoted',
+        'address' => '123 Test St',
+        'latitude' => 37.7749,
+        'longitude' => -122.4194,
+    ]);
+
+    $order = Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price,
+        'status' => 'completed',
+        'paid_to_system' => 0,
+    ]);
+
+    Reviews::create([
+        'order_id' => $order->id,
+        'user_id' => $user->id,
+        'provider_id' => $provider->id,
+        'rating' => 5,
+        'review' => 'Excellent service!',
+    ]);
+
+    $response = $this->actingAs($provider, 'sanctum')->getJson('/api/v1/provider-reviews');
+
+    $response->assertStatus(200);
+    $response->assertJsonCount(1, 'data.data');
+    $response->assertJsonPath('data.data.0.rating', 5);
+    $response->assertJsonPath('data.data.0.review', 'Excellent service!');
+    $response->assertJsonPath('data.data.0.user.name', 'John Doe');
 });

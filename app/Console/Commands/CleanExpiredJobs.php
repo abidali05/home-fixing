@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\JobRequestModel;
+use App\Models\Orders;
 use Illuminate\Console\Command;
 
 class CleanExpiredJobs extends Command
@@ -28,10 +29,20 @@ class CleanExpiredJobs extends Command
     {
         $cutoff = now()->subHours(1);
 
-        // Find and delete pending jobs older than 1 hour
-        $expiredJobsCount = JobRequestModel::where('status', 'pending')
+        // Find the IDs of pending jobs older than 1 hour
+        $expiredJobIds = JobRequestModel::where('status', 'pending')
             ->where('created_at', '<=', $cutoff)
-            ->delete();
+            ->pluck('id');
+
+        if ($expiredJobIds->isNotEmpty()) {
+            // Delete associated orders
+            Orders::whereIn('job_id', $expiredJobIds)->delete();
+
+            // Delete the jobs
+            $expiredJobsCount = JobRequestModel::whereIn('id', $expiredJobIds)->delete();
+        } else {
+            $expiredJobsCount = 0;
+        }
 
         $this->info("Successfully deleted {$expiredJobsCount} expired job request(s).");
 

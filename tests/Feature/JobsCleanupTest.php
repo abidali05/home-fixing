@@ -46,6 +46,14 @@ test('cleanup deletes pending jobs older than 1 hour but keeps newer ones and no
         'created_at' => now()->subHours(2),
     ]);
 
+    $orderToDelete = \App\Models\Orders::create([
+        'user_id' => $user->id,
+        'provider_id' => 1,
+        'job_id' => $jobToDelete->id,
+        'source' => 'bid',
+        'status' => 'open',
+    ]);
+
     // 2. Pending job newer than 1 hour (created 30 minutes ago) -> Should be kept
     $jobToKeepNew = JobRequestModel::create([
         'user_id' => $user->id,
@@ -53,6 +61,14 @@ test('cleanup deletes pending jobs older than 1 hour but keeps newer ones and no
         'description' => 'Keep me, I am new',
         'status' => 'pending',
         'created_at' => now()->subMinutes(30),
+    ]);
+
+    $orderToKeepNew = \App\Models\Orders::create([
+        'user_id' => $user->id,
+        'provider_id' => 1,
+        'job_id' => $jobToKeepNew->id,
+        'source' => 'bid',
+        'status' => 'open',
     ]);
 
     // 3. Quoted job older than 1 hour (created 2 hours ago) -> Should be kept (hired)
@@ -64,6 +80,14 @@ test('cleanup deletes pending jobs older than 1 hour but keeps newer ones and no
         'created_at' => now()->subHours(2),
     ]);
 
+    $orderToKeepQuoted = \App\Models\Orders::create([
+        'user_id' => $user->id,
+        'provider_id' => 1,
+        'job_id' => $jobToKeepQuoted->id,
+        'source' => 'bid',
+        'status' => 'pending',
+    ]);
+
     // Run the cleanup command
     Artisan::call('jobs:cleanup');
 
@@ -71,4 +95,9 @@ test('cleanup deletes pending jobs older than 1 hour but keeps newer ones and no
     expect(JobRequestModel::find($jobToDelete->id))->toBeNull();
     expect(JobRequestModel::find($jobToKeepNew->id))->not->toBeNull();
     expect(JobRequestModel::find($jobToKeepQuoted->id))->not->toBeNull();
+
+    // Assert orders
+    expect(\App\Models\Orders::find($orderToDelete->id))->toBeNull();
+    expect(\App\Models\Orders::find($orderToKeepNew->id))->not->toBeNull();
+    expect(\App\Models\Orders::find($orderToKeepQuoted->id))->not->toBeNull();
 });

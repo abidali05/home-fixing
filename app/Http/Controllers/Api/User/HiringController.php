@@ -263,7 +263,7 @@ class HiringController extends Controller
                 $image->path = $image->path != null ? asset('uploads/job_gallery/' . $image->path) : asset('assets/img/default.jpg');
             }
 
-            $order = Orders::with('provider')->where('job_id', $request->id)->first();
+            $order = Orders::with('provider')->where('job_id', $request->id)->latest()->first();
             if ($order) {
                 $provider = $order->provider;
                 if ($provider) {
@@ -290,7 +290,7 @@ class HiringController extends Controller
     public function view_bids_by_request($id)
     {
         try {
-            $bids = BidModel::with('job', 'provider','order')->where('job_id', $id)->get();
+            $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
             return $this->success($bids);
         } catch (\Throwable $e) {
             Log::error('Error in view_bids_by_request: ' . $e->getMessage());
@@ -383,16 +383,16 @@ class HiringController extends Controller
             $bid->save();
 
             // Create order
-            $order = new Orders();
+            // Update existing order for this job
+            $order = Orders::where('job_id', $job->id)->first();
+
+            if (!$order) {
+                return $this->error('Order not found for this job.', 404);
+            }
+
             $order->provider_id = $bid->provider_id;
-            $order->user_id = $job->user_id;
-            $order->job_id = $job->id;
-            $order->source = 'bid';
-            $order->address = $job->address;
-            $order->details = $job->description;
             $order->price = $bid->price;
-            $order->status = 'pending';
-            $order->paid_to_system = 0;
+            $order->status = 'pending'; // or whatever status you want after bid acceptance
             $order->save();
 
             DB::commit();

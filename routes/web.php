@@ -29,6 +29,28 @@ Route::get('/', function () {
     return redirect('dashboard');
 });
 
+Route::get('/cron/jobs-cleanup/{token}', function ($token) {
+
+    // Change this token to something secret
+    abort_unless($token === 'azhlksa_cleanup_2026', 403);
+
+    Log::info('Cron route called', [
+        'ip' => request()->ip(),
+        'time' => now()->toDateTimeString(),
+    ]);
+
+    Artisan::call('jobs:cleanup');
+
+    Log::info('Cron command completed', [
+        'output' => Artisan::output(),
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'output' => Artisan::output(),
+    ]);
+});
+
 Route::get('/clear-cache', function () {
     try {
         Artisan::call('optimize:clear');

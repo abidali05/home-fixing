@@ -714,6 +714,7 @@ class GeneralContoller extends Controller
 
             $orders = Orders::with(['job.category', 'user'])
                 ->where('provider_id', auth()->id())
+                ->whereNotIn('status', ['open', 'completed','cancelled'])
                 ->latest()
                 ->limit(4)
                 ->get();

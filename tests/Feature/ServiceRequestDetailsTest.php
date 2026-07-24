@@ -281,6 +281,32 @@ test('provider home endpoint returns latest orders of provider', function () {
         'paid_to_system' => 0,
     ]);
 
+    // Create an 'open' status order that should be filtered out
+    Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price,
+        'status' => 'open',
+        'paid_to_system' => 0,
+    ]);
+
+    // Create a 'completed' status order that should be filtered out
+    Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price,
+        'status' => 'completed',
+        'paid_to_system' => 0,
+    ]);
+
     $response = $this->actingAs($provider, 'sanctum')->getJson('/api/v1/provider-home');
 
     $response->assertStatus(200);
@@ -292,6 +318,7 @@ test('provider home endpoint returns latest orders of provider', function () {
         ]
     ]);
 
+    // Should only contain the pending one, not open or completed
     $response->assertJsonCount(1, 'data.orders');
     $response->assertJsonPath('data.orders.0.id', $order->id);
 });

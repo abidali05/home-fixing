@@ -45,7 +45,7 @@ class AuthController extends Controller
         }
 
         try {
-            if ($request->phone === '+966561234567') {
+            if ($request->phone === '+966561234567' ||$request->phone === '+966561234576' || $request->phone === '+966531301056') {
                 return $this->success(null, 'OTP sent successfully');
             }
             $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));
@@ -71,7 +71,7 @@ class AuthController extends Controller
         }
 
         try {
-            if ($request->phone === '+966561234567' && $request->otp === '123456') {
+            if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' || $request->phone ==='+966561234576') && $request->otp === '123456') {
                 return $this->success(null, 'OTP verified successfully');
             }
             $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));

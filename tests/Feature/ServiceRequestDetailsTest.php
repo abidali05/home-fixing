@@ -5,6 +5,7 @@ use App\Models\JobRequestModel;
 use App\Models\BidModel;
 use App\Models\Orders;
 use App\Models\Reviews;
+use App\Models\OrderTracking;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 
@@ -468,4 +469,61 @@ test('otp generation and verification via cache works successfully', function ()
 
     // Check cache is cleared
     $this->assertNull(\Illuminate\Support\Facades\Cache::get('otp_+966567777777'));
+});
+
+test('track order endpoint returns formatted user and provider profile images in uploads/profile_images', function () {
+    $user = User::factory()->create([
+        'name' => 'John Client',
+        'role' => $this->roleCustomer,
+        'country' => $this->country,
+        'profile_image' => 'client_pic.png',
+    ]);
+
+    $provider = User::factory()->create([
+        'name' => 'Peter Provider',
+        'role' => $this->roleProvider,
+        'country' => $this->country,
+        'provider_status' => 'active',
+        'profile_image' => 'provider_pic.png',
+    ]);
+
+    $job = JobRequestModel::create([
+        'user_id' => $user->id,
+        'category_id' => $this->category,
+        'description' => 'Fix pipe leaking',
+        'job_date' => '2026-06-20',
+        'job_time' => '14:30',
+        'price' => 100,
+        'status' => 'quoted',
+        'address' => '123 Test St',
+        'latitude' => 37.7749,
+        'longitude' => -122.4194,
+    ]);
+
+    $order = Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price,
+        'status' => 'working',
+        'paid_to_system' => 0,
+    ]);
+
+    $tracking = OrderTracking::create([
+        'order_id' => $order->id,
+        'status' => 'working',
+        'details' => 'Provider started work',
+        'latitude' => 37.7749,
+        'longitude' => -122.4194,
+    ]);
+
+    $response = $this->actingAs($user, 'sanctum')->getJson('/api/v1/track-order/' . $order->id);
+
+    $response->assertStatus(200);
+    $response->assertJsonCount(1, 'data');
+    $response->assertJsonPath('data.0.order.user.profile_image', asset('uploads/profile_images/client_pic.png'));
+    $response->assertJsonPath('data.0.order.provider.profile_image', asset('uploads/profile_images/provider_pic.png'));
 });

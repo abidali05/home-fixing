@@ -1065,11 +1065,11 @@ class GeneralContoller extends Controller
             $order = $tracking->first()->order;
 
             $order->user->profile_image = $order->user->profile_image
-                ? asset('uploads/profile/' . $order->user->profile_image)
+                ? asset('uploads/profile_images/' . $order->user->profile_image)
                 : asset('assets/img/default.jpg');
 
             $order->provider->profile_image = $order->provider->profile_image
-                ? asset('uploads/profile/' . $order->provider->profile_image)
+                ? asset('uploads/profile_images/' . $order->provider->profile_image)
                 : asset('assets/img/default.jpg');
 
             $isCompleted = $order->status === 'completed';

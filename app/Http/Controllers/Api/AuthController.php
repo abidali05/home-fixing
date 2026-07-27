@@ -45,13 +45,27 @@ class AuthController extends Controller
         }
 
         try {
-            if ($request->phone === '+966561234567' ||$request->phone === '+966561234576' || $request->phone === '+966531301056') {
+            if ($request->phone === '+966561234567' || $request->phone === '+966561234576' || $request->phone === '+966531301056') {
                 return $this->success(null, 'OTP sent successfully');
             }
-            $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));
-            $twilio->verify->v2->services(config('services.twilio.verify_sid'))
-                ->verifications
-                ->create($request->phone, 'sms');
+            $otp = sprintf("%06d", random_int(100000, 999999));
+
+            // Store OTP in cache for 10 minutes
+            \Illuminate\Support\Facades\Cache::put('otp_' . $request->phone, $otp, now()->addMinutes(10));
+
+            $twilio = app(Client::class);
+
+            $messageParams = [
+                'body' => "Your Azhl verification code is " . $otp . "\nIi43T702uXm"
+            ];
+
+            if (config('services.twilio.messaging_sid')) {
+                $messageParams['messagingServiceSid'] = config('services.twilio.messaging_sid');
+            } else {
+                $messageParams['from'] = config('services.twilio.from');
+            }
+
+            $twilio->messages->create($request->phone, $messageParams);
 
             return $this->success(null, 'OTP sent successfully');
         } catch (\Exception $e) {
@@ -62,7 +76,7 @@ class AuthController extends Controller
     public function verify_otp(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
+            'phone' => 'string',
             'otp'   => 'required|digits:6',
         ]);
 
@@ -74,14 +88,13 @@ class AuthController extends Controller
             if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' || $request->phone ==='+966561234576') && $request->otp === '123456') {
                 return $this->success(null, 'OTP verified successfully');
             }
-            $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));
-            $result = $twilio->verify->v2->services(config('services.twilio.verify_sid'))
-                ->verificationChecks
-                ->create(['to' => $request->phone, 'code' => $request->otp]);
+            $cachedOtp = \Illuminate\Support\Facades\Cache::get('otp_' . $request->phone);
 
-            if ($result->status !== 'approved') {
+            if (!$cachedOtp || $cachedOtp !== $request->otp) {
                 return $this->error('Invalid or expired OTP', 422);
             }
+
+            \Illuminate\Support\Facades\Cache::forget('otp_' . $request->phone);
 
             return $this->success(null, 'OTP verified successfully');
         } catch (\Exception $e) {

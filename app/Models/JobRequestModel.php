@@ -31,6 +31,11 @@ class JobRequestModel extends Model
         return $this->hasMany(BidModel::class, 'job_id');
     }
 
+    public function order()
+    {
+        return $this->hasOne(Orders::class, 'job_id');
+    }
+
     public function providerBids()
     {
         return $this->hasMany(BidModel::class, 'job_id')

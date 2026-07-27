@@ -230,7 +230,7 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
 
-            $requests = JobRequestModel::with(['category', 'images'])
+            $requests = JobRequestModel::with(['category', 'images', 'order'])
                 ->where('user_id', $user->id)
                 ->orderByDesc('id')
                 ->get();
@@ -241,6 +241,8 @@ class HiringController extends Controller
                         ? asset('uploads/job_gallery/' . $image->path)
                         : asset('assets/img/default.jpg');
                 }
+
+                $request->setAttribute('order_status', $request->order ? $request->order->status : null);
             }
 
             return $this->success($requests);

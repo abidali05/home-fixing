@@ -62,6 +62,21 @@ test('accepting a bid automatically rejects all other pending bids and sends cus
         'longitude' => -122.4194,
     ]);
 
+    // Create corresponding order
+    DB::table('orders')->insert([
+        'provider_id' => null,
+        'user_id' => $customer->id,
+        'job_id' => $job->id,
+        'source' => 'bid',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => $job->price ?? 0,
+        'status' => 'open',
+        'paid_to_system' => 0,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
     // Create bids
     $bid1 = BidModel::create([
         'job_id' => $job->id,

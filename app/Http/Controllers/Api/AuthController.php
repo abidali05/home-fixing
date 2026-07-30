@@ -502,6 +502,12 @@ class AuthController extends Controller
             'document_type' => 'sometimes|nullable|string|max:255',
             'document_number' => 'sometimes|nullable|string|max:255',
             'name' => 'nullable|string|max:255',
+            'address' => 'nullable|string|max:255',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'marketplace_address' => 'nullable|string|max:255',
+            'marketplace_latitude' => 'nullable|numeric',
+            'marketplace_longitude' => 'nullable|numeric',
         ]);
 
         if ($validator->fails()) {
@@ -561,6 +567,9 @@ class AuthController extends Controller
                     'shop_status' => $request->shop_status ? strtolower($request->shop_status) : null,
                     'document_type' => $request->document_type,
                     'document_number' => $request->document_number,
+                    'address' => $request->marketplace_address ?? $request->address,
+                    'latitude' => $request->marketplace_latitude ?? $request->latitude,
+                    'longitude' => $request->marketplace_longitude ?? $request->longitude,
                 ]
             );
 
@@ -1134,6 +1143,9 @@ class AuthController extends Controller
             'shop_banner_image' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
             'shop_tagline'     => 'sometimes|nullable|string|max:255',
             'delivery_charges' => 'sometimes|nullable|numeric|min:0',
+            'marketplace_address'   => 'sometimes|nullable|string',
+            'marketplace_latitude'  => 'sometimes|nullable',
+            'marketplace_longitude' => 'sometimes|nullable',
             'operation_hours'  => 'sometimes|nullable|array',
             'shop_status'      => 'sometimes|nullable|in:on,off',
         ];
@@ -1248,6 +1260,9 @@ class AuthController extends Controller
         $user->email          = $request->email ?? $user->email;
         $user->phone          = $request->phone ?? $user->phone;
         $user->location_label = $request->location_label ?? $user->location_label;
+        $user->address        = $request->address ?? $user->address;
+        $user->latitude       = $request->latitude ?? $user->latitude;
+        $user->longitude      = $request->longitude ?? $user->longitude;
         $user->save();
 
         $marketplaceProfile->shop_title     = $request->shop_title ?? $marketplaceProfile->shop_title;
@@ -1259,6 +1274,9 @@ class AuthController extends Controller
         $marketplaceProfile->shop_status      = $request->shop_status ? strtolower($request->shop_status) : $marketplaceProfile->shop_status;
         $marketplaceProfile->document_type    = $request->document_type ?? $marketplaceProfile->document_type;
         $marketplaceProfile->document_number  = $request->document_number ?? $marketplaceProfile->document_number;
+        $marketplaceProfile->address          = $request->marketplace_address ?? $marketplaceProfile->address;
+        $marketplaceProfile->latitude         = $request->marketplace_latitude ?? $marketplaceProfile->latitude;
+        $marketplaceProfile->longitude        = $request->marketplace_longitude ?? $marketplaceProfile->longitude;
         $marketplaceProfile->save();
 
         $user = $this->decorateMarketplaceUser($user);
@@ -1704,18 +1722,18 @@ class AuthController extends Controller
             $lng  = $user->longitude;
 
             $marketplaces = User::query()
+                ->select('users.*')
+                ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->whereHas('marketplaceProfile')
-                ->where('id', '!=', $user->id)
-                ->where('marketplace_status', 'active')
+                ->where('users.id', '!=', $user->id)
+                ->where('users.marketplace_status', 'active')
                 ->when($lat && $lng, function ($q) use ($lat, $lng) {
-                    $q->whereNotNull('latitude')->whereNotNull('longitude')
-                        ->whereRaw(
-                            '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
-                            [$lat, $lng, $lat]
-                        );
+                    $q->whereRaw(
+                        '(6371 * acos(cos(radians(?)) * cos(radians(COALESCE(marketplace_profiles.latitude, users.latitude))) * cos(radians(COALESCE(marketplace_profiles.longitude, users.longitude)) - radians(?)) + sin(radians(?)) * sin(radians(COALESCE(marketplace_profiles.latitude, users.latitude))))) <= 5',
+                        [$lat, $lng, $lat]
+                    );
                 })
-                ->latest()
+                ->orderBy('users.created_at', 'desc')
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplaceUser($marketplace);
@@ -2660,7 +2678,7 @@ class AuthController extends Controller
             [$startDate, $endDate] = $this->resolveAnalyticsPeriod($period, $user->id);
 
             $orders = MarketplaceOrder::query()
-                ->select('id', 'status', 'created_at')
+                ->select('id', 'status', 'created_at', 'total_amount')
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id);
                 })
@@ -2700,9 +2718,7 @@ class AuthController extends Controller
             $summary = [
                 'total_earning' => round((float) $orders
                     ->where('status', 'completed')
-                    ->sum(function ($order) {
-                        return $order->items->sum('total_price');
-                    }), 2),
+                    ->sum('total_amount'), 2),
                 'total_orders' => $orders->count(),
                 'completed_orders' => $orders->where('status', 'completed')->count(),
                 'cancelled_orders' => $orders->where('status', 'reject')->count(),
@@ -2963,7 +2979,7 @@ class AuthController extends Controller
             if ($order->status === 'completed') {
                 $buckets[$bucketKey]['completed_orders']++;
                 $buckets[$bucketKey]['earnings'] = round(
-                    $buckets[$bucketKey]['earnings'] + (float) $order->items->sum('total_price'),
+                    $buckets[$bucketKey]['earnings'] + (float) $order->total_amount,
                     2
                 );
             }
@@ -3190,6 +3206,9 @@ class AuthController extends Controller
                     'shop_status' => $marketplaceProfile->shop_status,
                     'document_type' => $marketplaceProfile->document_type,
                     'document_number' => $marketplaceProfile->document_number,
+                    'address' => $marketplaceProfile->address,
+                    'latitude' => $marketplaceProfile->latitude,
+                    'longitude' => $marketplaceProfile->longitude,
                     'created_at' => $marketplaceProfile->created_at,
                     'updated_at' => $marketplaceProfile->updated_at,
                 ] : null,
@@ -3243,7 +3262,6 @@ class AuthController extends Controller
     {
         $role = (string) $user->role;
         if ($role === '1') return $user->providerProfile?->address ?? null;
-        if ($role === '2') return $user->marketplaceProfile?->address ?? $user->address;
         return $user->address ?? null;
     }
 
@@ -3251,7 +3269,6 @@ class AuthController extends Controller
     {
         $role = (string) $user->role;
         if ($role === '1') return $user->providerProfile?->latitude ?? null;
-        if ($role === '2') return $user->marketplaceProfile?->latitude ?? $user->latitude;
         return $user->latitude ?? null;
     }
 
@@ -3259,7 +3276,6 @@ class AuthController extends Controller
     {
         $role = (string) $user->role;
         if ($role === '1') return $user->providerProfile?->longitude ?? null;
-        if ($role === '2') return $user->marketplaceProfile?->longitude ?? $user->longitude;
         return $user->longitude ?? null;
     }
 
@@ -3371,6 +3387,9 @@ class AuthController extends Controller
         $user->shop_image = $profile->shop_logo
             ? asset('uploads/shop_logos/' . $profile->shop_logo)
             : asset('assets/img/default.jpg');
+        $user->marketplace_address = $profile->address;
+        $user->marketplace_latitude = $profile->latitude;
+        $user->marketplace_longitude = $profile->longitude;
 
         return $user;
     }

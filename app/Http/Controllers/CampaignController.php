@@ -81,20 +81,58 @@ class CampaignController extends Controller
 
     public function activeCampaigns()
     {
-        $campaigns = Campaign::with('product')
+        $campaigns = Campaign::with(['product.seller.marketplaceProfile'])
             ->where('status', 'active')
             ->get()
             ->map(function ($campaign) {
+                $product = $campaign->product;
+                if ($product) {
+                    $seller = $product->seller;
+                    if ($seller) {
+                        $shop = $seller->marketplaceProfile;
+                        if ($shop) {
+                            if ($shop->shop_logo && !str_starts_with($shop->shop_logo, 'http')) {
+                                $shop->shop_logo = asset('uploads/shop_logos/' . $shop->shop_logo);
+                            }
+                            if ($shop->shop_banner_image && !str_starts_with($shop->shop_banner_image, 'http')) {
+                                $shop->shop_banner_image = asset('uploads/shop_banners/' . $shop->shop_banner_image);
+                            }
+                        }
+                        $product->setAttribute('shop', $shop);
+                    } else {
+                        $product->setAttribute('shop', null);
+                    }
+
+                    if ($product->banner_image && !str_starts_with($product->banner_image, 'http')) {
+                        $product->banner_image = asset('uploads/products/' . $product->banner_image);
+                    }
+                    if ($product->product_images) {
+                        $images = is_array($product->product_images) ? $product->product_images : json_decode($product->product_images, true);
+                        if (is_array($images)) {
+                            $formattedImages = [];
+                            foreach ($images as $img) {
+                                $formattedImages[] = !str_starts_with($img, 'http') ? asset('uploads/products/' . $img) : $img;
+                            }
+                            $product->product_images = $formattedImages;
+                        }
+                    }
+                }
+
+                $campaignImage = $campaign->campaign_image;
+                if ($campaignImage && !str_starts_with($campaignImage, 'http')) {
+                    $campaignImage = asset('storage/' . $campaignImage);
+                }
+
                 return [
                     'id' => $campaign->id,
-                    'campaign_image' => $campaign->campaign_image,
+                    'campaign_image' => $campaignImage,
                     'title' => $campaign->title,
                     'subtitle' => $campaign->subtitle,
                     'start_date' => $campaign->start_date,
                     'end_date' => $campaign->end_date,
                     'status' => $campaign->status,
                     'product_id' => $campaign->product_id,
-                    'product' => $campaign->product,
+                    'product' => $product,
                     'total_visits_on_product_via_campaign' => ProductView::query()
                         ->where('campaign_id', $campaign->id)
                         ->where('is_through_campaign', true)

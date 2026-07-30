@@ -166,14 +166,14 @@ test('post service request accepts video up to 5mb', function () {
     expect($job->video)->toContain('uploads/job_gallery');
 });
 
-test('post service request rejects video above 5mb', function () {
+test('post service request rejects video above 10mb', function () {
     $user = User::factory()->create([
         'role' => $this->roleCustomer,
         'country' => $this->country,
     ]);
 
-    // 6MB video (6144 KB)
-    $videoFile = UploadedFile::fake()->create('leak_video.mp4', 6144, 'video/mp4');
+    // 11MB video (11264 KB)
+    $videoFile = UploadedFile::fake()->create('leak_video.mp4', 11264, 'video/mp4');
     $imageFile = UploadedFile::fake()->image('leak.jpg');
 
     $response = $this->actingAs($user, 'sanctum')->postJson('/api/v1/post-service-request', [

@@ -70,6 +70,8 @@ return new class extends Migration
             $table->string('charge_type')->nullable();
             $table->string('charge_amount')->nullable();
             $table->string('profile_image')->nullable();
+            $table->string('has_roles')->nullable();
+            $table->string('location_label')->nullable();
             $table->enum('status', ['active', 'banned', 'suspended', 'inactive'])->default('inactive');
             $table->timestamps();
 

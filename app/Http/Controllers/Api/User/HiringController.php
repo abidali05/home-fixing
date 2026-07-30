@@ -31,13 +31,15 @@ class HiringController extends Controller
             'address' => 'required|string|max:255',
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
-            'description' => 'required|string',
+            'description' => 'nullable|string',
             'job_date' => 'required|date',
             'job_time' => 'required|date_format:H:i',
             'place_pictures' => 'nullable|array',
             'place_pictures.*' => 'image|max:8192',
-            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:5120',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
             'equipment_option' => 'nullable',
+        ], [
+            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validator->fails()) {
@@ -49,6 +51,7 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
             if (!$user) {
+                DB::rollBack();
                 return $this->error('Unauthorized.', 401);
             }
 
@@ -128,7 +131,7 @@ class HiringController extends Controller
     {
         $validated = Validator::make($request->all(), [
             'service_id' => 'required|exists:categories,id',
-            'description' => 'required|string',
+            'description' => 'nullable|string',
             'date' => 'required|date',
             'time' => 'required|date_format:H:i',
             'address' => 'required|string|max:255',
@@ -136,8 +139,10 @@ class HiringController extends Controller
             'longitude' => 'required|numeric',
             'place_pictures' => 'required|array',
             'place_pictures.*' => 'image|max:8192',
-            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:5120',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
             'equipment_option' => 'nullable',
+        ], [
+            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validated->fails()) {
@@ -149,6 +154,7 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
             if ((int) $user->role !== 0) {
+                DB::rollBack();
                 return $this->error('Only normal users can create service requests.', 403);
             }
 
@@ -306,9 +312,11 @@ class HiringController extends Controller
             DB::beginTransaction();
             $customer = auth('sanctum')->user();
             if (!$customer) {
+                DB::rollBack();
                 return $this->error('Unauthorized.', 401);
             }
             if ((int) $customer->role !== 0) {
+                DB::rollBack();
                 return $this->error('Only customers can accept or reject bids.', 403);
             }
 
@@ -320,16 +328,19 @@ class HiringController extends Controller
                 ->first();
 
             if (!$bid) {
+                DB::rollBack();
                 return $this->error('Bid not found.', 404);
             }
 
             $job = $bid->job;
 
             if (!in_array($job->status, ['pending', 'quoted'])) {
+                DB::rollBack();
                 return $this->error('This job request is not available.', 400);
             }
 
             if ((int) $job->user_id !== (int) $customer->id) {
+                DB::rollBack();
                 return $this->error('You are not allowed to update this bid.', 403);
             }
 
@@ -389,6 +400,7 @@ class HiringController extends Controller
             $order = Orders::where('job_id', $job->id)->first();
 
             if (!$order) {
+                DB::rollBack();
                 return $this->error('Order not found for this job.', 404);
             }
 

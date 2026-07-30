@@ -12,6 +12,7 @@ use App\Models\CityModel;
 use App\Models\FaqModel;
 use App\Models\Cart;
 use Illuminate\Http\Request;
+use App\Models\MarketplaceOrder;
 use App\Models\OrderTracking;
 use App\Models\JobRequestModel;
 use App\Models\ProviderGallery;
@@ -148,18 +149,18 @@ class GeneralContoller extends Controller
                 })->values();
 
             $marketplaces = User::query()
+                ->select('users.*')
+                ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->whereHas('marketplaceProfile')
-                ->where('id', '!=', $user->id)
-                ->where('marketplace_status', 'active')
+                ->where('users.id', '!=', $user->id)
+                ->where('users.marketplace_status', 'active')
                 ->when($lat && $lng, function ($q) use ($lat, $lng) {
-                    $q->whereNotNull('latitude')->whereNotNull('longitude')
-                      ->whereRaw(
-                          '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
-                          [$lat, $lng, $lat]
-                      );
+                    $q->whereRaw(
+                        '(6371 * acos(cos(radians(?)) * cos(radians(COALESCE(marketplace_profiles.latitude, users.latitude))) * cos(radians(COALESCE(marketplace_profiles.longitude, users.longitude)) - radians(?)) + sin(radians(?)) * sin(radians(COALESCE(marketplace_profiles.latitude, users.latitude))))) <= 5',
+                        [$lat, $lng, $lat]
+                    );
                 })
-                ->latest()
+                ->orderBy('users.created_at', 'desc')
                 ->limit(4)
                 ->get()
                 ->map(function ($marketplace) {
@@ -180,6 +181,13 @@ class GeneralContoller extends Controller
                 ->limit(4)
                 ->get();
 
+            $active_marketplace_orders = MarketplaceOrder::with('items')
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['pending', 'accept', 'processing', 'mark_as_shipped', 'mark_as_delivered'])
+                ->latest()
+                ->limit(4)
+                ->get();
+
             $cart_count = Cart::where('user_id', $user->id)->count();
 
             return $this->success([
@@ -188,6 +196,7 @@ class GeneralContoller extends Controller
                 'providers'      => $providers,
                 'marketplaces'   => $marketplaces,
                 'active_orders'  => $active_orders,
+                'active_marketplace_orders' => $active_marketplace_orders,
                 'cart_count'     => $cart_count,
             ], 'Home page fetched successfully');
         } catch (\Exception $e) {

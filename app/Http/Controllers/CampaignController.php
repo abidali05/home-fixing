@@ -104,14 +104,14 @@ class CampaignController extends Controller
                     }
 
                     if ($product->banner_image && !str_starts_with($product->banner_image, 'http')) {
-                        $product->banner_image = asset('uploads/products/' . $product->banner_image);
+                        $product->banner_image = asset('storage/' . $product->banner_image);
                     }
                     if ($product->product_images) {
                         $images = is_array($product->product_images) ? $product->product_images : json_decode($product->product_images, true);
                         if (is_array($images)) {
                             $formattedImages = [];
                             foreach ($images as $img) {
-                                $formattedImages[] = !str_starts_with($img, 'http') ? asset('uploads/products/' . $img) : $img;
+                                $formattedImages[] = !str_starts_with($img, 'http') ? asset('storage/' . $img) : $img;
                             }
                             $product->product_images = $formattedImages;
                         }

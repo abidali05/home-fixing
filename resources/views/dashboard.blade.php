@@ -8,9 +8,9 @@
             padding: 1.7rem 1.85rem;
             border: 1px solid #e4ecf2;
             border-radius: 30px;
-            background: linear-gradient(135deg, #173042 0%, #214b61 56%, #2aa6ba 100%);
+            background: linear-gradient(135deg, #4F2396 0%, #a050e0 60%, #F27D4B 100%);
             color: #fff;
-            box-shadow: 0 18px 40px rgba(24, 52, 71, 0.12);
+            box-shadow: 0 18px 40px rgba(79, 35, 150, 0.12);
         }
 
         .dashboard-hero-title {
@@ -136,7 +136,7 @@
             box-shadow: 0 10px 20px rgba(23, 48, 66, 0.14);
         }
 
-        .tone-sky { background: linear-gradient(135deg, #2bbdce 0%, #1690c7 100%); }
+        .tone-sky { background: linear-gradient(135deg, #4F2396 0%, #2b1154 100%); }
         .tone-mint { background: linear-gradient(135deg, #1dbf9f 0%, #0f8b74 100%); }
         .tone-violet { background: linear-gradient(135deg, #6378ff 0%, #4457d7 100%); }
         .tone-amber { background: linear-gradient(135deg, #f2b84a 0%, #db8b1a 100%); }
@@ -284,21 +284,23 @@
                 </p>
                 <div class="dashboard-summary-strip">
                     <div class="dashboard-summary-chip">
-                        <span class="dashboard-summary-label">Service Revenue</span>
+                        <span class="dashboard-summary-label">Provider Service Revenue</span>
                         <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['service_revenue'], 2) }}</div>
                     </div>
                     <div class="dashboard-summary-chip">
                         <span class="dashboard-summary-label">Pending To System</span>
                         <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['pending_to_system'], 2) }}</div>
                     </div>
-                    <div class="dashboard-summary-chip">
-                        <span class="dashboard-summary-label">Marketplace Revenue</span>
-                        <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['marketplace_revenue'], 2) }}</div>
-                    </div>
-                    <div class="dashboard-summary-chip">
-                        <span class="dashboard-summary-label">Active Campaigns</span>
-                        <div class="dashboard-summary-value">{{ number_format($financialSummary['active_campaigns']) }}</div>
-                    </div>
+                    @if(!optional(Auth::guard('admin')->user())->is_company)
+                        <div class="dashboard-summary-chip">
+                            <span class="dashboard-summary-label">Marketplace Revenue</span>
+                            <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['marketplace_revenue'], 2) }}</div>
+                        </div>
+                        <div class="dashboard-summary-chip">
+                            <span class="dashboard-summary-label">Registered Marketplaces</span>
+                            <div class="dashboard-summary-value">{{ number_format($financialSummary['active_campaigns']) }}</div>
+                        </div>
+                    @endif
                 </div>
             </div>
 
@@ -350,6 +352,7 @@
                         </div>
                     </div>
                 </div>
+                @if(!optional(Auth::guard('admin')->user())->is_company)
                 <div class="col-xl-6 d-flex">
                     <div class="dashboard-panel w-100">
                         <div class="dashboard-panel-header">
@@ -395,30 +398,193 @@
                 <div class="col-12 d-flex">
                     <div class="dashboard-panel w-100">
                         <div class="dashboard-panel-header">
-                            <h6 class="dashboard-panel-title">Top Seller Activity</h6>
-                            <p class="dashboard-panel-subtitle">Sellers ranked by marketplace orders, with their product count alongside.</p>
+                            <h6 class="dashboard-panel-title">Registered Marketplaces</h6>
+                            <p class="dashboard-panel-subtitle">All registered sellers and their current subscription end date.</p>
                         </div>
                         <div class="dashboard-panel-body">
-                            <div class="row g-3">
-                                @forelse ($topSellers as $seller)
-                                    <div class="col-lg-4 col-md-6 d-flex">
-                                        <div class="dashboard-list-item w-100">
-                                            <div>
-                                                <div class="dashboard-list-title">{{ $seller->shop_title ?: $seller->name ?: 'Unnamed Seller' }}</div>
-                                                <div class="dashboard-list-subtitle">{{ $seller->products_count }} products listed</div>
-                                            </div>
-                                            <div class="dashboard-list-value">
-                                                <div>{{ $seller->orders_count }} orders</div>
-                                            </div>
+                            <div class="table-responsive">
+                                <table class="table align-middle text-sm mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Shop Title</th>
+                                            <th>Owner Name</th>
+                                            <th>Registered Date</th>
+                                            <th>Expiration Date</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse($registeredMarketplaces as $shop)
+                                            @php
+                                                $isExpired = $shop->expires_at ? \Illuminate\Support\Carbon::parse($shop->expires_at)->isPast() : false;
+                                            @endphp
+                                            <tr>
+                                                <td class="font-weight-bold text-dark">{{ $shop->shop_title }}</td>
+                                                <td>{{ $shop->owner_name }}</td>
+                                                <td>{{ \Illuminate\Support\Carbon::parse($shop->created_at)->format('d M Y') }}</td>
+                                                <td>{{ $shop->expires_at ? \Illuminate\Support\Carbon::parse($shop->expires_at)->format('d M Y') : 'N/A' }}</td>
+                                                <td>
+                                                    @if($isExpired)
+                                                        <span class="badge bg-danger text-white">Expired</span>
+                                                    @else
+                                                        <span class="badge bg-success text-white">Active</span>
+                                                    @endif
+                                                </td>
+                                            </tr>
+                                        @empty
+                                            <tr>
+                                                <td colspan="5" class="text-center text-muted py-4">No registered marketplaces found.</td>
+                                            </tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                @endif
+
+                {{-- Leaderboards Row 1: Top Providers (Bids) & Top Providers (Tasks) --}}
+                <div class="col-xl-6 col-lg-6 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header">
+                            <h6 class="dashboard-panel-title">Top Providers (Bids)</h6>
+                            <p class="dashboard-panel-subtitle">Service providers ranked by submitted bids count.</p>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="dashboard-list">
+                                @forelse($topProvidersBids as $provider)
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <div class="dashboard-list-title">{{ $provider->name }}</div>
+                                            <div class="dashboard-list-subtitle">{{ $provider->phone }}</div>
+                                        </div>
+                                        <div class="dashboard-list-value">
+                                            <div>{{ $provider->bids_count }} bids</div>
                                         </div>
                                     </div>
                                 @empty
-                                    <div class="col-12 text-muted">No seller performance data available yet.</div>
+                                    <div class="text-muted text-xs p-2">No bid statistics available.</div>
                                 @endforelse
                             </div>
                         </div>
                     </div>
                 </div>
+
+                <div class="col-xl-6 col-lg-6 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header">
+                            <h6 class="dashboard-panel-title">Top Providers (Tasks)</h6>
+                            <p class="dashboard-panel-subtitle">Providers ranked by completed task count.</p>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="dashboard-list">
+                                @forelse($topProvidersTasks as $provider)
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <div class="dashboard-list-title">{{ $provider->name }}</div>
+                                            <div class="dashboard-list-subtitle">{{ $provider->phone }}</div>
+                                        </div>
+                                        <div class="dashboard-list-value">
+                                            <div>{{ $provider->tasks_count }} tasks</div>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted text-xs p-2">No task completion statistics.</div>
+                                @endforelse
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                @if(!optional(Auth::guard('admin')->user())->is_company)
+                <div class="col-xl-6 col-lg-6 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header">
+                            <h6 class="dashboard-panel-title">Top Marketplaces (Orders)</h6>
+                            <p class="dashboard-panel-subtitle">Marketplace shops ranked by order count.</p>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="dashboard-list">
+                                @forelse($topMarketplacesOrders as $shop)
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <div class="dashboard-list-title">{{ $shop->shop_title }}</div>
+                                            <div class="dashboard-list-subtitle">Owner: {{ $shop->name }}</div>
+                                        </div>
+                                        <div class="dashboard-list-value">
+                                            <div>{{ $shop->orders_count }} orders</div>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted text-xs p-2">No marketplace order statistics.</div>
+                                @endforelse
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                @endif
+
+                @if(!optional(Auth::guard('admin')->user())->is_company)
+                {{-- Leaderboards Row 2 --}}
+                <div class="col-xl-6 col-lg-6 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header">
+                            <h6 class="dashboard-panel-title">Top Rated Providers</h6>
+                            <p class="dashboard-panel-subtitle">Providers ranked by average review rating.</p>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="dashboard-list">
+                                @forelse($topRatedProviders as $provider)
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <div class="dashboard-list-title">{{ $provider->name }}</div>
+                                            <div class="dashboard-list-subtitle">{{ $provider->phone }}</div>
+                                        </div>
+                                        <div class="dashboard-list-value">
+                                            <div class="text-warning">
+                                                <i class="bi bi-star-fill me-1"></i>{{ $provider->avg_rating }} / 5.0
+                                            </div>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted text-xs p-2">No ratings available.</div>
+                                @endforelse
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                @endif
+
+                @if(!optional(Auth::guard('admin')->user())->is_company)
+                <div class="col-lg-6 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header">
+                            <h6 class="dashboard-panel-title">Top Rated Marketplaces</h6>
+                            <p class="dashboard-panel-subtitle">Shops ranked by average customer rating.</p>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="dashboard-list">
+                                @forelse($topRatedMarketplaces as $shop)
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <div class="dashboard-list-title">{{ $shop->shop_title }}</div>
+                                            <div class="dashboard-list-subtitle">Owner: {{ $shop->name }}</div>
+                                        </div>
+                                        <div class="dashboard-list-value">
+                                            <div class="text-warning">
+                                                <i class="bi bi-star-fill me-1"></i>{{ $shop->avg_rating }} / 5.0
+                                            </div>
+                                        </div>
+                                    </div>
+                                @empty
+                                    <div class="text-muted text-xs p-2">No shop reviews available.</div>
+                                @endforelse
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                @endif
             </div>
         </div>
     </main>
@@ -435,29 +601,29 @@
                 datasets: [{
                     label: 'Users',
                     data: @json($growthChart['series']['users']),
-                    borderColor: '#2bbdce',
-                    backgroundColor: 'rgba(43, 189, 206, 0.12)',
+                    borderColor: '#4F2396',
+                    backgroundColor: 'rgba(79, 35, 150, 0.12)',
                     tension: 0.35,
                     fill: false
                 }, {
                     label: 'Providers',
                     data: @json($growthChart['series']['providers']),
-                    borderColor: '#1dbf9f',
-                    backgroundColor: 'rgba(29, 191, 159, 0.12)',
+                    borderColor: '#F27D4B',
+                    backgroundColor: 'rgba(242, 125, 75, 0.12)',
                     tension: 0.35,
                     fill: false
                 }, {
                     label: 'Sellers',
                     data: @json($growthChart['series']['sellers']),
-                    borderColor: '#6378ff',
-                    backgroundColor: 'rgba(99, 120, 255, 0.12)',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.12)',
                     tension: 0.35,
                     fill: false
                 }, {
                     label: 'Requests',
                     data: @json($growthChart['series']['requests']),
-                    borderColor: '#f2b84a',
-                    backgroundColor: 'rgba(242, 184, 74, 0.12)',
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.12)',
                     tension: 0.35,
                     fill: false
                 }]
@@ -491,7 +657,7 @@
                 labels: @json($serviceRevenueChart['labels']),
                 datasets: [{
                     data: @json($serviceRevenueChart['values']),
-                    backgroundColor: ['#2bbdce', '#ea5f68'],
+                    backgroundColor: ['#4F2396', '#F27D4B'],
                     borderWidth: 0
                 }]
             },
@@ -513,35 +679,37 @@
             }
         });
 
-        new Chart(document.getElementById('marketplaceStatusChart'), {
-            type: 'bar',
-            data: {
-                labels: @json($marketplaceStatusChart['labels']),
-                datasets: [{
-                    label: 'Orders',
-                    data: @json($marketplaceStatusChart['values']),
-                    backgroundColor: ['#6378ff', '#1dbf9f', '#ff8b73'],
-                    borderRadius: 12,
-                    borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    }
+        if (document.getElementById('marketplaceStatusChart')) {
+            new Chart(document.getElementById('marketplaceStatusChart'), {
+                type: 'bar',
+                data: {
+                    labels: @json($marketplaceStatusChart['labels']),
+                    datasets: [{
+                        label: 'Orders',
+                        data: @json($marketplaceStatusChart['values']),
+                        backgroundColor: ['#6378ff', '#1dbf9f', '#ff8b73'],
+                        borderRadius: 12,
+                        borderSkipped: false
+                    }]
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            precision: 0
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
+        }
     </script>
 @endpush

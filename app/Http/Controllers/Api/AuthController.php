@@ -570,6 +570,7 @@ class AuthController extends Controller
                     'address' => $request->marketplace_address ?? $request->address,
                     'latitude' => $request->marketplace_latitude ?? $request->latitude,
                     'longitude' => $request->marketplace_longitude ?? $request->longitude,
+                    'expires_at' => now()->addYear(),
                 ]
             );
 

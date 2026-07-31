@@ -180,7 +180,7 @@
 
                                 {{-- Submit --}}
                                 <div class="d-flex justify-content-end">
-                                    <button type="submit" style="background-color: #2BBDCE; color: white;" class="btn ">
+                                    <button type="submit" style="background-color: #4F2396; color: white;" class="btn ">
                                         <i class="bi bi-save me-1"></i> Update Request
                                     </button>
                                 </div>

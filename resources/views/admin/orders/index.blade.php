@@ -58,7 +58,7 @@
                                             </select>
                                         </div>
                                         <div class="col-md-3">
-                                            <button type="submit" class="btn w-100" style="background-color: #2BBDCE; color: white;">Search</button>
+                                            <button type="submit" class="btn w-100" style="background-color: #4F2396; color: white;">Search</button>
                                             @if (request('user_id'))
                                                 <a href="{{ route('orders.index') }}"
                                                     class="btn btn-secondary ms-2">Clear</a>
@@ -102,7 +102,7 @@
                                             </select>
                                         </div>
                                         <div class="col-md-3">
-                                            <button type="submit" class="btn  w-100" style="background-color: #2BBDCE; color: white;">Search</button>
+                                            <button type="submit" class="btn  w-100" style="background-color: #4F2396; color: white;">Search</button>
                                             @if (request('provider_id'))
                                                 <a href="{{ route('orders.index') }}"
                                                     class="btn btn-secondary ms-2">Clear</a>

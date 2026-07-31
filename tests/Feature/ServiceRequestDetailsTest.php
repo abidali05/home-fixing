@@ -1059,3 +1059,131 @@ test('profile endpoint returns marketplace location details for seller', functio
     $response->assertJsonPath('data.marketplace_profile.latitude', '24.1111');
     $response->assertJsonPath('data.marketplace_profile.longitude', '46.2222');
 });
+
+test('service order receipt endpoint returns correct receipt structure and values', function () {
+    $user = User::factory()->create([
+        'name' => 'Test Customer',
+        'role' => $this->roleCustomer,
+        'country' => $this->country,
+    ]);
+
+    $provider = User::factory()->create([
+        'name' => 'Test Provider',
+        'role' => $this->roleProvider,
+        'country' => $this->country,
+        'provider_status' => 'active',
+    ]);
+
+    $job = JobRequestModel::create([
+        'user_id' => $user->id,
+        'category_id' => $this->category,
+        'description' => 'Clean the AC units',
+        'job_date' => '2026-06-25',
+        'job_time' => '10:00',
+        'address' => 'Riyadh Road',
+        'latitude' => 24.1234,
+        'longitude' => 46.1234,
+        'price' => 150.00,
+        'status' => 'pending',
+    ]);
+
+    $order = Orders::create([
+        'provider_id' => $provider->id,
+        'user_id' => $user->id,
+        'job_id' => $job->id,
+        'source' => 'direct',
+        'address' => $job->address,
+        'details' => $job->description,
+        'price' => 150.00,
+        'status' => 'completed',
+        'paid_to_system' => 0,
+    ]);
+
+    $response = $this->actingAs($user, 'sanctum')->getJson("/api/v1/orders/{$order->id}/receipt");
+
+    $response->assertStatus(200);
+    $response->assertJsonPath('data.order_id', $order->id);
+    $response->assertJsonPath('data.amount', 150);
+    $response->assertJsonPath('data.customer.name', 'Test Customer');
+    $response->assertJsonPath('data.provider.name', 'Test Provider');
+    $response->assertJsonPath('data.job_details.description', 'Clean the AC units');
+});
+
+test('marketplace order receipt endpoint returns correct receipt structure and values', function () {
+    DB::table('roles')->insertOrIgnore([
+        'id' => 2,
+        'name' => 'Seller',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $customer = User::factory()->create([
+        'name' => 'Customer User',
+        'role' => $this->roleCustomer,
+        'country' => $this->country,
+    ]);
+
+    $seller = User::factory()->create([
+        'name' => 'Seller User',
+        'role' => 2,
+        'country' => $this->country,
+        'marketplace_status' => 'active',
+    ]);
+
+    $profile = MarketplaceProfile::create([
+        'user_id' => $seller->id,
+        'shop_title' => 'Gadgets Store',
+        'address' => 'Riyadh Shop Address',
+        'latitude' => 24.4444,
+        'longitude' => 46.4444,
+    ]);
+
+    $product = \App\Models\Product::create([
+        'user_id' => $seller->id,
+        'category_id' => $this->category,
+        'product_name' => 'Wireless Keyboard',
+        'price' => 80.00,
+        'total_stock' => 10,
+        'product_description' => 'Mechanical keyboard',
+        'status' => 'active',
+    ]);
+
+    $order = MarketplaceOrder::create([
+        'user_id' => $customer->id,
+        'order_number' => 'MKT-ORD-1122',
+        'status' => 'pending',
+        'total_amount' => 170.00,
+        'shipping_cost' => 10.00,
+        'payment_status' => 'paid',
+    ]);
+
+    \App\Models\MarketplaceOrderItem::create([
+        'marketplace_order_id' => $order->id,
+        'product_id' => $product->id,
+        'shop_id' => $seller->id,
+        'product_name' => $product->product_name,
+        'quantity' => 2,
+        'base_price' => 80.00,
+        'total_price' => 160.00,
+    ]);
+
+    // Test as customer (can see everything)
+    $response = $this->actingAs($customer, 'sanctum')->getJson("/api/v1/marketplace/orders/{$order->id}/receipt");
+
+    $response->assertStatus(200);
+    $response->assertJsonPath('data.order_id', $order->id);
+    $response->assertJsonPath('data.order_number', 'MKT-ORD-1122');
+    $response->assertJsonPath('data.subtotal', 160);
+    $response->assertJsonPath('data.delivery_charges', 10);
+    $response->assertJsonPath('data.total_amount', 170);
+    $response->assertJsonPath('data.items.0.product_title', 'Wireless Keyboard');
+    $response->assertJsonPath('data.items.0.shop_title', 'Gadgets Store');
+
+    // Test as seller (only sees their items and no delivery_charges in total_amount)
+    $responseSeller = $this->actingAs($seller, 'sanctum')->getJson("/api/v1/marketplace/orders/{$order->id}/receipt");
+
+    $responseSeller->assertStatus(200);
+    $responseSeller->assertJsonPath('data.subtotal', 160);
+    $responseSeller->assertJsonPath('data.delivery_charges', 0);
+    $responseSeller->assertJsonPath('data.total_amount', 160);
+});

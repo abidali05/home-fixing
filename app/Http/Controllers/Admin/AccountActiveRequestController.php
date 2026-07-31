@@ -43,7 +43,7 @@ class AccountActiveRequestController extends Controller
         try {
             $activeRequest = AccountActiveRequest::findOrFail($id);
             $user = User::findOrFail($activeRequest->user_id);
-            
+
             // Activate the user account depending on their current role
             $role = (int) $user->role;
             if ($role === 1) {

@@ -13,9 +13,11 @@
                                 <h6 class="admin-panel-title">Providers</h6>
                                 <p class="admin-panel-subtitle">Manage provider approvals, visibility, and service details.</p>
                             </div>
-                            <a href="{{ route('providers.create') }}" class="btn btn-sm btn-primary">
-                                <i class="bi bi-plus-lg me-1"></i> Add New Provider
-                            </a>
+                            @if(!$isCompany)
+                                <a href="{{ route('providers.create') }}" class="btn btn-sm btn-primary">
+                                    <i class="bi bi-plus-lg me-1"></i> Add New Provider
+                                </a>
+                            @endif
                         </div>
                         <div class="card-body">
                             @if (session('success'))
@@ -103,6 +105,7 @@
                                             <th>ID</th>
                                             <th>Provider</th>
                                             <th>Contact</th>
+                                            <th>Company</th>
                                             <th>City</th>
                                             <th>Services</th>
                                             <th>Type</th>
@@ -133,13 +136,37 @@
                                                             alt="{{ $provider->name }}" class="admin-avatar me-2">
                                                         <div>
                                                             <div class="fw-semibold">{{ $provider->name }}</div>
-                                                            <small class="text-muted">{{ $profile?->company_name ?: 'Individual Provider' }}</small>
+                                                            <small class="text-muted">{{ $profile?->company_name ?: ($provider->company_name ?: 'Individual Provider') }}</small>
                                                         </div>
                                                     </div>
                                                 </td>
                                                 <td>
                                                     <div>{{ $provider->email ?: '-' }}</div>
                                                     <small class="text-muted">{{ $provider->phone }}</small>
+                                                </td>
+                                                <td>
+                                                    @if($isCompany)
+                                                        <span class="badge bg-light text-primary border"><i class="bi bi-building me-1"></i> {{ optional(Auth::guard('admin')->user())->name }}</span>
+                                                    @else
+                                                        @php
+                                                            $assignedCompany = $companies->firstWhere('id', $provider->company_id);
+                                                            $reqCompany = $provider->company_name ?: ($profile?->company_name ?? null);
+                                                        @endphp
+                                                        <form action="{{ route('providers.assign_company', $provider->id) }}" method="POST" class="admin-loader-form">
+                                                            @csrf
+                                                            <select name="company_id" class="form-select form-select-sm admin-auto-submit mb-1" style="min-width: 140px;">
+                                                                <option value="">-- No Company --</option>
+                                                                @foreach($companies as $c)
+                                                                    <option value="{{ $c->id }}" {{ $provider->company_id == $c->id ? 'selected' : '' }}>
+                                                                        {{ $c->name }}
+                                                                    </option>
+                                                                @endforeach
+                                                            </select>
+                                                            @if($reqCompany)
+                                                                <small class="text-muted d-block" style="font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i>Requested: <strong>{{ $reqCompany }}</strong></small>
+                                                            @endif
+                                                        </form>
+                                                    @endif
                                                 </td>
                                                 <td>{{ $provider->cityname }}</td>
                                                 <td>

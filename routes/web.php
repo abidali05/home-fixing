@@ -19,6 +19,8 @@ use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\SystemUserController;
 use App\Http\Controllers\Admin\UsersController;
 use App\Http\Controllers\Admin\AccountActiveRequestController;
+use App\Http\Controllers\Admin\NotificationController;
+use App\Http\Controllers\Admin\CompanyController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Artisan;
@@ -152,6 +154,7 @@ Route::post('check-phone-availability', [SystemUserController::class, 'checkPhon
 
 Route::middleware(['auth:admin'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/sidebar-notifications', [DashboardController::class, 'getNotifications'])->name('sidebar_notifications');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
@@ -164,6 +167,8 @@ Route::middleware(['auth:admin'])->group(function () {
         Route::resource('terms_conditions', TermsConditionController::class);
         Route::get('app-versions', [AppVersionController::class, 'index'])->name('app_versions.index');
         Route::post('app-versions/save', [AppVersionController::class, 'save'])->name('app_versions.save');
+        Route::get('notifications/send', [NotificationController::class, 'create'])->name('notifications.create');
+        Route::post('notifications/send', [NotificationController::class, 'store'])->name('notifications.store');
     });
 
 
@@ -284,6 +289,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('providers/edit/{id}', [ProviderController::class, 'edit'])->name('providers.edit')->middleware('CheckPermission:20');
     Route::post('providers/update/{id}', [ProviderController::class, 'update'])->name('providers.update')->middleware('CheckPermission:20');
     Route::post('providers/status/{id}', [ProviderController::class, 'updateStatus'])->name('providers.status');
+    Route::post('providers/assign-company/{id}', [ProviderController::class, 'assignCompany'])->name('providers.assign_company');
     Route::delete('providers/delete/{id}', [ProviderController::class, 'destroy'])->name('providers.delete')->middleware('CheckPermission:21');
     Route::get('delete-provider-gallery-image/{id}', [ProviderController::class, 'deleteProviderImage'])->name('providers.deleteProviderImage')->middleware('CheckPermission:20');
 
@@ -296,6 +302,12 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('sellers/update/{id}', [SellerController::class, 'update'])->name('sellers.update');
     Route::post('sellers/status/{id}', [SellerController::class, 'updateStatus'])->name('sellers.status');
     // ====================================================================Sellers End===============================================================================
+
+    // ====================================================================Companies Start===============================================================================
+    Route::resource('companies', CompanyController::class);
+    Route::get('companies/{id}/assign', [CompanyController::class, 'assignProvidersForm'])->name('companies.assign.form');
+    Route::post('companies/{id}/assign', [CompanyController::class, 'assignProviders'])->name('companies.assign');
+    // ====================================================================Companies End===============================================================================
 
     // ====================================================================Marketplace Start===============================================================================
     Route::prefix('marketplace')->name('marketplace.')->group(function () {

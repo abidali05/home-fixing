@@ -51,14 +51,18 @@ class UsersController extends Controller
                 ->addColumn('action', function ($row) use ($rolePermissions) {
                     $editUrl = route('users.edit', $row->id);
 
-                    $actionBtns = '';
+                    $actionBtns = '<div class="admin-icon-actions">';
+
+                    $actionBtns .= '<a href="javascript:void(0);" class="admin-icon-btn warning open-direct-notification-modal" data-user-id="' . $row->id . '" data-user-name="' . e($row->name) . '" title="Send Push Notification"><i class="bi bi-bell-fill"></i></a>';
 
                     if (in_array(16, $rolePermissions)) {
-                        $actionBtns .= '<a href="' . $editUrl . '" class="btn btn-sm btn-link text-primary me-2"><i class="bi bi-pencil-square"></i></a>';
+                        $actionBtns .= '<a href="' . $editUrl . '" class="admin-icon-btn primary" title="Edit User"><i class="bi bi-pencil-square"></i></a>';
                     }
                     if (in_array(17, $rolePermissions)) {
-                        $actionBtns .= '<a href="javascript:void(0);" class="btn btn-sm btn-link text-danger deleteUserBtn" data-id="' . $row->id . '"><i class="bi bi-trash-fill"></i></a>';
+                        $actionBtns .= '<a href="javascript:void(0);" class="admin-icon-btn danger deleteUserBtn" data-id="' . $row->id . '" title="Delete User"><i class="bi bi-trash-fill"></i></a>';
                     }
+
+                    $actionBtns .= '</div>';
                     return $actionBtns;
                 })
 

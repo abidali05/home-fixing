@@ -45,7 +45,7 @@ class AuthController extends Controller
         }
 
         try {
-            if ($request->phone === '+966561234567' || $request->phone === '+966561234576' || $request->phone === '+966531301056') {
+            if ($request->phone === '+966561234567' || $request->phone === '+966561234576') {
                 return $this->success(null, 'OTP sent successfully');
             }
             $otp = sprintf("%06d", random_int(100000, 999999));
@@ -85,7 +85,7 @@ class AuthController extends Controller
         }
 
         try {
-            if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' || $request->phone ==='+966561234576') && $request->otp === '123456') {
+            if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' ) && $request->otp === '123456') {
                 return $this->success(null, 'OTP verified successfully');
             }
             $cachedOtp = \Illuminate\Support\Facades\Cache::get('otp_' . $request->phone);

@@ -169,6 +169,7 @@ Route::middleware(['auth:admin'])->group(function () {
         Route::post('app-versions/save', [AppVersionController::class, 'save'])->name('app_versions.save');
         Route::get('notifications/send', [NotificationController::class, 'create'])->name('notifications.create');
         Route::post('notifications/send', [NotificationController::class, 'store'])->name('notifications.store');
+        Route::post('notifications/send-direct', [NotificationController::class, 'sendDirectNotification'])->name('notifications.send_direct');
     });
 
 

@@ -74,14 +74,16 @@ Route::get('/clear-cache', function () {
 Route::get('/run-queue-once', function () {
     try {
         Artisan::call('queue:work', [
+            'connection' => 'database',
             '--once' => true,
-            '--queue' => 'notifications',
+            '--queue' => 'notifications,default',
             '--tries' => 1,
+            '--stop-when-empty' => true,
         ]);
 
         return response()->json([
             'status' => true,
-            'message' => 'Notifications queue executed once',
+            'message' => 'Queue executed successfully once',
             'output' => Artisan::output(),
         ]);
     } catch (\Throwable $e) {

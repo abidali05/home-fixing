@@ -89,6 +89,7 @@ class NotificationController extends Controller
         try {
             $tokens = [];
             $insertData = [];
+            $jobNotificationsData = [];
             $now = now();
 
             foreach ($users as $user) {
@@ -97,6 +98,27 @@ class NotificationController extends Controller
                     'title' => $title,
                     'body' => $body,
                     'is_read' => false,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+
+                $jobNotificationsData[] = [
+                    'id' => (string) \Illuminate\Support\Str::uuid(),
+                    'type' => 'App\\Notifications\\SystemAlertNotification',
+                    'notifiable_type' => 'App\\Models\\User',
+                    'notifiable_id' => $user->id,
+                    'data' => json_encode([
+                        'type' => $eventType,
+                        'title' => $title,
+                        'message' => $body,
+                        'data' => [
+                            'type' => $eventType,
+                            'event_type' => $eventType,
+                            'custom_payload' => $customPayload,
+                            'sent_at' => $now->toDateTimeString(),
+                        ]
+                    ]),
+                    'read_at' => null,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
@@ -110,10 +132,14 @@ class NotificationController extends Controller
                 DB::table('notifications')->insert($chunk);
             }
 
+            foreach (array_chunk($jobNotificationsData, 500) as $chunk) {
+                DB::table('job_notifications')->insert($chunk);
+            }
+
             DB::commit();
 
             if (!empty($tokens)) {
-                dispatch(new SendFcmTokenNotificationJob($tokens, [
+                dispatch((new SendFcmTokenNotificationJob($tokens, [
                     'title' => $title,
                     'body' => $body,
                     'data' => [
@@ -123,7 +149,7 @@ class NotificationController extends Controller
                         'custom_payload' => $customPayload,
                         'sent_at' => $now->toDateTimeString(),
                     ]
-                ]));
+                ]))->onQueue('notifications'));
             }
 
             return redirect()->route('admin.notifications.create')->with('success', 'Push Notification broadcasted successfully to ' . count($users) . ' user(s).');
@@ -151,19 +177,42 @@ class NotificationController extends Controller
 
         DB::beginTransaction();
         try {
+            $now = now();
+
             DB::table('notifications')->insert([
                 'user_id' => $user->id,
                 'title' => $title,
                 'body' => $body,
                 'is_read' => false,
-                'created_at' => now(),
-                'updated_at' => now(),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            DB::table('job_notifications')->insert([
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'type' => 'App\\Notifications\\SystemAlertNotification',
+                'notifiable_type' => 'App\\Models\\User',
+                'notifiable_id' => $user->id,
+                'data' => json_encode([
+                    'type' => $eventType,
+                    'title' => $title,
+                    'message' => $body,
+                    'data' => [
+                        'type' => $eventType,
+                        'event_type' => $eventType,
+                        'user_id' => (string) $user->id,
+                        'sent_at' => $now->toDateTimeString(),
+                    ]
+                ]),
+                'read_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
             ]);
 
             DB::commit();
 
             if (!empty($user->fcm_token)) {
-                dispatch(new SendFcmTokenNotificationJob([$user->fcm_token], [
+                dispatch((new SendFcmTokenNotificationJob([$user->fcm_token], [
                     'title' => $title,
                     'body' => $body,
                     'data' => [
@@ -173,7 +222,7 @@ class NotificationController extends Controller
                         'user_id' => (string) $user->id,
                         'sent_at' => now()->toDateTimeString(),
                     ]
-                ]));
+                ]))->onQueue('notifications'));
             }
 
             if ($request->ajax()) {

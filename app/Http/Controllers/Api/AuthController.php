@@ -3,13 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Cart;
 use App\Models\Admin\ServiceCategoryModel;
+use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
 use App\Models\MarketplaceProfile;
 use App\Models\MarketplaceShopReview;
-use App\Models\OrderTracking;
 use App\Models\Orders;
 use App\Models\Product;
 use App\Models\ProductView;
@@ -21,86 +20,221 @@ use App\Models\User;
 use App\Notifications\MarketplaceOrderReceivedNotification;
 use App\Notifications\MarketplaceOrderStatusUpdatedNotification;
 use App\Notifications\MarketplaceShopReviewSubmittedNotification;
+use App\Services\TwilioService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Twilio\Rest\Client;
+use Twilio\Exceptions\RestException;
 
 class AuthController extends Controller
 {
-    public function send_otp(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            // 'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
-            'phone' => 'string',
-        ]);
+    public function send_otp(
+    Request $request,
+    TwilioService $twilioService
+) {
+    $validator = Validator::make($request->all(), [
+        'phone' => "string",
+    ]);
 
-        if ($validator->fails()) {
-            return $this->validationError($validator->errors());
-        }
-
-        try {
-            if ($request->phone === '+966561234567' || $request->phone === '+966561234576') {
-                return $this->success(null, 'OTP sent successfully');
-            }
-            $otp = sprintf("%06d", random_int(100000, 999999));
-
-            // Store OTP in cache for 10 minutes
-            \Illuminate\Support\Facades\Cache::put('otp_' . $request->phone, $otp, now()->addMinutes(10));
-
-            $twilio = app(Client::class);
-
-            $messageParams = [
-                'body' => "Your Azhl verification code is " . $otp . "\nIi43T702uXm"
-            ];
-
-            if (config('services.twilio.messaging_sid')) {
-                $messageParams['messagingServiceSid'] = config('services.twilio.messaging_sid');
-            } else {
-                $messageParams['from'] = config('services.twilio.from');
-            }
-
-            $twilio->messages->create($request->phone, $messageParams);
-
-            return $this->success(null, 'OTP sent successfully');
-        } catch (\Exception $e) {
-            return $this->error('Failed to send OTP: ' . $e->getMessage(), 500);
-        }
+    if ($validator->fails()) {
+        return $this->validationError($validator->errors());
     }
 
-    public function verify_otp(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'phone' => 'string',
-            'otp'   => 'required|digits:6',
+    $phone = trim($request->phone);
+
+    try {
+        if (
+            in_array(
+                $phone,
+                ['+966561234567', '+966561234576','+966531301053'],
+                true
+            )
+        ) {
+            Cache::put(
+                'otp_' . $phone,
+                '123456',
+                now()->addMinutes(10)
+            );
+
+            return $this->success(
+                null,
+                'OTP sent successfully'
+            );
+        }
+
+        $otp = (string) random_int(100000, 999999);
+
+        $message = $twilioService->sendOtp(
+            $phone,
+            $otp
+        );
+
+        // Save only when Twilio accepts the API request.
+        Cache::put(
+            'otp_' . $phone,
+            $otp,
+            now()->addMinutes(10)
+        );
+
+        return $this->success(
+            null,
+            'OTP sent successfully'
+        );
+
+    } catch (RestException $e) {
+        dd($e);
+        Log::error('Twilio SMS error', [
+            'phone' => $phone,
+            'twilio_code' => $e->getCode(),
+            'message' => $e->getMessage(),
         ]);
 
-        if ($validator->fails()) {
-            return $this->validationError($validator->errors());
-        }
+        return $this->error(
+            'Failed to send OTP: ' . $e->getMessage(),
+            500
+        );
 
-        try {
-            if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' ) && $request->otp === '123456') {
-                return $this->success(null, 'OTP verified successfully');
-            }
-            $cachedOtp = \Illuminate\Support\Facades\Cache::get('otp_' . $request->phone);
+    } catch (\Throwable $e) {
+        dd($e);
+        Log::error('OTP send error', [
+            'phone' => $phone,
+            'message' => $e->getMessage(),
+        ]);
 
-            if (!$cachedOtp || $cachedOtp !== $request->otp) {
-                return $this->error('Invalid or expired OTP', 422);
-            }
-
-            \Illuminate\Support\Facades\Cache::forget('otp_' . $request->phone);
-
-            return $this->success(null, 'OTP verified successfully');
-        } catch (\Exception $e) {
-            return $this->error('Failed to verify OTP: ' . $e->getMessage(), 500);
-        }
+        return $this->error(
+            'Failed to send OTP',
+            500
+        );
     }
+}
+public function verify_otp(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'phone' => [
+            'required',
+            'string',
+            'regex:/^\+9665[0-9]{8}$/',
+        ],
+        'otp' => [
+            'required',
+            'digits:6',
+        ],
+    ]);
+
+    if ($validator->fails()) {
+        return $this->validationError($validator->errors());
+    }
+
+    $phone = trim($request->phone);
+    $enteredOtp = (string) $request->input('otp');
+
+    try {
+        $cachedOtp = Cache::get('otp_' . $phone);
+
+        if (
+            $cachedOtp === null ||
+            !hash_equals((string) $cachedOtp, $enteredOtp)
+        ) {
+            return $this->error(
+                'Invalid or expired OTP',
+                422
+            );
+        }
+
+        // OTP can only be used once.
+        Cache::forget('otp_' . $phone);
+
+        return $this->success(
+            null,
+            'OTP verified successfully'
+        );
+
+    } catch (\Throwable $e) {
+        Log::error('OTP verification error', [
+            'phone' => $phone,
+            'message' => $e->getMessage(),
+        ]);
+
+        return $this->error(
+            'Failed to verify OTP',
+            500
+        );
+    }
+}
+    // public function send_otp(Request $request)
+    // {
+    //     $validator = Validator::make($request->all(), [
+    //         // 'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
+    //         'phone' => 'string',
+    //     ]);
+
+    //     if ($validator->fails()) {
+    //         return $this->validationError($validator->errors());
+    //     }
+
+    //     try {
+    //         if ($request->phone === '+966561234567' || $request->phone === '+966561234576') {
+    //             return $this->success(null, 'OTP sent successfully');
+    //         }
+    //         $otp = sprintf("%06d", random_int(100000, 999999));
+
+    //         // Store OTP in cache for 10 minutes
+    //         \Illuminate\Support\Facades\Cache::put('otp_' . $request->phone, $otp, now()->addMinutes(10));
+
+    //         $twilio = app(Client::class);
+
+    //         $messageParams = [
+    //             'body' => "Your Azhl verification code is " . $otp . "\nIi43T702uXm"
+    //         ];
+
+    //         if (config('services.twilio.messaging_sid')) {
+    //             $messageParams['messagingServiceSid'] = config('services.twilio.messaging_sid');
+    //         } else {
+    //             $messageParams['from'] = config('services.twilio.from');
+    //         }
+
+    //         $twilio->messages->create($request->phone, $messageParams);
+
+    //         return $this->success(null, 'OTP sent successfully');
+    //     } catch (\Exception $e) {
+    //         return $this->error('Failed to send OTP: ' . $e->getMessage(), 500);
+    //     }
+    // }
+
+    // public function verify_otp(Request $request)
+    // {
+    //     $validator = Validator::make($request->all(), [
+    //         'phone' => 'string',
+    //         'otp'   => 'required|digits:6',
+    //     ]);
+
+    //     if ($validator->fails()) {
+    //         return $this->validationError($validator->errors());
+    //     }
+
+    //     try {
+    //         if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' ) && $request->otp === '123456') {
+    //             return $this->success(null, 'OTP verified successfully');
+    //         }
+    //         $cachedOtp = \Illuminate\Support\Facades\Cache::get('otp_' . $request->phone);
+
+    //         if (!$cachedOtp || $cachedOtp !== $request->otp) {
+    //             return $this->error('Invalid or expired OTP', 422);
+    //         }
+
+    //         \Illuminate\Support\Facades\Cache::forget('otp_' . $request->phone);
+
+    //         return $this->success(null, 'OTP verified successfully');
+    //     } catch (\Exception $e) {
+    //         return $this->error('Failed to verify OTP: ' . $e->getMessage(), 500);
+    //     }
+    // }
 
     public function check_phone_availability(Request $request)
     {

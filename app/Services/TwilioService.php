@@ -6,7 +6,7 @@ use Twilio\Rest\Client;
 
 class TwilioService
 {
-    protected $twilio;
+    protected Client $twilio;
 
     public function __construct()
     {
@@ -16,22 +16,22 @@ class TwilioService
         );
     }
 
-   public function sendOtp($phone, $otp)
-{
-   $this->twilio->messages->create($phone, [
-    'messagingServiceSid' => config('services.twilio.messaging_sid'),
-    'body' => "Your OTP code is: $otp"
-]);
-
-}
-
-    public function verifyOtp($phone, $code)
+    public function sendOtp(string $phone, string $otp)
     {
-        return $this->twilio->verify->v2->services(config('services.twilio.verify_sid'))
-            ->verificationChecks
-            ->create([
-                'to' => $phone,
-                'code' => $code
-            ]);
+        $appHash = config('services.twilio.app_hash');
+
+        $messageBody = "Your Azhl verification code is {$otp}\n{$appHash}";
+
+        // dd([
+        //     'to' => $phone,
+        //     'from' => config('services.twilio.phone_number'),
+        //     'messaging_service_sid' => config('services.twilio.messaging_sid'),
+        //     'body' => $messageBody,
+        // ]);
+
+        return $this->twilio->messages->create($phone, [
+            'messagingServiceSid' => config('services.twilio.messaging_sid'),
+            'body' => $messageBody,
+        ]);
     }
 }

@@ -44,13 +44,7 @@ class DashboardController extends Controller
 
             $totalOrdersPrice = (float) DB::table('orders')
                 ->whereIn('provider_id', $assignedProviderIds)
-                ->whereNotIn('status', ['cancelled', 'rejected'])
-                ->sum('price');
-
-            $totalToPayToSystem = (float) DB::table('orders')
-                ->whereIn('provider_id', $assignedProviderIds)
-                ->whereNotIn('status', ['cancelled', 'rejected'])
-                ->where('paid_to_system', 0)
+                ->whereIn('status', ['completed', 'delivered'])
                 ->sum('price');
 
             $totalMarketplaceRevenue = 0.0;
@@ -100,7 +94,16 @@ class DashboardController extends Controller
                         ->orWhereIn('id', DB::table('provider_profiles')->pluck('user_id'));
                 })
                 ->count();
-            $totalSellers = DB::table('marketplace_profiles')->distinct()->count('user_id');
+            $totalSellers = DB::table('users')
+                ->where(function ($b) {
+                    $b->where('role', '2')
+                        ->orWhere('role', 2)
+                        ->orWhere('has_roles', '2')
+                        ->orWhere('has_roles', 2)
+                        ->orWhere('has_roles', 'like', '%2%')
+                        ->orWhereRaw("FIND_IN_SET('2', has_roles)");
+                })
+                ->count();
             $totalServiceCategories = DB::table('categories')->count();
             $totalServiceRequests = DB::table('jobss')->count();
             $totalMarketplaceOrders = DB::table('marketplace_orders')->count();
@@ -108,12 +111,7 @@ class DashboardController extends Controller
             $totalCampaigns = DB::table('campaigns')->count();
 
             $totalOrdersPrice = (float) DB::table('orders')
-                ->whereNotIn('status', ['cancelled', 'rejected'])
-                ->sum('price');
-
-            $totalToPayToSystem = (float) DB::table('orders')
-                ->whereNotIn('status', ['cancelled', 'rejected'])
-                ->where('paid_to_system', 0)
+                ->whereIn('status', ['completed', 'delivered'])
                 ->sum('price');
 
             $totalMarketplaceRevenue = (float) DB::table('marketplace_orders')
@@ -267,10 +265,9 @@ class DashboardController extends Controller
         }
 
         $serviceRevenueChart = [
-            'labels' => ['Collected Revenue', 'Pending To System'],
+            'labels' => ['Completed Service Revenue'],
             'values' => [
-                round(max($totalOrdersPrice - $totalToPayToSystem, 0), 2),
-                round($totalToPayToSystem, 2),
+                round($totalOrdersPrice, 2),
             ],
         ];
 
@@ -367,13 +364,32 @@ class DashboardController extends Controller
             ->orderByDesc('mp.created_at')
             ->get();
 
+        $topReferrers = DB::table('provider_profiles')
+            ->select(
+                'referred_by_id',
+                DB::raw('COUNT(id) as total_referrals'),
+                DB::raw('MAX(referred_by_code) as referral_code')
+            )
+            ->whereNotNull('referred_by_id')
+            ->groupBy('referred_by_id')
+            ->orderByDesc('total_referrals')
+            ->limit(5)
+            ->get()
+            ->map(function ($row) {
+                $user = DB::table('users')->where('id', $row->referred_by_id)->first();
+                $row->user_name = $user->name ?? 'User #' . $row->referred_by_id;
+                $row->user_code = $user->user_code ?? ('AZ' . (1000 + $row->referred_by_id));
+                $row->phone = $user->phone ?? '-';
+                $row->role = ((string)($user->role ?? 0) === '1') ? 'Provider' : 'Customer';
+                return $row;
+            });
+
         return view('dashboard', [
             'cards' => $cards,
             'financialSummary' => [
                 'service_revenue' => $totalOrdersPrice,
-                'pending_to_system' => $totalToPayToSystem,
                 'marketplace_revenue' => $totalMarketplaceRevenue,
-                'active_campaigns' => $activeCampaigns,
+                'registered_marketplaces' => $totalSellers,
             ],
             'growthChart' => [
                 'labels' => $monthlyLabels,
@@ -389,6 +405,7 @@ class DashboardController extends Controller
             'topRatedProviders' => $topRatedProviders,
             'topRatedMarketplaces' => $topRatedMarketplaces,
             'registeredMarketplaces' => $registeredMarketplaces,
+            'topReferrers' => $topReferrers,
         ]);
     }
 

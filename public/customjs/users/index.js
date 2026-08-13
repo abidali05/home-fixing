@@ -1,36 +1,37 @@
 $(document).ready(function () {
-    $("#UsersTable").DataTable({
-        processing: true,
-        serverSide: true,
-        pagingType: "simple_numbers",
-        scrollX: false,
-        responsive: true,
-        ajax: SystemUsersDataUrl,
-        columns: [
-            { data: "DT_RowIndex", name: "DT_RowIndex" },
-            { data: "profile_image", name: "profile_image" },
-            { data: "name", name: "name" },
-            { data: "email", name: "email" },
-            { data: "phone", name: "phone" },
-            { data: "cityname", name: "cityname" },
-            { data: "status", name: "status" },
-            {
-                data: "action",
-                name: "action",
-                orderable: false,
-                searchable: false,
+    if (!$.fn.DataTable.isDataTable('#UsersTable')) {
+        $("#UsersTable").DataTable({
+            processing: true,
+            serverSide: true,
+            pagingType: "simple_numbers",
+            scrollX: false,
+            responsive: true,
+            ajax: SystemUsersDataUrl,
+            columns: [
+                { data: "DT_RowIndex", name: "DT_RowIndex" },
+                { data: "profile_image", name: "profile_image" },
+                { data: "name", name: "name" },
+                { data: "user_code", name: "user_code" },
+                { data: "phone", name: "phone" },
+                { data: "status", name: "status" },
+                {
+                    data: "action",
+                    name: "action",
+                    orderable: false,
+                    searchable: false,
+                },
+            ],
+            language: {
+                emptyTable: "No users found",
+                zeroRecords: "No matching users found",
+                processing: "Loading...",
+                paginate: {
+                    previous: '<i class="bi bi-chevron-left"></i>',
+                    next: '<i class="bi bi-chevron-right"></i>',
+                },
             },
-        ],
-        language: {
-            emptyTable: "No users found",
-            zeroRecords: "No matching users found",
-            processing: "Loading...",
-            paginate: {
-                previous: '<i class="bi bi-chevron-left"></i>',
-                next: '<i class="bi bi-chevron-right"></i>',
-            },
-        },
-    });
+        });
+    }
 });
 
 

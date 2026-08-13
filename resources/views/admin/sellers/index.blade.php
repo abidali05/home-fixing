@@ -31,7 +31,7 @@
                                 <div class="col-md-4">
                                     <label class="form-label">Search</label>
                                     <input type="text" name="search" class="form-control" value="{{ request('search') }}"
-                                        placeholder="Name, email, phone, shop">
+                                        placeholder="Name, phone, shop">
                                 </div>
                                 <div class="col-md-2">
                                     <label class="form-label">Status</label>
@@ -49,10 +49,6 @@
                                     <input type="text" name="name" class="form-control" value="{{ request('name') }}">
                                 </div>
                                 <div class="col-md-2">
-                                    <label class="form-label">Email</label>
-                                    <input type="text" name="email" class="form-control" value="{{ request('email') }}">
-                                </div>
-                                <div class="col-md-2">
                                     <label class="form-label">Phone</label>
                                     <input type="text" name="phone" class="form-control" value="{{ request('phone') }}">
                                 </div>
@@ -64,7 +60,7 @@
                                     <label class="form-label">To</label>
                                     <input type="date" name="date_to" class="form-control" value="{{ request('date_to') }}">
                                 </div>
-                                <div class="col-md-8 admin-filter-actions">
+                                <div class="col-md-10 admin-filter-actions">
                                     <button type="submit" class="btn btn-primary mb-0">Apply Filters</button>
                                     <a href="{{ route('sellers.index') }}" class="btn btn-outline-secondary mb-0">Clear</a>
                                 </div>
@@ -99,7 +95,6 @@
                                                 <td>#{{ $seller->id }}</td>
                                                 <td>
                                                     <div class="fw-semibold">{{ $seller->name }}</div>
-                                                    <small class="text-muted">{{ $seller->email ?: '-' }}</small>
                                                 </td>
                                                 <td>
                                                     <div>{{ $profile?->shop_title ?: '-' }}</div>

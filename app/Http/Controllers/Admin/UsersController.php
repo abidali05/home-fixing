@@ -38,6 +38,9 @@ class UsersController extends Controller
                     return '<img src="' . $imageUrl . '" alt="Profile" width="40" height="40" class="rounded-circle">';
                 })
 
+                ->editColumn('user_code', function ($row) {
+                    return '<code>' . e($row->user_code ?: ('AZ' . (1000 + $row->id))) . '</code>';
+                })
 
                 ->editColumn('status', function ($row) {
                     return match ($row->status) {
@@ -46,7 +49,6 @@ class UsersController extends Controller
                         default => '<span class="badge bg-secondary">Suspended</span>',
                     };
                 })
-
 
                 ->addColumn('action', function ($row) use ($rolePermissions) {
                     $editUrl = route('users.edit', $row->id);
@@ -66,7 +68,7 @@ class UsersController extends Controller
                     return $actionBtns;
                 })
 
-                ->rawColumns(['profile_image', 'status', 'action'])
+                ->rawColumns(['profile_image', 'user_code', 'status', 'action'])
                 ->make(true);
         }
 
@@ -151,12 +153,12 @@ class UsersController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email,' . $id,
-            'dob' => 'required|date',
-            'city' => 'required|exists:cities,id',
-            'phone' => ['required', 'regex:/^\+9665[0-9]{8}$/', 'unique:users,phone,' . $id],
+            'email' => 'nullable|email|unique:users,email,' . $id,
+            'dob' => 'nullable|date',
+            'city' => 'nullable|exists:cities,id',
+            'phone' => ['required', 'unique:users,phone,' . $id],
             'profile_image' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
-            'address' => 'required|string',
+            'address' => 'nullable|string',
         ]);
 
         try {

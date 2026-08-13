@@ -21,7 +21,7 @@ class ProviderController extends Controller
         $isCompany = $currentUser && $currentUser->is_company;
 
         $query = User::query()
-            ->with(['providerProfile'])
+            ->with(['providerProfile.referredBy'])
             ->where(function ($b) {
                 $b->where('role', '1')
                     ->orWhere('role', 1)
@@ -212,13 +212,26 @@ class ProviderController extends Controller
     public function show($id)
     {
         $provider = User::query()
-            ->with('providerProfile')
+            ->with(['providerProfile.referredBy'])
             ->whereHas('providerProfile')
             ->findOrFail($id);
 
+        if ($provider->providerProfile && empty($provider->providerProfile->referral_code)) {
+            $provider->providerProfile->referral_code = ProviderProfile::generateUniqueReferralCode();
+            $provider->providerProfile->save();
+        }
+
         $gallery = ProviderGallery::query()->where('user_id', $provider->id)->get();
 
-        return view('admin.providers.show', compact('provider', 'gallery'));
+        $referredProviders = User::query()
+            ->with('providerProfile')
+            ->whereHas('providerProfile', function ($q) use ($provider) {
+                $q->where('referred_by_id', $provider->id);
+            })
+            ->latest()
+            ->get();
+
+        return view('admin.providers.show', compact('provider', 'gallery', 'referredProviders'));
     }
 
     public function edit($id)

@@ -93,6 +93,7 @@ class NotificationController extends Controller
             $now = now();
 
             foreach ($users as $user) {
+                // 1. Always save in-app notification to DB tables
                 $insertData[] = [
                     'user_id' => $user->id,
                     'title' => $title,
@@ -123,7 +124,19 @@ class NotificationController extends Controller
                     'updated_at' => $now,
                 ];
 
-                if (!empty($user->fcm_token)) {
+                // 2. FCM Push Alert: Only send immediate push if current active role matches target or mode is all/specific
+                $shouldSendFcm = false;
+                if ($mode === 'specific' || (string)$request->target_audience === 'all') {
+                    $shouldSendFcm = true;
+                } else {
+                    $currentRole = (string) $user->role;
+                    $targetRole = (string) $request->target_audience;
+                    if ($currentRole === $targetRole) {
+                        $shouldSendFcm = true;
+                    }
+                }
+
+                if ($shouldSendFcm && !empty($user->fcm_token)) {
                     $tokens[] = $user->fcm_token;
                 }
             }

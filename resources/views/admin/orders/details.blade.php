@@ -70,8 +70,8 @@
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0 text-dark font-weight-bold">Order Details</h5>
                             <div class="no-print">
-                                <a href="javascript:void(0);" onclick="window.print();" class="btn btn-sm btn-info me-2" style="background-color: #4F2396 !important; border-color: #4F2396 !important;">
-                                    <i class="bi bi-printer me-1"></i> Print Receipt
+                                <a href="{{ route('orders.receipt', $order->id) }}" target="_blank" class="btn btn-sm btn-primary me-2">
+                                    <i class="bi bi-download me-1"></i> Download Receipt
                                 </a>
                                 <a href="{{ route('orders.index') }}" class="btn btn-secondary btn-sm">
                                     <i class="bi bi-arrow-left me-1"></i> Back

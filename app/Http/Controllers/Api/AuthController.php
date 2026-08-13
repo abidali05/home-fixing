@@ -52,7 +52,7 @@ class AuthController extends Controller
         if (
             in_array(
                 $phone,
-                ['+966561234567', '+966561234576','+966531301053'],
+                ['+966561234567', '+966561234576','+966531301053', '+966502616534'],
                 true
             )
         ) {
@@ -88,7 +88,6 @@ class AuthController extends Controller
         );
 
     } catch (RestException $e) {
-        dd($e);
         Log::error('Twilio SMS error', [
             'phone' => $phone,
             'twilio_code' => $e->getCode(),
@@ -101,7 +100,6 @@ class AuthController extends Controller
         );
 
     } catch (\Throwable $e) {
-        dd($e);
         Log::error('OTP send error', [
             'phone' => $phone,
             'message' => $e->getMessage(),
@@ -301,8 +299,16 @@ public function verify_otp(Request $request)
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
 
+            'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referrer_code' => 'nullable|string|exists:provider_profiles,referral_code',
+
             // Optional but recommended
             'name' => 'nullable|string|max:255',
+        ], [
+            'referral_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referred_by_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referrer_code.exists' => 'The entered referral code is invalid or does not exist.',
         ]);
 
         if ($validator->fails()) {
@@ -396,6 +402,20 @@ public function verify_otp(Request $request)
             ]);
 
             if ((string) $request->role === '1') {
+                $referredById = null;
+                $referredByCode = null;
+                $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+                if (!empty($inputReferral)) {
+                    $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))->first();
+                    if ($referrerProfile) {
+                        $referredById = $referrerProfile->user_id;
+                        $referredByCode = $referrerProfile->referral_code;
+                    }
+                }
+
+                $ownReferralCode = ProviderProfile::generateUniqueReferralCode();
+
                 ProviderProfile::updateOrCreate(
                     ['user_id' => $user->id],
                     [
@@ -414,6 +434,9 @@ public function verify_otp(Request $request)
                         'charge_amount' => $request->charge_amount,
                         'document_type' => $request->document_type ?? '',
                         'document_number' => $request->document_number ?? '',
+                        'referral_code' => $ownReferralCode,
+                        'referred_by_id' => $referredById,
+                        'referred_by_code' => $referredByCode,
                     ]
                 );
             }
@@ -514,7 +537,15 @@ public function verify_otp(Request $request)
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
 
+            'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referrer_code' => 'nullable|string|exists:provider_profiles,referral_code',
+
             'name' => 'nullable|string|max:255',
+        ], [
+            'referral_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referred_by_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referrer_code.exists' => 'The entered referral code is invalid or does not exist.',
         ]);
 
         if ($validator->fails()) {
@@ -539,6 +570,22 @@ public function verify_otp(Request $request)
                 return $this->error('Authenticated user not found.', 404);
             }
 
+            $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+            if (!empty($inputReferral)) {
+                $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))->first();
+
+                if (!$referrerProfile) {
+                    DB::rollBack();
+                    return $this->validationError(['referral_code' => ['The entered referral code is invalid or does not exist.']]);
+                }
+
+                if ($referrerProfile->user_id == $user->id) {
+                    DB::rollBack();
+                    return $this->validationError(['referral_code' => ['You cannot use your own referral code.']]);
+                }
+            }
+
             $hasRoles = $this->parseRoleList($user->has_roles);
 
             if (!in_array('1', $hasRoles, true)) {
@@ -551,6 +598,24 @@ public function verify_otp(Request $request)
                 $file = $request->file('company_logo');
                 $companyLogoFilename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
                 $file->move(public_path('uploads/company_logos/'), $companyLogoFilename);
+            }
+
+            $existingProfile = $user->providerProfile;
+            $ownReferralCode = optional($existingProfile)->referral_code ?: ProviderProfile::generateUniqueReferralCode();
+
+            $referredById = optional($existingProfile)->referred_by_id;
+            $referredByCode = optional($existingProfile)->referred_by_code;
+
+            $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+            if (empty($referredById) && !empty($inputReferral)) {
+                $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))
+                    ->where('user_id', '!=', $user->id)
+                    ->first();
+                if ($referrerProfile) {
+                    $referredById = $referrerProfile->user_id;
+                    $referredByCode = $referrerProfile->referral_code;
+                }
             }
 
             ProviderProfile::updateOrCreate(
@@ -571,6 +636,9 @@ public function verify_otp(Request $request)
                     'charge_amount' => $request->charge_amount,
                     'document_type' => $request->document_type ?? optional($user->providerProfile)->document_type,
                     'document_number' => $request->document_number ?? optional($user->providerProfile)->document_number,
+                    'referral_code' => $ownReferralCode,
+                    'referred_by_id' => $referredById,
+                    'referred_by_code' => $referredByCode,
                 ]
             );
 
@@ -3264,6 +3332,15 @@ public function verify_otp(Request $request)
                 ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
                 ->values();
 
+            $referrerUser = $providerProfile?->referred_by_id ? User::with('providerProfile')->find($providerProfile->referred_by_id) : null;
+            $referredByData = $referrerUser ? [
+                'id' => $referrerUser->id,
+                'name' => $referrerUser->name,
+                'user_code' => $referrerUser->user_code,
+                'referral_code' => optional($referrerUser->providerProfile)->referral_code,
+            ] : null;
+            $totalReferrals = ProviderProfile::where('referred_by_id', $user->id)->count();
+
             return array_merge($payload, [
                 'gallery' => $gallery,
                 'skills' => $user->skills()->get(),
@@ -3275,6 +3352,11 @@ public function verify_otp(Request $request)
                 'total_orders' => $user->total_orders,
                 'total_earnings' => $user->total_earnings,
                 'payment_due' => $user->payment_due,
+                'referral_code' => $providerProfile?->referral_code,
+                'referred_by_code' => $providerProfile?->referred_by_code,
+                'referred_by_id' => $providerProfile?->referred_by_id,
+                'referred_by' => $referredByData,
+                'total_referrals' => $totalReferrals,
                 'provider_profile' => $providerProfile ? [
                     'id' => $providerProfile->id,
                     'user_id' => $providerProfile->user_id,
@@ -3301,6 +3383,11 @@ public function verify_otp(Request $request)
                     'certification' => $providerProfile->certification
                         ? asset('uploads/certification_files/' . $providerProfile->certification)
                         : null,
+                    'referral_code' => $providerProfile->referral_code,
+                    'referred_by_code' => $providerProfile->referred_by_code,
+                    'referred_by_id' => $providerProfile->referred_by_id,
+                    'referred_by' => $referredByData,
+                    'total_referrals' => $totalReferrals,
                     'created_at' => $providerProfile->created_at,
                     'updated_at' => $providerProfile->updated_at,
                 ] : null,
@@ -3461,6 +3548,11 @@ public function verify_otp(Request $request)
             return $user;
         }
 
+        if (empty($profile->referral_code)) {
+            $profile->referral_code = ProviderProfile::generateUniqueReferralCode();
+            $profile->save();
+        }
+
         $user->provider_type = $profile->provider_type;
         $user->company_name = $profile->company_name;
         $user->company_logo = $profile->company_logo
@@ -3484,6 +3576,21 @@ public function verify_otp(Request $request)
         $user->certification = $profile->certification
             ? asset('uploads/certification_files/' . $profile->certification)
             : null;
+
+        // Referral details
+        $user->referral_code = $profile->referral_code;
+        $user->referred_by_code = $profile->referred_by_code;
+        $user->referred_by_id = $profile->referred_by_id;
+
+        $referrerUser = $profile->referred_by_id ? User::with('providerProfile')->find($profile->referred_by_id) : null;
+        $user->referred_by = $referrerUser ? [
+            'id' => $referrerUser->id,
+            'name' => $referrerUser->name,
+            'user_code' => $referrerUser->user_code,
+            'referral_code' => optional($referrerUser->providerProfile)->referral_code,
+        ] : null;
+
+        $user->total_referrals = ProviderProfile::where('referred_by_id', $user->id)->count();
 
         $user->profile_image = $profile->company_logo
             ? asset('uploads/company_logos/' . $profile->company_logo)

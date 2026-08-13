@@ -49,12 +49,11 @@
                                     id="UsersTable">
                                     <thead class="thead-light">
                                         <tr>
-                                            <th style="width: 10%">S.No</th>
+                                            <th style="width: 8%">S.No</th>
                                             <th>Image</th>
                                             <th>Name</th>
-                                            <th>Email</th>
+                                            <th>User Code</th>
                                             <th>Phone</th>
-                                            <th>City</th>
                                             <th>Status</th>
                                             <th style="width: 15%">Action</th>
                                         </tr>
@@ -147,6 +146,41 @@
     <script>
         const SystemUsersDataUrl = "{{ route('users.index') }}";
 
+        $(document).ready(function () {
+            if ($.fn.dataTable) {
+                $.fn.dataTable.ext.errMode = 'none';
+            }
+            if ($.fn.DataTable.isDataTable('#UsersTable')) {
+                $('#UsersTable').DataTable().destroy();
+            }
+            $('#UsersTable').DataTable({
+                processing: true,
+                serverSide: true,
+                pagingType: "simple_numbers",
+                scrollX: false,
+                responsive: true,
+                ajax: SystemUsersDataUrl,
+                columns: [
+                    { data: "DT_RowIndex", name: "DT_RowIndex", orderable: false, searchable: false },
+                    { data: "profile_image", name: "profile_image" },
+                    { data: "name", name: "name" },
+                    { data: "user_code", name: "user_code" },
+                    { data: "phone", name: "phone" },
+                    { data: "status", name: "status" },
+                    { data: "action", name: "action", orderable: false, searchable: false }
+                ],
+                language: {
+                    emptyTable: "No users found",
+                    zeroRecords: "No matching users found",
+                    processing: "Loading...",
+                    paginate: {
+                        previous: '<i class="bi bi-chevron-left"></i>',
+                        next: '<i class="bi bi-chevron-right"></i>',
+                    },
+                },
+            });
+        });
+
         $(document).on('click', '.open-direct-notification-modal', function() {
             var userId = $(this).data('user-id');
             var userName = $(this).data('user-name');
@@ -187,6 +221,41 @@
                 }
             });
         });
+
+        $(document).on("click", ".deleteUserBtn", function () {
+            const id = $(this).data("id");
+            $("#deleteUserId").val(id);
+            $("#deleteUserModal").modal("show");
+        });
+
+        $("#confirmDeleteUserBtn").click(function () {
+            const id = $("#deleteUserId").val();
+            let url = `/users/delete/${id}`;
+            let type = "DELETE";
+
+            if (typeof SendAjaxRequestToServer === 'function') {
+                SendAjaxRequestToServer(
+                    type,
+                    url,
+                    null,
+                    "",
+                    deleteUserCallback,
+                    "",
+                    ""
+                );
+            }
+        });
+
+        function deleteUserCallback(response) {
+            if (response.status === 200) {
+                if (typeof toastr !== 'undefined') toastr.success(response.message, "", { timeOut: 3000 });
+                $("#deleteUserModal").modal("hide");
+                if ($.fn.DataTable.isDataTable('#UsersTable')) {
+                    $("#UsersTable").DataTable().ajax.reload(null, false);
+                }
+            } else {
+                if (typeof toastr !== 'undefined') toastr.error(response.message || "Failed to delete", "", { timeOut: 3000 });
+            }
+        }
     </script>
-    <script src="{{ asset('customjs/users/index.js') }}"></script>
 @endpush

@@ -142,6 +142,7 @@
                                             <th class="text-center">Active Orders</th>
                                             <th class="text-center">Earnings</th>
                                             <th>Status</th>
+                                            <th class="text-center">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -168,10 +169,15 @@
                                                 <td>
                                                     <span class="badge bg-soft-success text-success" style="background-color: #e2f9ec;">{{ ucfirst($prov->status) }}</span>
                                                 </td>
+                                                <td class="text-center">
+                                                    <a href="{{ route('providers.show', $prov->id) }}" class="btn btn-xs btn-outline-primary border-radius-lg py-1 px-2">
+                                                        <i class="bi bi-eye me-1"></i> View
+                                                    </a>
+                                                </td>
                                             </tr>
                                         @empty
                                             <tr>
-                                                <td colspan="5" class="text-center text-muted py-4">No service providers assigned under this company yet.</td>
+                                                <td colspan="6" class="text-center text-muted py-4">No service providers assigned under this company yet.</td>
                                             </tr>
                                         @endforelse
                                     </tbody>

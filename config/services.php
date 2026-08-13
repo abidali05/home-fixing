@@ -35,13 +35,19 @@ return [
         ],
     ],
     'twilio' => [
-    'sid' => env('TWILIO_SID'),
-    'token' => env('TWILIO_AUTH_TOKEN'),
-    'verify_sid' => env('TWILIO_VERIFY_SID'),
-    'from' => env('TWILIO_PHONE_NUMBER'),
-    'messaging_sid' => env('TWILIO_MESSAGING_SID'),
+        'sid' => env('TWILIO_SID'),
+        'token' => env('TWILIO_AUTH_TOKEN'),
+        'verify_sid' => env('TWILIO_VERIFY_SID'),
+        'from' => env('TWILIO_PHONE_NUMBER'),
+        'messaging_sid' => env('TWILIO_MESSAGING_SID'),
+    ],
 
-],
-
+    'tap' => [
+        'secret_key' => env('TAP_SECRET_KEY'),
+        'public_key' => env('TAP_PUBLIC_KEY'),
+        'merchant_id' => env('TAP_MERCHANT_ID'),
+        'webhook_url' => env('TAP_WEBHOOK_URL'),
+        'redirect_url' => env('TAP_REDIRECT_URL'),
+    ],
 
 ];

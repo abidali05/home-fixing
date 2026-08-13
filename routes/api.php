@@ -76,6 +76,10 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('favorite-providers/toggle', [GeneralContoller::class, 'toggle_favorite_provider']);
         Route::get('favorite-providers', [GeneralContoller::class, 'get_favorite_provider_ids']);
         Route::get('get-favorite-providers', [GeneralContoller::class, 'get_favorite_provider']);
+
+        Route::post('favorite-marketplaces/toggle', [GeneralContoller::class, 'toggle_favorite_marketplace']);
+        Route::get('favorite-marketplaces', [GeneralContoller::class, 'get_favorite_marketplace_ids']);
+        Route::get('get-favorite-marketplaces', [GeneralContoller::class, 'get_favorite_marketplace']);
     });
 
 
@@ -127,11 +131,24 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('notifications/unread-count', [NotificationController::class, 'unread_count']);
     Route::post('notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
     Route::post('notifications/read-all', [NotificationController::class, 'mark_all_as_read']);
+
+    // Tap Payments API Routes
+    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [\App\Http\Controllers\Api\PaymentController::class, 'initiatePayment']);
+    Route::post('payments/charge', [\App\Http\Controllers\Api\PaymentController::class, 'charge']);
+    Route::get('payments/{payment}/status', [\App\Http\Controllers\Api\PaymentController::class, 'status']);
 });
 
-    // Route::get('service-request-details/{id}', [GeneralContoller::class, 'service_request_details']);
-    // Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid']);
-    // Route::get('my-bids', [GeneralContoller::class, 'my_bids']);
+// Public Tap Webhook Routes (Both root and v1)
+Route::post('webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
+Route::post('v1/webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
+
+// Root level aliases for payment endpoints
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [\App\Http\Controllers\Api\PaymentController::class, 'initiatePayment']);
+    Route::post('payments/charge', [\App\Http\Controllers\Api\PaymentController::class, 'charge']);
+    Route::get('payments/{payment}/status', [\App\Http\Controllers\Api\PaymentController::class, 'status']);
+});
+
 
 
 // ================================================================== Protected Routes End==================================================================

@@ -287,10 +287,6 @@
                         <span class="dashboard-summary-label">Provider Service Revenue</span>
                         <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['service_revenue'], 2) }}</div>
                     </div>
-                    <div class="dashboard-summary-chip">
-                        <span class="dashboard-summary-label">Pending To System</span>
-                        <div class="dashboard-summary-value">SAR {{ number_format($financialSummary['pending_to_system'], 2) }}</div>
-                    </div>
                     @if(!optional(Auth::guard('admin')->user())->is_company)
                         <div class="dashboard-summary-chip">
                             <span class="dashboard-summary-label">Marketplace Revenue</span>
@@ -298,7 +294,7 @@
                         </div>
                         <div class="dashboard-summary-chip">
                             <span class="dashboard-summary-label">Registered Marketplaces</span>
-                            <div class="dashboard-summary-value">{{ number_format($financialSummary['active_campaigns']) }}</div>
+                            <div class="dashboard-summary-value">{{ number_format($financialSummary['registered_marketplaces'] ?? 0) }}</div>
                         </div>
                     @endif
                 </div>
@@ -586,6 +582,83 @@
                 </div>
                 @endif
             </div>
+
+            @if(!optional(Auth::guard('admin')->user())->is_company && isset($topReferrers))
+            <div class="row g-4 mt-1">
+                <div class="col-12 d-flex">
+                    <div class="dashboard-panel w-100">
+                        <div class="dashboard-panel-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="dashboard-panel-title"><i class="bi bi-award-fill text-warning me-2"></i>Top Referral Performance</h6>
+                                <p class="dashboard-panel-subtitle">Users and Providers generating the highest number of successful referrals.</p>
+                            </div>
+                            <span class="badge text-white px-3 py-2" style="background-color: #4F2396; font-size: 0.78rem;">
+                                <i class="bi bi-diagram-3-fill me-1"></i> Referral Leaderboard
+                            </span>
+                        </div>
+                        <div class="dashboard-panel-body">
+                            <div class="table-responsive">
+                                <table class="table align-middle text-sm mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Rank</th>
+                                            <th>User / Provider</th>
+                                            <th>Role</th>
+                                            <th>Referral Code</th>
+                                            <th class="text-center">Total Joined</th>
+                                            <th class="text-end">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse($topReferrers as $index => $ref)
+                                            <tr>
+                                                <td class="fw-bold">
+                                                    @if($index == 0)
+                                                        <span class="badge bg-warning text-dark px-2 py-1"><i class="bi bi-trophy-fill me-1"></i> #1</span>
+                                                    @elseif($index == 1)
+                                                        <span class="badge bg-secondary text-white px-2 py-1">#2</span>
+                                                    @elseif($index == 2)
+                                                        <span class="badge text-white px-2 py-1" style="background-color: #cd7f32;">#3</span>
+                                                    @else
+                                                        <span class="text-muted ms-2">#{{ $index + 1 }}</span>
+                                                    @endif
+                                                </td>
+                                                <td>
+                                                    <div class="fw-semibold text-dark">{{ $ref->user_name }}</div>
+                                                    <small class="text-muted">{{ $ref->user_code }} • {{ $ref->phone }}</small>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-light text-dark border">{{ $ref->role }}</span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge text-white px-2 py-1" style="background-color: #4F2396;">
+                                                        <i class="bi bi-ticket-perforated me-1"></i>{{ $ref->referral_code }}
+                                                    </span>
+                                                </td>
+                                                <td class="text-center">
+                                                    <span class="badge bg-success px-3 py-1 font-weight-bold">
+                                                        {{ $ref->total_referrals }} Users
+                                                    </span>
+                                                </td>
+                                                <td class="text-end">
+                                                    <a href="{{ route('providers.show', $ref->referred_by_id) }}" class="btn btn-xs btn-outline-primary py-1 px-2">
+                                                        <i class="bi bi-eye"></i> View Profile
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        @empty
+                                            <tr>
+                                                <td colspan="6" class="text-center text-muted py-4">No referral activity recorded yet.</td>
+                                            </tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @endif
         </div>
     </main>
 @endsection

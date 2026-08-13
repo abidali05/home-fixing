@@ -377,6 +377,7 @@ Route::middleware(['auth:admin'])->group(function () {
 
     Route::get('orders', [OrderController::class, 'index'])->name('orders.index')->middleware('CheckPermission:26');
     Route::get('orders/details/{id}', [OrderController::class, 'details'])->name('orders.details')->middleware('CheckPermission:26');
+    Route::get('orders/receipt/{id}', [OrderController::class, 'receipt'])->name('orders.receipt')->middleware('CheckPermission:26');
 });
 
 
@@ -386,6 +387,10 @@ Route::get('clear-cache', function () {
 
     return 'Cache cleared';
 })->name('clear.cache');
+
+// Tap Payments 3DS Redirect Route
+Route::get('tap/redirect', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.redirect');
+
 
 
 require __DIR__ . '/auth.php';

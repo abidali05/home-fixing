@@ -67,7 +67,8 @@ class OrderController extends Controller
                     return ucfirst($row->status);
                 })
                 ->addColumn('action', function ($row) {
-                    return '<a href="' . route('orders.details', $row->id) . '" class="btn btn-sm btn-info">View</a>';
+                    return '<a href="' . route('orders.details', $row->id) . '" class="btn btn-sm btn-info me-1">View</a>' .
+                           '<a href="' . route('orders.receipt', $row->id) . '" target="_blank" class="btn btn-sm btn-primary"><i class="bi bi-receipt me-1"></i>Receipt</a>';
                 })
                 ->rawColumns(['action'])
                 ->make(true);
@@ -99,5 +100,39 @@ class OrderController extends Controller
         }
 
         return view('admin.orders.details', compact('order', 'job'));
+    }
+
+    public function receipt($id)
+    {
+        $currentUser = auth()->user() ?? auth('admin')->user();
+        $isCompany = $currentUser && $currentUser->is_company;
+
+        $order = Orders::with(['user', 'provider'])->where('id', $id)->first();
+        if (!$order) {
+            return back()->with('error', 'Order not found.');
+        }
+
+        if ($isCompany) {
+            $assignedProviderIds = DB::table('users')->where('company_id', $currentUser->id)->pluck('id')->toArray();
+            if (!in_array($order->provider_id, $assignedProviderIds)) {
+                return back()->with('error', 'Unauthorized access to this order receipt.');
+            }
+        }
+
+        $job = null;
+        $categoryName = 'General Service';
+        $detailsText = 'Service Request Details';
+
+        if ($order->job_id) {
+            $job = JobRequestModel::with(['category'])->where('id', $order->job_id)->first();
+            if ($job) {
+                $categoryName = optional($job->category)->name ?? 'General Service';
+                $detailsText = $job->title ?: ($job->description ?: 'Service Request #' . $job->id);
+            }
+        }
+
+        $receiptNo = 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT);
+
+        return view('admin.orders.receipt', compact('order', 'job', 'categoryName', 'detailsText', 'receiptNo'));
     }
 }

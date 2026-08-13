@@ -616,6 +616,140 @@ class GeneralContoller extends Controller
         }
     }
 
+    public function toggle_favorite_marketplace(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'marketplace_id' => 'nullable|integer',
+            'marketplace_store_id' => 'nullable|integer',
+            'seller_id' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors(), 'Validation failed.');
+        }
+
+        $marketplaceId = $request->input('marketplace_id')
+            ?? $request->input('marketplace_store_id')
+            ?? $request->input('seller_id');
+
+        if (!$marketplaceId) {
+            return $this->error('marketplace_id is required.', 422);
+        }
+
+        try {
+            $user = auth('sanctum')->user();
+            $marketplace = User::where('id', $marketplaceId)->whereHas('marketplaceProfile')->first();
+
+            if (!$marketplace) {
+                return $this->notFound('Marketplace shop not found');
+            }
+
+            $existing = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->where('marketplace_id', $marketplace->id)
+                ->first();
+
+            if ($existing) {
+                DB::table('favorite_marketplaces')
+                    ->where('user_id', $user->id)
+                    ->where('marketplace_id', $marketplace->id)
+                    ->delete();
+
+                return $this->success([
+                    'marketplace_id' => (int) $marketplace->id,
+                    'is_favorite' => false,
+                ], 'Marketplace removed from favorites');
+            }
+
+            DB::table('favorite_marketplaces')->insert([
+                'user_id' => $user->id,
+                'marketplace_id' => $marketplace->id,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return $this->success([
+                'marketplace_id' => (int) $marketplace->id,
+                'is_favorite' => true,
+            ], 'Marketplace added to favorites');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while updating favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace_ids()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            return $this->success($ids, 'Favorite marketplace IDs fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            if ($ids->isEmpty()) {
+                return $this->success(collect(), 'Favorite marketplaces fetched successfully');
+            }
+
+            $marketplaces = User::with(['marketplaceProfile'])
+                ->whereHas('marketplaceProfile')
+                ->where('marketplace_status', 'active')
+                ->whereIn('id', $ids->toArray())
+                ->get()
+                ->map(function ($marketplace) {
+                    $marketplace = $this->decorateMarketplace($marketplace);
+                    $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
+
+                    $marketplace->services = ServiceCategoryModel::query()
+                        ->whereIn('id', $serviceIds ?: [])
+                        ->get(['id', 'name'])
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
+                        ->values();
+
+                    return $marketplace;
+                })
+                ->keyBy('id');
+
+            $orderedMarketplaces = $ids->map(function ($id) use ($marketplaces) {
+                return $marketplaces->get($id);
+            })->filter()->values();
+
+            return $this->success($orderedMarketplaces, 'Favorite marketplaces fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
     // ===================== FAQs =====================
     public function faqs_list()
     {

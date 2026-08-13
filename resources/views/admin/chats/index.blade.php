@@ -505,7 +505,7 @@
                     <div class="welcome-screen">
                         <div class="welcome-content">
                             <i class="fas fa-comments welcome-icon"></i>
-                            <h4>Home Fixing Chat</h4>
+                            <h4>Azhl Chat</h4>
                             <p class="text-muted">Manage customer conversations and support requests.<br>Monitor all chat
                                 activities from this admin panel.</p>
                         </div>
@@ -526,6 +526,11 @@
                             <i class="fas fa-paper-plane"></i>
                         </button>
                     </div>
+                </div>
+
+                <!-- Company Read-Only Banner -->
+                <div id="companyReadOnlyBanner" class="p-3 text-center text-muted border-top bg-light text-xs" style="display: none;">
+                    <i class="fas fa-eye text-primary me-1"></i> <strong>Company Read-Only Access:</strong> You are viewing live chat history for your assigned provider. Sending messages and deleting chats are restricted.
                 </div>
             </div>
         </div>
@@ -580,6 +585,8 @@
         const defaultAvatar =
             "{{ $setting->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('assets/img/logo.png') }}";
         const companyProviderIds = @json(optional(Auth::guard('admin')->user())->is_company ? \App\Models\User::where('company_id', Auth::guard('admin')->user()->id)->pluck('id')->toArray() : null);
+        const isCompany = @json((bool) optional(Auth::guard('admin')->user())->is_company);
+        const readOnlyBanner = document.getElementById("companyReadOnlyBanner");
         let activeChatId = null;
         let participantsMap = {};
         let allChats = [];
@@ -614,8 +621,15 @@
                 const details = chat.participantDetails || {};
                 
                 if (companyProviderIds !== null) {
-                    const participantIds = Object.keys(details).map(Number);
-                    const hasAssignedProvider = participantIds.some(id => companyProviderIds.includes(id));
+                    const detailKeys = Object.keys(details);
+                    const participantArr = Array.isArray(chat.participants) ? chat.participants : [];
+                    const allParticipantIds = [...new Set([...detailKeys, ...participantArr])];
+
+                    const hasAssignedProvider = allParticipantIds.some(id => {
+                        const numId = Number(id);
+                        return companyProviderIds.includes(numId) || companyProviderIds.includes(String(id));
+                    });
+
                     if (!hasAssignedProvider) {
                         return;
                     }
@@ -714,8 +728,15 @@
                 `;
             });
 
-            chatActions.style.display = 'flex';
-            messageInputArea.style.display = 'block';
+            if (isCompany) {
+                chatActions.style.display = 'none';
+                messageInputArea.style.display = 'none';
+                if (readOnlyBanner) readOnlyBanner.style.display = 'block';
+            } else {
+                chatActions.style.display = 'flex';
+                messageInputArea.style.display = 'block';
+                if (readOnlyBanner) readOnlyBanner.style.display = 'none';
+            }
 
             // Hide welcome screen
             const welcomeScreen = chatMessagesEl.querySelector('.welcome-screen');
@@ -791,6 +812,10 @@
 
         // Send message functionality
         const sendMessage = async () => {
+            if (isCompany) {
+                showNotification("Company accounts have read-only chat access.", "error");
+                return;
+            }
             if (!activeChatId || !messageInput.value.trim()) return;
 
             const messageText = messageInput.value.trim();

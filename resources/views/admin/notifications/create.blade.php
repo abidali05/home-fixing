@@ -28,7 +28,7 @@
 
             <div class="row g-4">
                 <!-- Form Column -->
-                <div class="col-lg-8">
+                <div class="col-lg-12">
                     <div class="card shadow-sm border-0" style="border-radius: 20px;">
                         <div class="card-header bg-transparent pb-0">
                             <div class="d-flex align-items-center justify-content-between">
@@ -80,23 +80,39 @@
 
                                 <!-- Specific Users Selection -->
                                 <div class="mb-4 d-none" id="specific_target_container">
-                                    <label for="user_ids" class="form-label text-dark font-weight-semibold">Select Target User(s)</label>
-                                    <select name="user_ids[]" id="user_ids" class="form-select select2" multiple data-placeholder="Search by name, phone or email...">
-                                        @foreach($usersList as $u)
-                                            @php
-                                                $roleLabel = 'Customer';
-                                                if ((string)$u->role === '1' || str_contains((string)$u->has_roles, '1')) {
-                                                    $roleLabel = 'Provider';
-                                                } elseif ((string)$u->role === '2' || str_contains((string)$u->has_roles, '2')) {
-                                                    $roleLabel = 'Seller';
-                                                }
-                                            @endphp
-                                            <option value="{{ $u->id }}">
-                                                [{{ $roleLabel }}] {{ $u->name }} ({{ $u->phone ?? $u->email }})
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                    <small class="text-muted d-block mt-1"><i class="bi bi-info-circle me-1"></i>You can search and select single or multiple target accounts.</small>
+                                    <div class="row g-3">
+                                        <div class="col-md-5">
+                                            <label for="specific_role_filter" class="form-label text-dark font-weight-semibold">1. Filter User Role / Category</label>
+                                            <select id="specific_role_filter" class="form-select select2">
+                                                <option value="all">🌐 All Accounts (Customers, Providers & Sellers)</option>
+                                                <option value="0">👤 Customers / Users Only</option>
+                                                <option value="1">🛠️ Service Providers Only</option>
+                                                <option value="2">🏪 Marketplace Sellers Only</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-7">
+                                            <label for="user_ids" class="form-label text-dark font-weight-semibold">2. Select Target User(s)</label>
+                                            <select name="user_ids[]" id="user_ids" class="form-select select2" multiple data-placeholder="Search by name, phone or email...">
+                                                @foreach($usersList as $u)
+                                                    @php
+                                                        $roleVal = '0';
+                                                        $roleLabel = 'Customer';
+                                                        if ((string)$u->role === '1' || str_contains((string)$u->has_roles, '1')) {
+                                                            $roleVal = '1';
+                                                            $roleLabel = 'Provider';
+                                                        } elseif ((string)$u->role === '2' || str_contains((string)$u->has_roles, '2')) {
+                                                            $roleVal = '2';
+                                                            $roleLabel = 'Seller';
+                                                        }
+                                                    @endphp
+                                                    <option value="{{ $u->id }}" data-role="{{ $roleVal }}">
+                                                        [{{ $roleLabel }}] {{ $u->name }} ({{ $u->phone ?? $u->email }})
+                                                    </option>
+                                                @endforeach
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted d-block mt-2"><i class="bi bi-info-circle me-1"></i>Select a role first to narrow down accounts, then search and select single or multiple users.</small>
                                     @error('user_ids')
                                         <small class="text-danger d-block mt-1">{{ $message }}</small>
                                     @enderror
@@ -151,41 +167,11 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Live Preview Column -->
-                <div class="col-lg-4">
-                    <div class="card shadow-sm border-0 sticky-top" style="border-radius: 20px; top: 90px;">
-                        <div class="card-header bg-transparent pb-2">
-                            <h6 class="mb-0 text-dark font-weight-bold"><i class="bi bi-phone me-2 text-primary"></i> Mobile Device Preview</h6>
-                            <p class="text-muted text-xs mb-0">Real-time simulation of how the push alert appears on mobile devices.</p>
-                        </div>
-                        <div class="card-body">
-                            <!-- Mock Mobile Shell -->
-                            <div class="p-3 shadow-md" style="background: #1e1e2d; border-radius: 24px; color: #fff;">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <span class="text-xs text-muted"><i class="bi bi-bell-fill text-warning me-1"></i> FCM Push Notification</span>
-                                    <span class="text-xs text-muted">Just now</span>
-                                </div>
-                                <div class="p-3" style="background: rgba(255,255,255,0.08); border-radius: 16px; border-left: 4px solid #4F2396;">
-                                    <div class="d-flex align-items-center gap-2 mb-2">
-                                        <div class="avatar avatar-xs rounded-circle text-center" style="background: #4F2396; width: 24px; height: 24px; line-height: 24px;">
-                                            <i class="bi bi-app-indicator text-white" style="font-size: 12px;"></i>
-                                        </div>
-                                        <span class="font-weight-bold text-xs" style="color: #fff;" id="preview_app_name">HomeFix System</span>
-                                        <span class="badge bg-primary text-xxs ms-auto" id="preview_event_badge">System Alert</span>
-                                    </div>
-                                    <h6 class="text-white text-sm mb-1 font-weight-bold" id="preview_title">Notification Title Preview</h6>
-                                    <p class="text-xs text-light mb-0 opacity-8" id="preview_body">Your message content description will render right here in real time as you type.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
     </main>
 
-    @push('js')
+    @push('scripts')
         <script>
             document.addEventListener('DOMContentLoaded', function() {
                 const modeGroup = document.getElementById('mode_group');
@@ -205,6 +191,8 @@
 
                 if (modeGroup) modeGroup.addEventListener('change', toggleTargetMode);
                 if (modeSpecific) modeSpecific.addEventListener('change', toggleTargetMode);
+
+                toggleTargetMode();
 
                 // Real-time Preview Binding
                 const titleInput = document.getElementById('title_input');
@@ -231,6 +219,39 @@
                     eventTypeSelect.addEventListener('change', function() {
                         const selectedText = this.options[this.selectedIndex].text.replace(/^[^\w\s]+/, '').trim();
                         previewBadge.textContent = selectedText;
+                    });
+                }
+            });
+
+            $(document).ready(function() {
+                const $userSelect = $('#user_ids');
+                const $roleFilter = $('#specific_role_filter');
+                const allUserOptions = [];
+
+                $userSelect.find('option').each(function() {
+                    allUserOptions.push({
+                        id: $(this).val(),
+                        text: $(this).text(),
+                        role: $(this).attr('data-role') || '0'
+                    });
+                });
+
+                if ($roleFilter.length) {
+                    $roleFilter.on('change', function() {
+                        const selectedRole = $(this).val();
+                        const currentSelections = $userSelect.val() || [];
+                        $userSelect.empty();
+
+                        allUserOptions.forEach(opt => {
+                            if (selectedRole === 'all' || String(opt.role) === String(selectedRole)) {
+                                const isSelected = currentSelections.includes(String(opt.id));
+                                const newOpt = new Option(opt.text, opt.id, isSelected, isSelected);
+                                $(newOpt).attr('data-role', opt.role);
+                                $userSelect.append(newOpt);
+                            }
+                        });
+
+                        $userSelect.trigger('change');
                     });
                 }
             });

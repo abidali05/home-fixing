@@ -35,12 +35,12 @@
                             @endif
 
                             <form method="GET" action="{{ route('providers.index') }}" class="row g-3 admin-filter-card admin-loader-form">
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <label class="form-label">Search</label>
                                     <input type="text" name="search" value="{{ request('search') }}" class="form-control"
                                         placeholder="Name, email, phone, company">
                                 </div>
-                                <div class="col-md-2">
+                                <div class="col-md-3">
                                     <label class="form-label">Status</label>
                                     <select name="status" class="form-select select2">
                                         <option value="">All Statuses</option>
@@ -101,116 +101,140 @@
                             <div class="table-responsive">
                                 <table class="table table-bordered align-middle admin-table">
                                     <thead>
-                                        <tr>
-                                            <th>ID</th>
-                                            <th>Provider</th>
-                                            <th>Contact</th>
-                                            <th>Company</th>
-                                            <th>City</th>
-                                            <th>Services</th>
-                                            <th>Type</th>
-                                            <th>Status</th>
-                                            <th>Registered</th>
-                                            <th class="text-center">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @forelse ($providers as $provider)
-                                            @php
-                                                $profile = $provider->providerProfile;
-                                                $serviceIds = is_array($profile?->service_category) ? $profile?->service_category : [];
-                                                $serviceNames = \App\Models\Admin\ServiceCategoryModel::whereIn('id', $serviceIds)->pluck('name')->toArray();
-                                                $badgeClass = match ($provider->provider_status) {
-                                                    'active' => 'bg-success',
-                                                    'inactive' => 'bg-secondary',
-                                                    'suspended' => 'bg-warning',
-                                                    'banned' => 'bg-danger',
-                                                    default => 'bg-dark',
-                                                };
-                                            @endphp
-                                            <tr>
-                                                <td>#{{ $provider->id }}</td>
-                                                <td>
-                                                    <div class="d-flex align-items-center">
-                                                        <img src="{{ $provider->profile_image ? asset('uploads/profile_images/' . $provider->profile_image) : asset('assets/img/default.jpg') }}"
-                                                            alt="{{ $provider->name }}" class="admin-avatar me-2">
-                                                        <div>
-                                                            <div class="fw-semibold">{{ $provider->name }}</div>
-                                                            <small class="text-muted">{{ $profile?->company_name ?: ($provider->company_name ?: 'Individual Provider') }}</small>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <div>{{ $provider->email ?: '-' }}</div>
-                                                    <small class="text-muted">{{ $provider->phone }}</small>
-                                                </td>
-                                                <td>
-                                                    @if($isCompany)
-                                                        <span class="badge bg-light text-primary border"><i class="bi bi-building me-1"></i> {{ optional(Auth::guard('admin')->user())->name }}</span>
-                                                    @else
-                                                        @php
-                                                            $assignedCompany = $companies->firstWhere('id', $provider->company_id);
-                                                            $reqCompany = $provider->company_name ?: ($profile?->company_name ?? null);
-                                                        @endphp
-                                                        <form action="{{ route('providers.assign_company', $provider->id) }}" method="POST" class="admin-loader-form">
-                                                            @csrf
-                                                            <select name="company_id" class="form-select form-select-sm admin-auto-submit mb-1" style="min-width: 140px;">
-                                                                <option value="">-- No Company --</option>
-                                                                @foreach($companies as $c)
-                                                                    <option value="{{ $c->id }}" {{ $provider->company_id == $c->id ? 'selected' : '' }}>
-                                                                        {{ $c->name }}
-                                                                    </option>
-                                                                @endforeach
-                                                            </select>
-                                                            @if($reqCompany)
-                                                                <small class="text-muted d-block" style="font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i>Requested: <strong>{{ $reqCompany }}</strong></small>
-                                                            @endif
-                                                        </form>
-                                                    @endif
-                                                </td>
-                                                <td>{{ $provider->cityname }}</td>
-                                                <td>
-                                                    @forelse ($serviceNames as $serviceName)
-                                                        <span class="badge bg-light text-dark border me-1">{{ $serviceName }}</span>
-                                                    @empty
-                                                        <span class="text-muted">No services</span>
-                                                    @endforelse
-                                                </td>
-                                                <td>{{ ucfirst($profile?->provider_type ?: 'individual') }}</td>
-                                                <td class="text-center admin-status-cell">
-                                                    <form action="{{ route('providers.status', $provider->id) }}" method="POST" class="admin-status-form admin-loader-form">
-                                                        @csrf
-                                                        <select name="provider_status" class="form-select form-select-sm admin-auto-submit">
-                                                            @foreach ($statuses as $status)
-                                                                <option value="{{ $status }}" {{ $provider->provider_status === $status ? 'selected' : '' }}>
-                                                                    {{ ucfirst($status) }}
-                                                                </option>
-                                                            @endforeach
-                                                        </select>
-                                                    </form>
-                                                    {{-- <div class="mt-2">
-                                                        <span class="badge admin-badge {{ $badgeClass }}">{{ ucfirst($provider->provider_status ?: 'inactive') }}</span>
-                                                    </div> --}}
-                                                </td>
-                                                <td>{{ optional($provider->created_at)->format('d M Y') }}</td>
-                                                <td class="text-center admin-action-cell">
-                                                    <div class="admin-icon-actions">
-                                                        <a href="javascript:void(0);" class="admin-icon-btn warning open-direct-notification-modal" data-user-id="{{ $provider->id }}" data-user-name="{{ $provider->name }}" title="Send Push Notification">
-                                                            <i class="bi bi-bell-fill"></i>
-                                                        </a>
-                                                        <a href="{{ route('providers.show', $provider->id) }}" class="admin-icon-btn info" title="View provider">
-                                                            <i class="bi bi-eye"></i>
-                                                        </a>
-                                                        <a href="{{ route('providers.edit', $provider->id) }}" class="admin-icon-btn primary" title="Edit provider">
-                                                            <i class="bi bi-pencil-square"></i>
-                                                        </a>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        @empty
-                                            <tr>
-                                                <td colspan="9" class="text-center text-muted py-4">No providers found for the selected filters.</td>
-                                            </tr>
+                                          <tr>
+                                              <th>ID</th>
+                                              <th>Provider</th>
+                                              <th>Referral Code</th>
+                                              <th>Referred By</th>
+                                              <th>Contact</th>
+                                              <th>Company</th>
+                                              <th>Services</th>
+                                              <th>Type</th>
+                                              <th>Status</th>
+                                              <th>Registered</th>
+                                              <th class="text-center">Actions</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody>
+                                          @forelse ($providers as $provider)
+                                              @php
+                                                  $profile = $provider->providerProfile;
+                                                  $serviceIds = is_array($profile?->service_category) ? $profile?->service_category : [];
+                                                  $serviceNames = \App\Models\Admin\ServiceCategoryModel::whereIn('id', $serviceIds)->pluck('name')->toArray();
+                                                  $badgeClass = match ($provider->provider_status) {
+                                                      'active' => 'bg-success',
+                                                      'inactive' => 'bg-secondary',
+                                                      'suspended' => 'bg-warning',
+                                                      'banned' => 'bg-danger',
+                                                      default => 'bg-dark',
+                                                  };
+                                              @endphp
+                                              <tr>
+                                                  <td>#{{ $provider->id }}</td>
+                                                  <td>
+                                                      <div class="d-flex align-items-center">
+                                                          <img src="{{ $provider->profile_image ? asset('uploads/profile_images/' . $provider->profile_image) : asset('assets/img/default.jpg') }}"
+                                                              alt="{{ $provider->name }}" class="admin-avatar me-2">
+                                                          <div>
+                                                              <div class="fw-semibold">{{ $provider->name }}</div>
+                                                              <small class="text-muted">{{ $profile?->company_name ?: ($provider->company_name ?: 'Individual Provider') }}</small>
+                                                          </div>
+                                                      </div>
+                                                  </td>
+                                                  <td>
+                                                      <span class="badge text-white px-2 py-1" style="background-color: #4F2396; font-size: 0.8rem;">
+                                                          <i class="bi bi-ticket-perforated me-1"></i>{{ $profile?->referral_code ?: 'N/A' }}
+                                                      </span>
+                                                  </td>
+                                                  <td>
+                                                      @php
+                                                          $refData = $profile?->referred_by ?: $profile?->referredBy;
+                                                          $refName = is_array($refData) ? ($refData['name'] ?? null) : ($refData?->name ?? null);
+                                                      @endphp
+                                                      @if($refName)
+                                                          <span class="badge bg-light text-dark border">
+                                                              <i class="bi bi-person-check text-success me-1"></i>{{ $refName }}
+                                                          </span>
+                                                          <small class="d-block text-muted" style="font-size: 0.72rem;">({{ $profile->referred_by_code }})</small>
+                                                      @else
+                                                          <span class="badge bg-light text-secondary border">Direct</span>
+                                                      @endif
+                                                  </td>
+                                                 <td>
+                                                     <div>{{ $provider->email ?: '-' }}</div>
+                                                     <small class="text-muted">{{ $provider->phone }}</small>
+                                                 </td>
+                                                 <td>
+                                                     @if($isCompany)
+                                                         <span class="badge bg-light text-primary border"><i class="bi bi-building me-1"></i> {{ optional(Auth::guard('admin')->user())->name }}</span>
+                                                     @else
+                                                         @php
+                                                             $assignedCompany = $companies->firstWhere('id', $provider->company_id);
+                                                             $reqCompany = $provider->company_name ?: ($profile?->company_name ?? null);
+                                                         @endphp
+                                                         <form action="{{ route('providers.assign_company', $provider->id) }}" method="POST" class="admin-loader-form">
+                                                             @csrf
+                                                             <select name="company_id" class="form-select form-select-sm admin-auto-submit mb-1" style="min-width: 140px;">
+                                                                 <option value="">-- No Company --</option>
+                                                                 @foreach($companies as $c)
+                                                                     <option value="{{ $c->id }}" {{ $provider->company_id == $c->id ? 'selected' : '' }}>
+                                                                         {{ $c->name }}
+                                                                     </option>
+                                                                 @endforeach
+                                                             </select>
+                                                             @if($reqCompany)
+                                                                 <small class="text-muted d-block" style="font-size: 0.72rem;"><i class="bi bi-info-circle me-1"></i>Requested: <strong>{{ $reqCompany }}</strong></small>
+                                                             @endif
+                                                         </form>
+                                                     @endif
+                                                 </td>
+                                                 <td>
+                                                     @forelse ($serviceNames as $serviceName)
+                                                         <span class="badge bg-light text-dark border me-1">{{ $serviceName }}</span>
+                                                     @empty
+                                                         <span class="text-muted">No services</span>
+                                                     @endforelse
+                                                 </td>
+                                                 <td>{{ ucfirst($profile?->provider_type ?: 'individual') }}</td>
+                                                 <td class="text-center admin-status-cell">
+                                                     <form action="{{ route('providers.status', $provider->id) }}" method="POST" class="admin-status-form admin-loader-form">
+                                                         @csrf
+                                                         <select name="provider_status" class="form-select form-select-sm admin-auto-submit">
+                                                             @foreach ($statuses as $status)
+                                                                 <option value="{{ $status }}" {{ $provider->provider_status === $status ? 'selected' : '' }}>
+                                                                     {{ ucfirst($status) }}
+                                                                 </option>
+                                                             @endforeach
+                                                         </select>
+                                                     </form>
+                                                     {{-- <div class="mt-2">
+                                                         <span class="badge admin-badge {{ $badgeClass }}">{{ ucfirst($provider->provider_status ?: 'inactive') }}</span>
+                                                     </div> --}}
+                                                 </td>
+                                                 <td>{{ optional($provider->created_at)->format('d M Y') }}</td>
+                                                 <td class="text-center admin-action-cell">
+                                                     <div class="admin-icon-actions">
+                                                         <a href="javascript:void(0);" class="admin-icon-btn warning open-direct-notification-modal" data-user-id="{{ $provider->id }}" data-user-name="{{ $provider->name }}" title="Send Push Notification">
+                                                             <i class="bi bi-bell-fill"></i>
+                                                         </a>
+                                                         <a href="{{ route('providers.show', $provider->id) }}" class="admin-icon-btn info" title="View Details">
+                                                             <i class="bi bi-eye-fill"></i>
+                                                         </a>
+                                                         @if(!$isCompany)
+                                                             <a href="{{ route('providers.edit', $provider->id) }}" class="admin-icon-btn primary" title="Edit Provider">
+                                                                 <i class="bi bi-pencil-square"></i>
+                                                             </a>
+                                                             <a href="javascript:void(0);" class="admin-icon-btn danger deleteProviderBtn" data-id="{{ $provider->id }}" title="Delete Provider">
+                                                                 <i class="bi bi-trash-fill"></i>
+                                                             </a>
+                                                         @endif
+                                                     </div>
+                                                 </td>
+                                             </tr>
+                                         @empty
+                                              <tr>
+                                                  <td colspan="11" class="text-center text-muted py-4">No providers found for the selected filters.</td>
+                                              </tr>
                                         @endforelse
                                     </tbody>
                                 </table>

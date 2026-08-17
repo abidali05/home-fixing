@@ -150,13 +150,16 @@ class PaymentController extends Controller
             $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
             $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
 
-            // 6. Handle 3DS Redirect if required by bank
-            if (!empty($redirectUrl) && $chargeStatus !== 'CAPTURED') {
+            // 6. Always update tap_charge_id immediately so webhooks/redirects match
+            if ($tapChargeId) {
                 $payment->update([
                     'tap_charge_id' => $tapChargeId,
                     'gateway_response' => $chargeResponse,
                 ]);
+            }
 
+            // 7. Handle 3DS Redirect if required by bank
+            if (!empty($redirectUrl) && $chargeStatus !== 'CAPTURED') {
                 return $this->success([
                     'payment_id' => $payment->id,
                     'status' => strtolower($chargeStatus),

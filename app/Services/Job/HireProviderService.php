@@ -34,7 +34,7 @@ class HireProviderService
             }
 
             // Idempotency check: if job is already hired or bid is accepted
-            if ($job->status === 'hired' && $bid->status === 'accepted') {
+            if ($job->status === 'hired' || $bid->status === 'accepted') {
                 Log::info("HireProviderService: Job #{$job->id} is already hired. Skipping duplicate hiring execution.");
                 return true;
             }

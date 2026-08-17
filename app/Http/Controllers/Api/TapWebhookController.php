@@ -80,12 +80,29 @@ class TapWebhookController extends Controller
 
             $payment = Payment::where('tap_charge_id', $tapId)->first();
 
-            if ($payment) {
-                $this->tapPaymentService->verifyCharge($tapId, $payment);
-                $payment->refresh();
+            if (!$payment) {
+                try {
+                    $chargeData = $this->tapPaymentService->retrieveCharge($tapId);
+                    $metaPaymentId = $chargeData['metadata']['payment_id'] ?? null;
+                    if ($metaPaymentId) {
+                        $payment = Payment::find($metaPaymentId);
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning("TapWebhookController: Unable to fetch charge {$tapId} during redirect fallback: " . $e->getMessage());
+                }
             }
 
-            $isSuccess = $payment && $payment->status === 'captured';
+            if ($payment) {
+                try {
+                    $this->tapPaymentService->verifyCharge($tapId, $payment);
+                    $payment->refresh();
+                } catch (\Throwable $e) {
+                    Log::warning("TapWebhookController: verifyCharge exception during redirect: " . $e->getMessage());
+                    $payment->refresh();
+                }
+            }
+
+            $isSuccess = $payment && in_array(strtolower($payment->status), ['captured', 'paid']);
             $statusText = $isSuccess ? 'Payment Successful!' : 'Payment Pending or Failed';
             $bgColor = $isSuccess ? '#27ae60' : '#e74c3c';
             $subText = $isSuccess 

@@ -142,6 +142,10 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 Route::post('webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
 
+Route::get('test', function() {
+    return "hello";
+});
+
 // Root level aliases for payment endpoints
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [\App\Http\Controllers\Api\PaymentController::class, 'initiatePayment']);

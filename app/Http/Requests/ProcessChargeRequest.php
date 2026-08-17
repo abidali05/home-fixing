@@ -15,7 +15,7 @@ class ProcessChargeRequest extends FormRequest
     {
         return [
             'payment_id' => 'required|integer|exists:payments,id',
-            'token' => 'required|string',
+            'token' => 'nullable|string',
         ];
     }
 

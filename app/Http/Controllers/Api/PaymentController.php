@@ -111,7 +111,7 @@ class PaymentController extends Controller
         try {
             $user = auth('sanctum')->user();
             $paymentId = $request->input('payment_id');
-            $token = $request->input('token');
+            $token = $request->input('token', 'src_all') ?: 'src_all';
 
             $payment = Payment::with(['job', 'bid', 'user', 'provider'])->find($paymentId);
 

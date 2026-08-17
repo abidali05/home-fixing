@@ -24,11 +24,16 @@ class TapPaymentService
      * @param string $token
      * @return array
      */
-    public function createCharge(Payment $payment, string $token): array
+    public function createCharge(Payment $payment, string $token = 'src_all'): array
     {
         $secretKey = config('services.tap.secret_key');
-        $webhookUrl = config('services.tap.webhook_url') ?: url('/api/webhooks/tap');
-        $redirectUrl = config('services.tap.redirect_url') ?: url('/tap/redirect');
+        if (empty($secretKey)) {
+            Log::error("TapPaymentService: TAP_SECRET_KEY is empty in config/services.php or server .env file.");
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
+
+        $webhookUrl = config('services.tap.webhook_url') ?: 'https://admin.azhlksa.com/api/v1/webhooks/tap';
+        $redirectUrl = config('services.tap.redirect_url') ?: 'https://admin.azhlksa.com/tap/redirect';
 
         $user = $payment->user;
         $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '500000000');
@@ -67,7 +72,7 @@ class TapPaymentService
                 ],
             ],
             'source' => [
-                'id' => $token,
+                'id' => $token ?: 'src_all',
             ],
             'post' => [
                 'url' => $webhookUrl,
@@ -118,6 +123,9 @@ class TapPaymentService
     public function retrieveCharge(string $chargeId): array
     {
         $secretKey = config('services.tap.secret_key');
+        if (empty($secretKey)) {
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
 
         $response = Http::withToken($secretKey)
             ->acceptJson()

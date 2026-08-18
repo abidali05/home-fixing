@@ -35,7 +35,7 @@ class GeneralContoller extends Controller
     public function system_settings()
     {
         try {
-            $data = SystemSettingModel::select('system_name', 'logo', 'currency', 'payment_method')->first();
+            $data = SystemSettingModel::select('system_name', 'logo', 'currency', 'payment_method', 'azhl_percentage')->first();
 
             if (!$data) {
                 return $this->notFound('System settings not found');

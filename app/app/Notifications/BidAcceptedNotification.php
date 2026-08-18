@@ -1,0 +1,59 @@
+<?php
+
+namespace App\Notifications;
+
+use App\Models\JobRequestModel;
+use App\Models\User;
+use App\Notifications\Channels\FcmChannel;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Notification;
+
+class BidAcceptedNotification extends Notification implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        private readonly JobRequestModel $job,
+        private readonly User $customer
+    ) {
+        $this->onQueue('notifications');
+    }
+
+    public function via(object $notifiable): array
+    {
+        if ((int) ($notifiable->role ?? -1) === 1) {
+            return [FcmChannel::class, 'database'];
+        }
+
+        return ['database'];
+    }
+
+    public function toArray(object $notifiable): array
+    {
+        return [
+            'type' => 'bid_accepted',
+            'title' => 'Bid Accepted',
+            'message' => $this->customer->name . ' accepted your bid request.',
+            'data' => [
+                'job_id' => (int) $this->job->id,
+                'customer_id' => (int) $this->customer->id,
+            ],
+        ];
+    }
+
+    public function toFcm(object $notifiable): array
+    {
+        $array = $this->toArray($notifiable);
+
+        return [
+            'type' => $array['type'],
+            'title' => $array['title'],
+            'message' => $array['message'],
+            'data' => [
+                ...$array['data'],
+                'type' => $array['type'],
+            ],
+        ];
+    }
+}

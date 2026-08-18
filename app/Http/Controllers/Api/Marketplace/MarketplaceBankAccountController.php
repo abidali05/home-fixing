@@ -1,13 +1,13 @@
 <?php
 
-namespace App\Http\Controllers\Api\Provider;
+namespace App\Http\Controllers\Api\Marketplace;
 
 use App\Http\Controllers\Controller;
-use App\Models\ProviderProfile;
+use App\Models\MarketplaceProfile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
-class ProviderBankAccountController extends Controller
+class MarketplaceBankAccountController extends Controller
 {
     /**
      * Known Saudi Bank Mapping helper by IBAN 2-digit bank code.
@@ -26,7 +26,7 @@ class ProviderBankAccountController extends Controller
     ];
 
     /**
-     * Validate Saudi IBAN and return bank metadata
+     * Validate Saudi IBAN and return bank metadata for Marketplace Seller
      */
     public function validateIban(Request $request)
     {
@@ -72,7 +72,7 @@ class ProviderBankAccountController extends Controller
     }
 
     /**
-     * Get provider saved bank account details
+     * Get marketplace seller saved bank account details
      */
     public function getBankAccount()
     {
@@ -81,7 +81,7 @@ class ProviderBankAccountController extends Controller
             return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
         }
 
-        $profile = ProviderProfile::where('user_id', $user->id)->first();
+        $profile = MarketplaceProfile::where('user_id', $user->id)->first();
 
         return response()->json([
             'status' => 200,
@@ -97,7 +97,7 @@ class ProviderBankAccountController extends Controller
     }
 
     /**
-     * Save or update provider bank account details
+     * Save or update marketplace seller bank account details
      */
     public function saveBankAccount(Request $request)
     {
@@ -124,7 +124,7 @@ class ProviderBankAccountController extends Controller
 
         $cleanIban = strtoupper(str_replace(' ', '', $request->iban));
 
-        $profile = ProviderProfile::firstOrCreate(
+        $profile = MarketplaceProfile::firstOrCreate(
             ['user_id' => $user->id],
             []
         );
@@ -151,7 +151,7 @@ class ProviderBankAccountController extends Controller
     }
 
     /**
-     * Delete provider saved bank account details
+     * Delete marketplace seller saved bank account details
      */
     public function deleteBankAccount()
     {
@@ -160,7 +160,7 @@ class ProviderBankAccountController extends Controller
             return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
         }
 
-        $profile = ProviderProfile::where('user_id', $user->id)->first();
+        $profile = MarketplaceProfile::where('user_id', $user->id)->first();
 
         if ($profile) {
             $profile->update([

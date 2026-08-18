@@ -147,6 +147,13 @@ Route::post(
     Route::post('provider/validate-iban', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'validateIban']);
     Route::get('provider/bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'getBankAccount']);
     Route::post('provider/save-bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'saveBankAccount']);
+    Route::delete('provider/bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'deleteBankAccount']);
+
+    // Marketplace Seller Bank Account Routes
+    Route::post('marketplace/validate-iban', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'validateIban']);
+    Route::get('marketplace/bank-account', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'getBankAccount']);
+    Route::post('marketplace/save-bank-account', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'saveBankAccount']);
+    Route::delete('marketplace/bank-account', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'deleteBankAccount']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

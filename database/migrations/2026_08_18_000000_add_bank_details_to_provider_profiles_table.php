@@ -28,6 +28,24 @@ return new class extends Migration
                 $table->string('bank_location', 255)->nullable()->after('swift_code');
             }
         });
+
+        Schema::table('marketplace_profiles', function (Blueprint $table) {
+            if (!Schema::hasColumn('marketplace_profiles', 'iban')) {
+                $table->string('iban', 35)->nullable();
+            }
+            if (!Schema::hasColumn('marketplace_profiles', 'account_title')) {
+                $table->string('account_title', 255)->nullable();
+            }
+            if (!Schema::hasColumn('marketplace_profiles', 'bank_name')) {
+                $table->string('bank_name', 255)->nullable();
+            }
+            if (!Schema::hasColumn('marketplace_profiles', 'swift_code')) {
+                $table->string('swift_code', 50)->nullable();
+            }
+            if (!Schema::hasColumn('marketplace_profiles', 'bank_location')) {
+                $table->string('bank_location', 255)->nullable();
+            }
+        });
     }
 
     /**
@@ -36,6 +54,9 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('provider_profiles', function (Blueprint $table) {
+            $table->dropColumn(['iban', 'account_title', 'bank_name', 'swift_code', 'bank_location']);
+        });
+        Schema::table('marketplace_profiles', function (Blueprint $table) {
             $table->dropColumn(['iban', 'account_title', 'bank_name', 'swift_code', 'bank_location']);
         });
     }

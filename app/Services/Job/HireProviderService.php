@@ -86,7 +86,7 @@ class HireProviderService
             $order->user_id = $customer->id;
             $order->provider_id = $provider->id;
             $order->price = $payment->amount;
-            $order->status = 'accepted';
+            $order->status = 'pending';
             $order->paid_to_system = 1;
             $order->save();
 

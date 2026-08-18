@@ -1,8 +1,11 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BankController;
 use App\Http\Controllers\Api\GeneralContoller;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\TapWebhookController;
 use App\Http\Controllers\Api\User\HiringController;
 use App\Http\Controllers\Api\User\OrdersController;
 use App\Http\Controllers\CampaignController;
@@ -49,7 +52,10 @@ Route::prefix('v1')->group(function () {
 // ================================================================== Protected Routes Start================================================================
 
 Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
-
+Route::post(
+        '/bank/iban/verify',
+        [BankController::class, 'verifyIban']
+    );
 
     Route::post('logout', [AuthController::class, 'logout']);
     Route::post('active-account-request', [AuthController::class, 'activeAccountRequest']);
@@ -133,26 +139,20 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('notifications/read-all', [NotificationController::class, 'mark_all_as_read']);
 
     // Tap Payments API Routes
-    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [\App\Http\Controllers\Api\PaymentController::class, 'initiatePayment']);
-    Route::post('payments/charge', [\App\Http\Controllers\Api\PaymentController::class, 'charge']);
-    Route::get('payments/{payment}/status', [\App\Http\Controllers\Api\PaymentController::class, 'status']);
+    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
+    Route::post('payments/charge', [PaymentController::class, 'charge']);
+    Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)
-Route::post('webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
-Route::post('v1/webhooks/tap', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleWebhook']);
-
-Route::get('test', function() {
-    return "hello";
-});
+Route::post('webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
+Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 
 // Root level aliases for payment endpoints
 Route::middleware('auth:sanctum')->group(function () {
-    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [\App\Http\Controllers\Api\PaymentController::class, 'initiatePayment']);
-    Route::post('payments/charge', [\App\Http\Controllers\Api\PaymentController::class, 'charge']);
-    Route::get('payments/{payment}/status', [\App\Http\Controllers\Api\PaymentController::class, 'status']);
+    Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
+    Route::post('payments/charge', [PaymentController::class, 'charge']);
+    Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 });
-
-
 
 // ================================================================== Protected Routes End==================================================================

@@ -143,6 +143,10 @@ Route::post(
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 
+    // Marketplace Tap Payment Routes
+    Route::post('marketplace/orders/{order}/initiate-payment', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'initiatePayment']);
+    Route::post('marketplace/payments/charge', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'charge']);
+
     // Provider Bank Account Routes (Max Limit: 3)
     Route::post('provider/validate-iban', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'validateIban']);
     Route::get('provider/bank-accounts', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'getBankAccounts']);

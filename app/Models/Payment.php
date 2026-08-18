@@ -17,6 +17,7 @@ class Payment extends Model
         'job_id',
         'bid_id',
         'provider_id',
+        'marketplace_order_id',
         'amount',
         'currency',
         'gateway',
@@ -48,5 +49,10 @@ class Payment extends Model
     public function bid(): BelongsTo
     {
         return $this->belongsTo(BidModel::class, 'bid_id');
+    }
+
+    public function marketplaceOrder(): BelongsTo
+    {
+        return $this->belongsTo(MarketplaceOrder::class, 'marketplace_order_id');
     }
 }

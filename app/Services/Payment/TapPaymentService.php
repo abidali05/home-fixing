@@ -115,6 +115,85 @@ class TapPaymentService
     }
 
     /**
+     * Creates a charge request on Tap Payments API for a Marketplace Order.
+     */
+    public function createMarketplaceCharge(Payment $payment, \App\Models\MarketplaceOrder $order, string $token = 'src_all'): array
+    {
+        $secretKey = config('services.tap.secret_key');
+        if (empty($secretKey)) {
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
+
+        $webhookUrl = config('services.tap.webhook_url') ?: 'https://admin.azhlksa.com/api/v1/webhooks/tap';
+        $redirectUrl = config('services.tap.redirect_url') ?: 'https://admin.azhlksa.com/tap/redirect';
+
+        $user = $payment->user ?: \App\Models\User::find($payment->user_id);
+        $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '');
+        if (strlen($phoneDigits) > 9) {
+            $phoneDigits = substr($phoneDigits, -9);
+        }
+
+        $payload = [
+            'amount' => (float) $payment->amount,
+            'currency' => strtoupper($payment->currency ?: 'SAR'),
+            'threeDSecure' => true,
+            'save_card' => false,
+            'description' => "Payment for Marketplace Order #{$order->order_number}",
+            'statement_descriptor' => "AZHL MARKETPLACE",
+            'metadata' => [
+                'payment_id' => (string) $payment->id,
+                'marketplace_order_id' => (string) $order->id,
+                'user_id' => (string) $payment->user_id,
+            ],
+            'reference' => [
+                'transaction' => "MKT-{$payment->id}",
+                'order' => $order->order_number,
+            ],
+            'receipt' => [
+                'email' => true,
+                'sms' => true,
+            ],
+            'customer' => [
+                'first_name' => $user->name ?? 'Customer',
+                'email' => $user->email ?? 'customer@azhl.com',
+                'phone' => [
+                    'country_code' => '966',
+                    'number' => $phoneDigits ?: '500000000',
+                ],
+            ],
+            'source' => [
+                'id' => $token ?: 'src_all',
+            ],
+            'post' => [
+                'url' => $webhookUrl,
+            ],
+            'redirect' => [
+                'url' => $redirectUrl,
+            ],
+        ];
+
+        Log::info("TapPaymentService: Initiating marketplace charge request for payment #{$payment->id} / order #{$order->id}", ['payload' => $payload]);
+
+        $response = Http::withToken($secretKey)
+            ->acceptJson()
+            ->post("{$this->baseUrl}/charges", $payload);
+
+        $responseData = $response->json() ?? [];
+
+        if ($response->failed()) {
+            $errorMessage = $responseData['errors'][0]['description'] ?? ($responseData['message'] ?? 'Failed to communicate with Tap Payments.');
+            $payment->update([
+                'status' => 'failed',
+                'gateway_response' => $responseData,
+            ]);
+
+            throw new \RuntimeException($errorMessage, $response->status());
+        }
+
+        return $responseData;
+    }
+
+    /**
      * Retrieves charge details directly from Tap Payments API.
      *
      * @param string $chargeId
@@ -168,6 +247,17 @@ class TapPaymentService
                 'tap_charge_id' => $chargeId,
                 'gateway_response' => $chargeData,
             ]);
+
+            if ($payment->marketplace_order_id) {
+                $order = \App\Models\MarketplaceOrder::find($payment->marketplace_order_id);
+                if ($order) {
+                    $order->update([
+                        'status' => 'confirmed',
+                        'payment_method' => 'tap',
+                    ]);
+                }
+                return true;
+            }
 
             // Hire Provider
             return $this->hireProviderService->hireProvider($payment);

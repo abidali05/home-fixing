@@ -40,7 +40,7 @@ class HireProviderService
             }
 
             // 1. Update Job Status
-            $job->status = 'hired';
+            $job->status = 'quoted';
             $job->save();
 
             // 2. Accept Selected Bid

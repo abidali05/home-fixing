@@ -107,6 +107,20 @@
                                             @enderror
                                         </div>
 
+                                        <div class="mb-4">
+                                            <label for="azhl_percentage" class="form-label fw-semibold">Azhl Commission Percentage (%)</label>
+                                            <div class="input-group input-group-alternative">
+                                                <input type="number" step="0.1" min="0" max="100" class="form-control form-control-lg @error('azhl_percentage') is-invalid @enderror"
+                                                    name="azhl_percentage" id="azhl_percentage"
+                                                    value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 10) }}" placeholder="e.g. 10" required>
+                                                <span class="input-group-text font-weight-bold">%</span>
+                                            </div>
+                                            <small class="text-muted d-block mt-1">Enter commission percentage retained by Azhl system on completed orders (e.g. 5, 10, 15).</small>
+                                            @error('azhl_percentage')
+                                                <div class="invalid-feedback">{{ $message }}</div>
+                                            @enderror
+                                        </div>
+
                                         <div class="d-grid col-4 mx-auto">
                                             <button type="submit" class="btn btn-primary btn-lg">Update Settings</button>
                                         </div>

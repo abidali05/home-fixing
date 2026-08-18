@@ -30,6 +30,7 @@ class SystemSettingController extends Controller
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,svg|max:2048',
             'currency' => 'required|string|max:10',
             'payment_method' => 'required|string|max:50',
+            'azhl_percentage' => 'nullable|numeric|min:0|max:100',
         ]);
 
         $settings = SystemSettingModel::first();
@@ -40,6 +41,7 @@ class SystemSettingController extends Controller
         $settings->system_name = $request->system_name;
         $settings->currency = $request->currency;
         $settings->payment_method = $request->payment_method;
+        $settings->azhl_percentage = $request->input('azhl_percentage', 10.00);
 
         if ($request->hasFile('logo')) {
             if ($settings->logo && file_exists(public_path('uploads/system_settings/' . $settings->logo))) {

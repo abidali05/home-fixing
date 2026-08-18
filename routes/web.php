@@ -198,6 +198,10 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('mobile_banners/update', [SystemSettingController::class, 'mobile_banners'])->name('mobile_banners.update')->middleware('CheckPermission:5');
     Route::get('mobile-banners/delete/{id}', [SystemSettingController::class, 'delete_mobile_banners'])->name('mobile_banners.delete')->middleware('CheckPermission:5');
 
+    // Payments & Transactions
+    Route::get('payments', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.index');
+    Route::get('payments-transactions', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.transactions');
+
 
     // =====================================================================System Settings Start===============================================================================
 

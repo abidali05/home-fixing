@@ -46,8 +46,8 @@ return [
         'secret_key' => env('TAP_SECRET_KEY'),
         'public_key' => env('TAP_PUBLIC_KEY'),
         'merchant_id' => env('TAP_MERCHANT_ID'),
-        'webhook_url' => env('TAP_WEBHOOK_URL'),
-        'redirect_url' => env('TAP_REDIRECT_URL'),
+        'webhook_url' => env('TAP_WEBHOOK_URL', 'https://admin.azhlksa.com/api/v1/webhooks/tap'),
+        'redirect_url' => env('TAP_REDIRECT_URL', 'https://admin.azhlksa.com/tap/redirect'),
     ],
 
 ];

@@ -270,4 +270,61 @@ class ProviderBankAccountController extends Controller
             'data' => null
         ]);
     }
+
+    /**
+     * Get Provider detailed financial summary (total_earnings, available_for_withdraw, pending_amount, total_withdraw)
+     */
+    public function financialSummary()
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $settings = \App\Models\Admin\SystemSettingModel::first();
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+
+        // Captured Payments for Provider
+        $capturedPayments = \App\Models\Payment::where('provider_id', $user->id)
+            ->where('status', 'captured')
+            ->get();
+
+        $grossEarnings = (float) $capturedPayments->sum('amount');
+        $azhlCommission = $grossEarnings * ($azhlPercentage / 100.00);
+        $netEarnings = max(0, $grossEarnings - $azhlCommission);
+
+        // Pending Payments / Earnings (Processing payments or pending jobs)
+        $pendingPayments = \App\Models\Payment::where('provider_id', $user->id)
+            ->whereIn('status', ['pending', 'processing', 'initiated'])
+            ->sum('amount');
+
+        // Total Withdrawals
+        $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+            ->where('account_type', 'provider')
+            ->whereIn('status', ['approved', 'paid'])
+            ->sum('amount');
+
+        $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+            ->where('account_type', 'provider')
+            ->where('status', 'pending')
+            ->sum('amount');
+
+        $availableForWithdraw = max(0, $netEarnings - $totalWithdrawn - $pendingWithdrawals);
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Provider financial summary fetched successfully.',
+            'data' => [
+                'currency' => 'SAR',
+                'gross_total_earnings' => round($grossEarnings, 2),
+                'net_total_earnings' => round($netEarnings, 2),
+                'azhl_commission_percentage' => $azhlPercentage,
+                'azhl_commission_amount' => round($azhlCommission, 2),
+                'available_for_withdraw' => round($availableForWithdraw, 2),
+                'pending_amount' => round((float) $pendingPayments, 2),
+                'total_withdraw' => round($totalWithdrawn, 2),
+                'pending_withdraw_request' => round($pendingWithdrawals, 2),
+            ]
+        ]);
+    }
 }

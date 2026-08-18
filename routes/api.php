@@ -147,8 +147,9 @@ Route::post(
     Route::post('marketplace/orders/{order}/initiate-payment', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('marketplace/payments/charge', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'charge']);
 
-    // Provider Bank Account Routes (Max Limit: 3)
+    // Provider Bank & Financial Summary Routes
     Route::post('provider/validate-iban', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'validateIban']);
+    Route::get('provider/financial-summary', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'financialSummary']);
     Route::get('provider/bank-accounts', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'getBankAccounts']);
     Route::get('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'showBankAccount']);
     Route::post('provider/save-bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'saveBankAccount']);
@@ -157,8 +158,9 @@ Route::post(
     Route::put('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'updateBankAccount']);
     Route::delete('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'deleteBankAccount']);
 
-    // Marketplace Seller Bank Account Routes (Max Limit: 3)
+    // Marketplace Seller Bank & Financial Summary Routes
     Route::post('marketplace/validate-iban', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'validateIban']);
+    Route::get('marketplace/financial-summary', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'financialSummary']);
     Route::get('marketplace/bank-accounts', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'getBankAccounts']);
     Route::get('marketplace/bank-accounts/{id}', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'showBankAccount']);
     Route::post('marketplace/save-bank-account', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'saveBankAccount']);

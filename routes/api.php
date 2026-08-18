@@ -142,6 +142,11 @@ Route::post(
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
+
+    // Provider Bank Account Routes
+    Route::post('provider/validate-iban', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'validateIban']);
+    Route::get('provider/bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'getBankAccount']);
+    Route::post('provider/save-bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'saveBankAccount']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

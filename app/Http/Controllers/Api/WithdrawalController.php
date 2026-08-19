@@ -8,33 +8,13 @@ use App\Models\BankAccount;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
+use App\Models\ReferralReward;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class WithdrawalController extends Controller
 {
-    /**
-     * Check if a user/provider has a referral attached
-     */
-    private function checkIsReferred($user): bool
-    {
-        if (!$user) {
-            return false;
-        }
-
-        $profile = ProviderProfile::where('user_id', $user->id)->first();
-        if ($profile && (!empty($profile->referred_by_id) || !empty($profile->referred_by_code))) {
-            return true;
-        }
-
-        if (!empty($user->referred_by_id) || !empty($user->referred_by_code) || !empty($user->referrer_id)) {
-            return true;
-        }
-
-        return false;
-    }
-
     /**
      * Provider / Marketplace Wallet Summary API
      * Contract matching Page 6 of Specification Doc
@@ -53,14 +33,9 @@ class WithdrawalController extends Controller
 
         $settings = SystemSettingModel::first();
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
-        $referralAmount = (float) ($settings->referral_amount ?? 10.00);
-
-        $isReferred = $this->checkIsReferred($user);
-        $referralFeePerOrder = $isReferred ? $referralAmount : 0.0;
-        $totalDeductionPerOrder = $azhlFeePerOrder + $referralFeePerOrder;
 
         if ($accountType === 'provider') {
-            // 1. Pending Amount: Net pending amount (gross price minus azhl fee & referral fee per order)
+            // 1. Pending Amount: Net pending amount (gross price minus azhl fee per order)
             $pendingOrders = Orders::where('provider_id', $user->id)
                 ->whereIn('status', ['open', 'pending', 'accepted', 'on_the_way', 'arrived', 'working', 'provider_completed', 'quoted'])
                 ->get();
@@ -68,29 +43,34 @@ class WithdrawalController extends Controller
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
                 $gross = (float) ($ord->price ?? 0);
-                $netPending = max(0, $gross - $totalDeductionPerOrder);
+                $netPending = max(0, $gross - $azhlFeePerOrder);
                 $pendingAmount += $netPending;
             }
 
-            // 2. Completed Orders & Net Total Earnings: Orders where status = 'completed'
+            // 2. Completed Orders Net Earnings (gross - fixed azhl_fee)
             $completedOrders = Orders::where('provider_id', $user->id)
                 ->where('status', 'completed')
                 ->get();
 
-            $totalEarnings = 0.0;
+            $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $gross = (float) ($ord->price ?? 0);
-                $net = max(0, $gross - $totalDeductionPerOrder);
-                $totalEarnings += $net;
+                $net = max(0, $gross - $azhlFeePerOrder);
+                $orderEarnings += $net;
             }
 
-            // 3. Total Withdrawn: Sum of withdrawals where status = completed only
+            // 3. Referral Bonus Credits earned by this user as a Referrer (paid by Azhl out of its pocket)
+            $referralEarnings = (float) ReferralReward::where('referrer_id', $user->id)->sum('reward_amount');
+
+            $totalEarnings = $orderEarnings + $referralEarnings;
+
+            // 4. Total Withdrawn: Sum of completed withdrawals
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
                 ->sum('amount');
 
-            // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
+            // 5. Reserved Funds: Active withdrawal requests currently requested or accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
@@ -109,19 +89,22 @@ class WithdrawalController extends Controller
             $pendingAmount = 0.0;
             foreach ($pendingPayments as $p) {
                 $gross = (float) ($p->amount ?? 0);
-                $pendingAmount += max(0, $gross - $totalDeductionPerOrder);
+                $pendingAmount += max(0, $gross - $azhlFeePerOrder);
             }
 
             $completedPayments = Payment::whereIn('marketplace_order_id', $orderIds)
                 ->where('status', 'captured')
                 ->get();
 
-            $totalEarnings = 0.0;
+            $orderEarnings = 0.0;
             foreach ($completedPayments as $p) {
                 $gross = (float) ($p->amount ?? 0);
-                $net = max(0, $gross - $totalDeductionPerOrder);
-                $totalEarnings += $net;
+                $net = max(0, $gross - $azhlFeePerOrder);
+                $orderEarnings += $net;
             }
+
+            $referralEarnings = (float) ReferralReward::where('referrer_id', $user->id)->sum('reward_amount');
+            $totalEarnings = $orderEarnings + $referralEarnings;
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'marketplace')
@@ -194,22 +177,20 @@ class WithdrawalController extends Controller
 
         $settings = SystemSettingModel::first();
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
-        $referralAmount = (float) ($settings->referral_amount ?? 10.00);
-
-        $isReferred = $this->checkIsReferred($user);
-        $referralFeePerOrder = $isReferred ? $referralAmount : 0.0;
-        $totalDeductionPerOrder = $azhlFeePerOrder + $referralFeePerOrder;
 
         if ($accountType === 'provider') {
             $completedOrders = Orders::where('provider_id', $user->id)
                 ->where('status', 'completed')
                 ->get();
 
-            $totalEarnings = 0.0;
+            $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $gross = (float) ($ord->price ?? 0);
-                $totalEarnings += max(0, $gross - $totalDeductionPerOrder);
+                $orderEarnings += max(0, $gross - $azhlFeePerOrder);
             }
+
+            $referralEarnings = (float) ReferralReward::where('referrer_id', $user->id)->sum('reward_amount');
+            $totalEarnings = $orderEarnings + $referralEarnings;
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
@@ -230,10 +211,13 @@ class WithdrawalController extends Controller
                 ->where('status', 'captured')
                 ->get();
 
-            $totalEarnings = 0.0;
+            $orderEarnings = 0.0;
             foreach ($completedPayments as $p) {
-                $totalEarnings += max(0, ((float)($p->amount ?? 0)) - $totalDeductionPerOrder);
+                $orderEarnings += max(0, ((float)($p->amount ?? 0)) - $azhlFeePerOrder);
             }
+
+            $referralEarnings = (float) ReferralReward::where('referrer_id', $user->id)->sum('reward_amount');
+            $totalEarnings = $orderEarnings + $referralEarnings;
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'marketplace')
@@ -308,15 +292,10 @@ class WithdrawalController extends Controller
 
         $settings = SystemSettingModel::first();
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
-        $referralAmount = (float) ($settings->referral_amount ?? 10.00);
-
-        $isReferred = $this->checkIsReferred($user);
-        $referralFeePerOrder = $isReferred ? $referralAmount : 0.0;
-        $totalDeductionPerOrder = $azhlFeePerOrder + $referralFeePerOrder;
 
         $transactions = collect();
 
-        // 1. Credit Transactions
+        // 1. Credit Transactions (Order Earnings & Referral Bonuses)
         if (in_array($filter, ['all', 'credit'])) {
             if ($accountType === 'provider') {
                 $completedOrders = Orders::with(['job.category'])
@@ -326,7 +305,8 @@ class WithdrawalController extends Controller
 
                 foreach ($completedOrders as $ord) {
                     $gross = (float) ($ord->price ?? 0);
-                    $net = max(0, $gross - $totalDeductionPerOrder);
+                    $azhlFee = $azhlFeePerOrder;
+                    $net = max(0, $gross - $azhlFee);
                     $job = $ord->job;
 
                     $transactions->push([
@@ -342,10 +322,40 @@ class WithdrawalController extends Controller
                             'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
                             'order_status' => 'completed',
                             'gross_amount' => round($gross, 2),
-                            'azhl_fee' => round($azhlFeePerOrder, 2),
-                            'referral_fee' => round($referralFeePerOrder, 2),
+                            'azhl_fee' => round($azhlFee, 2),
+                            'referral_fee' => 0.00,
                             'net_amount' => round($net, 2),
                             'completed_at' => $ord->updated_at ? $ord->updated_at->toIso8601String() : null,
+                        ],
+                        'withdraw' => null,
+                    ]);
+                }
+
+                // Add Referral Reward Credits earned as a Referrer
+                $referralRewards = ReferralReward::with('referredUser')
+                    ->where('referrer_id', $user->id)
+                    ->get();
+
+                foreach ($referralRewards as $refReward) {
+                    $referredUser = $refReward->referredUser;
+
+                    $transactions->push([
+                        'id' => (int) (800000 + $refReward->id),
+                        'type' => 'credit',
+                        'label' => 'Referral Bonus',
+                        'amount' => round((float) $refReward->reward_amount, 2),
+                        'currency' => 'SAR',
+                        'created_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
+                        'credit' => [
+                            'order_id' => (int) ($refReward->order_id ?: 0),
+                            'order_no' => $refReward->order_id ? ('ORD-' . str_pad($refReward->order_id, 6, '0', STR_PAD_LEFT)) : 'REF-BONUS',
+                            'order_title' => 'Referral Reward for Provider ' . (optional($referredUser)->name ?: ('#' . $refReward->referred_user_id)),
+                            'order_status' => 'completed',
+                            'gross_amount' => round((float) $refReward->reward_amount, 2),
+                            'azhl_fee' => 0.00,
+                            'referral_fee' => 0.00,
+                            'net_amount' => round((float) $refReward->reward_amount, 2),
+                            'completed_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         ],
                         'withdraw' => null,
                     ]);
@@ -363,7 +373,8 @@ class WithdrawalController extends Controller
 
                 foreach ($payments as $p) {
                     $gross = (float) ($p->amount ?? 0);
-                    $net = max(0, $gross - $totalDeductionPerOrder);
+                    $azhlFee = $azhlFeePerOrder;
+                    $net = max(0, $gross - $azhlFee);
                     $order = $p->marketplaceOrder;
 
                     $transactions->push([
@@ -379,8 +390,8 @@ class WithdrawalController extends Controller
                             'order_title' => 'Marketplace Product Order',
                             'order_status' => 'completed',
                             'gross_amount' => round($gross, 2),
-                            'azhl_fee' => round($azhlFeePerOrder, 2),
-                            'referral_fee' => round($referralFeePerOrder, 2),
+                            'azhl_fee' => round($azhlFee, 2),
+                            'referral_fee' => 0.00,
                             'net_amount' => round($net, 2),
                             'completed_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
                         ],

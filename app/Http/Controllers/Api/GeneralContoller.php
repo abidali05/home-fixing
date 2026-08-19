@@ -1270,6 +1270,10 @@ class GeneralContoller extends Controller
             }
             $order->save();
 
+            if ($order->status === 'completed') {
+                \App\Services\Referral\ReferralRewardService::checkAndRewardReferrer($order);
+            }
+
 
             if ($request->filled('type')) {
                 // only update existing provider_completed record

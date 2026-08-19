@@ -18,7 +18,7 @@ return new class extends Migration
             $table->unsignedBigInteger('bank_account_id')->nullable();
             $table->decimal('amount', 12, 2);
             $table->string('currency', 10)->default('SAR');
-            $table->enum('status', ['pending', 'approved', 'rejected', 'paid'])->default('pending');
+            $table->string('status', 30)->default('requested');
             $table->text('notes')->nullable();
             $table->text('admin_notes')->nullable();
             $table->timestamps();

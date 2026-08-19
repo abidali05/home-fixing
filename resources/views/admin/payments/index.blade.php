@@ -36,7 +36,7 @@
                         <div class="row">
                             <div class="col-8">
                                 <div class="numbers">
-                                    <p class="text-sm mb-0 text-uppercase font-weight-bold text-muted">Azhl Earnings ({{ $stats['azhl_percentage'] }}%)</p>
+                                    <p class="text-sm mb-0 text-uppercase font-weight-bold text-muted">Azhl Earnings ({{ number_format($stats['azhl_fee'], 2) }} SAR/Order)</p>
                                     <h5 class="font-weight-bolder mb-0 text-success">
                                         {{ number_format($stats['system_earnings'], 2) }} SAR
                                     </h5>
@@ -114,7 +114,7 @@
                                 </button>
                             </li>
                         </ul>
-                        <span class="badge bg-light text-dark">Azhl Commission: <strong>{{ $stats['azhl_percentage'] }}%</strong></span>
+                        <span class="badge bg-light text-dark">Azhl Fixed Fee: <strong>{{ number_format($stats['azhl_fee'], 2) }} SAR / order</strong></span>
                     </div>
 
                     <div class="card-body px-4 pt-3 pb-3">
@@ -131,7 +131,7 @@
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Provider</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Job / Bid</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Amount (Gross)</th>
-                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Cut ({{ $stats['azhl_percentage'] }}%)</th>
+                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['azhl_fee'], 2) }} SAR)</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Tap Charge ID</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Status</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder text-center">Action</th>
@@ -142,12 +142,12 @@
                                                 @php
                                                     $isCaptured = strtolower($payment->status) === 'captured';
                                                     $grossAmount = (float) $payment->amount;
-                                                    $azhlCut = $isCaptured ? ($grossAmount * ($stats['azhl_percentage'] / 100)) : 0;
+                                                    $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
                                                 @endphp
                                                 <tr>
                                                     <td>
                                                         <div class="fw-bold">#{{ $payment->id }}</div>
-                                                        <small class="text-muted">{{ $payment->created_at ? $payment->created_at->format('Y-m-d H:i') : 'N/A' }}</small>
+                                                        <small class="text-muted">{{ $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->format('Y-m-d H:i') : 'N/A' }}</small>
                                                     </td>
                                                     <td>
                                                         <div class="fw-semibold text-dark">{{ optional($payment->user)->name ?? 'User #' . $payment->user_id }}</div>
@@ -203,9 +203,9 @@
                                             <tr>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">ID / Date</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Customer</th>
-                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Marketplace Order #</th>
+                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Marketplace Order</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Amount (Gross)</th>
-                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Cut ({{ $stats['azhl_percentage'] }}%)</th>
+                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['azhl_fee'], 2) }} SAR)</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Tap Charge ID</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Status</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder text-center">Action</th>
@@ -216,20 +216,23 @@
                                                 @php
                                                     $isCaptured = strtolower($payment->status) === 'captured';
                                                     $grossAmount = (float) $payment->amount;
-                                                    $azhlCut = $isCaptured ? ($grossAmount * ($stats['azhl_percentage'] / 100)) : 0;
-                                                    $mktOrder = $payment->marketplaceOrder;
+                                                    $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
+                                                    $mkOrder = $payment->marketplaceOrder;
                                                 @endphp
                                                 <tr>
                                                     <td>
                                                         <div class="fw-bold">#{{ $payment->id }}</div>
-                                                        <small class="text-muted">{{ $payment->created_at ? $payment->created_at->format('Y-m-d H:i') : 'N/A' }}</small>
+                                                        <small class="text-muted">{{ $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->format('Y-m-d H:i') : 'N/A' }}</small>
                                                     </td>
                                                     <td>
                                                         <div class="fw-semibold text-dark">{{ optional($payment->user)->name ?? 'User #' . $payment->user_id }}</div>
                                                         <small class="text-muted">{{ optional($payment->user)->phone }}</small>
                                                     </td>
                                                     <td>
-                                                        <span class="badge bg-primary">{{ optional($mktOrder)->order_number ?: 'Order #' . $payment->marketplace_order_id }}</span>
+                                                        <span class="badge bg-outline-info text-info">Order #{{ $payment->marketplace_order_id }}</span>
+                                                        @if ($mkOrder && $mkOrder->order_number)
+                                                            <small class="d-block text-muted">{{ $mkOrder->order_number }}</small>
+                                                        @endif
                                                     </td>
                                                     <td>
                                                         <strong class="text-dark">{{ number_format($grossAmount, 2) }} {{ strtoupper($payment->currency ?: 'SAR') }}</strong>
@@ -271,41 +274,60 @@
             </div>
         </div>
 
-        {{-- Modals for All Payments --}}
+        {{-- Detail Modals --}}
         @foreach ($allPayments as $payment)
             @php
                 $isCaptured = strtolower($payment->status) === 'captured';
                 $grossAmount = (float) $payment->amount;
-                $azhlCut = $isCaptured ? ($grossAmount * ($stats['azhl_percentage'] / 100)) : 0;
+                $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
+                $providerCut = max(0, $grossAmount - $azhlCut);
             @endphp
-            <div class="modal fade" id="paymentModal{{ $payment->id }}" tabindex="-1" aria-hidden="true">
-                <div class="modal-dialog modal-lg text-start">
-                    <div class="modal-content">
+            <div class="modal fade text-start" id="paymentModal{{ $payment->id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content" style="max-width: 100%; overflow: hidden;">
                         <div class="modal-header">
-                            <h5 class="modal-title">Payment #{{ $payment->id }} Details</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            <h5 class="modal-title font-weight-bold">Payment Transaction #{{ $payment->id }} Details</h5>
+                            <button type="button" class="btn-close text-dark" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
-                        <div class="modal-body">
-                            <div class="row mb-3">
-                                <div class="col-md-6">
-                                    <p class="mb-1"><strong>Payment ID:</strong> #{{ $payment->id }}</p>
-                                    <p class="mb-1"><strong>Tap Charge ID:</strong> {{ $payment->tap_charge_id ?: 'N/A' }}</p>
-                                    <p class="mb-1"><strong>Amount:</strong> {{ number_format($payment->amount, 2) }} {{ $payment->currency }}</p>
-                                    <p class="mb-1"><strong>Azhl Commission ({{ $stats['azhl_percentage'] }}%):</strong> {{ number_format($azhlCut, 2) }} SAR</p>
-                                </div>
-                                <div class="col-md-6">
-                                    <p class="mb-1"><strong>Customer:</strong> {{ optional($payment->user)->name }} ({{ optional($payment->user)->phone }})</p>
-                                    @if ($payment->marketplace_order_id)
-                                        <p class="mb-1"><strong>Marketplace Order #:</strong> {{ optional($payment->marketplaceOrder)->order_number ?: '#' . $payment->marketplace_order_id }}</p>
+                        <div class="modal-body" style="word-wrap: break-word; word-break: break-word; white-space: normal;">
+                            <div class="row g-3">
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Transaction Status</small>
+                                    @if (strtolower($payment->status) === 'captured')
+                                        <span class="badge bg-success fs-6">CAPTURED</span>
+                                    @elseif (in_array(strtolower($payment->status), ['processing', 'pending', 'initiated']))
+                                        <span class="badge bg-warning text-dark fs-6">{{ strtoupper($payment->status) }}</span>
                                     @else
-                                        <p class="mb-1"><strong>Provider:</strong> {{ optional($payment->provider)->name }} ({{ optional($payment->provider)->phone }})</p>
-                                        <p class="mb-1"><strong>Job ID:</strong> #{{ $payment->job_id }}</p>
+                                        <span class="badge bg-danger fs-6">{{ strtoupper($payment->status ?: 'FAILED') }}</span>
                                     @endif
-                                    <p class="mb-1"><strong>Status:</strong> <span class="badge bg-secondary">{{ strtoupper($payment->status) }}</span></p>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Gross Amount</small>
+                                    <strong class="fs-6 text-dark">{{ number_format($grossAmount, 2) }} {{ strtoupper($payment->currency ?: 'SAR') }}</strong>
+                                </div>
+                                <hr class="my-2">
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Azhl Fixed Fee (SAR)</small>
+                                    <strong class="text-success">+{{ number_format($azhlCut, 2) }} SAR</strong>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Provider / Seller Net Credit</small>
+                                    <strong class="text-primary">{{ number_format($providerCut, 2) }} SAR</strong>
+                                </div>
+                                <hr class="my-2">
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Tap Payment ID</small>
+                                    <code style="word-break: break-all;">{{ $payment->payment_id ?: 'N/A' }}</code>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted d-block">Tap Charge ID</small>
+                                    <code style="word-break: break-all;">{{ $payment->tap_charge_id ?: 'N/A' }}</code>
+                                </div>
+                                <div class="col-12">
+                                    <small class="text-muted d-block">Payment Date & Time (Saudi Time)</small>
+                                    <strong>{{ $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->format('Y-m-d H:i:s') : 'N/A' }}</strong>
                                 </div>
                             </div>
-                            <h6>Gateway Response Payload:</h6>
-                            <pre class="bg-dark text-light p-3 rounded" style="max-height: 250px; overflow-y: auto;"><code>{{ json_encode($payment->gateway_response, JSON_PRETTY_PRINT) }}</code></pre>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary btn-sm mb-0" data-bs-dismiss="modal">Close</button>

@@ -1,20 +1,21 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BankController;
-use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\Api\GeneralContoller;
+use App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController;
+use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
+use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PaymentController;
-use App\Http\Controllers\TermsConditionController;
+use App\Http\Controllers\Api\Provider\ProviderBankAccountController;
 use App\Http\Controllers\Api\TapWebhookController;
 use App\Http\Controllers\Api\User\HiringController;
 use App\Http\Controllers\Api\User\OrdersController;
-use App\Http\Controllers\Api\NotificationController;
-use App\Http\Controllers\Api\Provider\ProviderBankAccountController;
-use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
-use App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController;
+use App\Http\Controllers\Api\WithdrawalController;
+use App\Http\Controllers\CampaignController;
+use App\Http\Controllers\PrivacyController;
+use App\Http\Controllers\TermsConditionController;
+use Illuminate\Support\Facades\Route;
 
 // ===================================================================Public Routes Start===================================================================
 Route::prefix('v1')->group(function () {
@@ -170,10 +171,28 @@ Route::post(
     Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
     Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
     Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
-    // Withdrawal & Transaction History Routes (Document Specs)
-    Route::post('withdrawals/request', [\App\Http\Controllers\Api\WithdrawalController::class, 'requestWithdrawal']);
-    Route::post('withdrawals', [\App\Http\Controllers\Api\WithdrawalController::class, 'requestWithdrawal']);
-    Route::get('transactions', [\App\Http\Controllers\Api\WithdrawalController::class, 'transactionHistory']);
+    // Withdrawal & Transaction History Routes (Document Specs Page 18)
+    Route::post('withdrawals/request', [WithdrawalController::class, 'requestWithdrawal']);
+    Route::post('withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
+    Route::get('transactions', [WithdrawalController::class, 'transactionHistory']);
+
+    // Provider Wallet & Withdrawal Specification Routes
+    Route::get('provider/wallet', [WithdrawalController::class, 'walletSummary']);
+    Route::get('provider/wallet/summary', [WithdrawalController::class, 'walletSummary']);
+    Route::get('provider/wallet/transactions', [WithdrawalController::class, 'transactionHistory']);
+    Route::post('provider/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
+    Route::get('provider/withdrawals', [WithdrawalController::class, 'transactionHistory']);
+
+    // Marketplace Wallet & Withdrawal Specification Routes
+    Route::get('marketplace/wallet/summary', [WithdrawalController::class, 'walletSummary']);
+    Route::get('marketplace/wallet/transactions', [WithdrawalController::class, 'transactionHistory']);
+    Route::post('marketplace/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
+
+    // Admin Action APIs (Spec Doc Page 13 & 18)
+    Route::get('admin/withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

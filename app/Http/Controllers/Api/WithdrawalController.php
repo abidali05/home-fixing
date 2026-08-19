@@ -13,13 +13,114 @@ use Illuminate\Support\Facades\Validator;
 class WithdrawalController extends Controller
 {
     /**
-     * Submit a withdrawal request for Provider or Marketplace Seller
+     * Provider / Marketplace Wallet Summary API
+     * Contract matching Page 6 of Specification Doc
+     */
+    public function walletSummary(Request $request)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $accountType = $request->input('account_type', 'provider');
+        if (!in_array($accountType, ['provider', 'marketplace'])) {
+            $accountType = 'provider';
+        }
+
+        $settings = SystemSettingModel::first();
+        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
+
+        if ($accountType === 'provider') {
+            // 1. Pending Amount: Gross value of active/held provider orders
+            $pendingAmount = (float) Payment::where('provider_id', $user->id)
+                ->whereHas('job', function ($q) {
+                    $q->whereIn('status', ['quoted', 'hired', 'in_progress', 'pending']);
+                })
+                ->sum('amount');
+
+            // 2. Total Earnings: Sum of net provider credits from completed orders (gross - fixed azhl_fee)
+            $completedPayments = Payment::where('provider_id', $user->id)
+                ->where('status', 'captured')
+                ->whereHas('job', function ($q) {
+                    $q->whereIn('status', ['completed', 'accepted', 'finished']);
+                })
+                ->get();
+
+            $totalEarnings = 0.0;
+            foreach ($completedPayments as $p) {
+                $gross = (float) $p->amount;
+                $net = max(0, $gross - $azhlFeePerOrder);
+                $totalEarnings += $net;
+            }
+
+            // 3. Total Withdrawn: Sum of withdrawals where status = completed only
+            $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
+                ->where('account_type', 'provider')
+                ->where('status', 'completed')
+                ->sum('amount');
+
+            // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
+            $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
+                ->where('account_type', 'provider')
+                ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
+                ->sum('amount');
+        } else {
+            $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
+                ->pluck('marketplace_order_id')
+                ->unique()
+                ->filter();
+
+            $pendingAmount = (float) Payment::whereIn('marketplace_order_id', $orderIds)
+                ->whereIn('status', ['pending', 'processing', 'initiated'])
+                ->sum('amount');
+
+            $completedPayments = Payment::whereIn('marketplace_order_id', $orderIds)
+                ->where('status', 'captured')
+                ->get();
+
+            $totalEarnings = 0.0;
+            foreach ($completedPayments as $p) {
+                $gross = (float) $p->amount;
+                $net = max(0, $gross - $azhlFeePerOrder);
+                $totalEarnings += $net;
+            }
+
+            $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
+                ->where('account_type', 'marketplace')
+                ->where('status', 'completed')
+                ->sum('amount');
+
+            $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
+                ->where('account_type', 'marketplace')
+                ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
+                ->sum('amount');
+        }
+
+        $availableForWithdrawal = max(0, $totalEarnings - $totalWithdrawn - $reservedAmount);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Provider wallet summary retrieved successfully.',
+            'data' => [
+                'total_earnings' => round($totalEarnings, 2),
+                'pending_amount' => round($pendingAmount, 2),
+                'available_for_withdrawal' => round($availableForWithdrawal, 2),
+                'total_withdrawn' => round($totalWithdrawn, 2),
+                'currency' => 'SAR'
+            ]
+        ]);
+    }
+
+    /**
+     * Submit a Provider / Marketplace Withdrawal Request
+     * Contract matching Page 9 of Specification Doc
      */
     public function requestWithdrawal(Request $request)
     {
         $user = auth('sanctum')->user();
         if (!$user) {
-            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
         $accountType = $request->input('account_type', 'provider');
@@ -28,32 +129,37 @@ class WithdrawalController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'amount' => 'required|numeric|min:1',
+            'amount' => 'required|numeric|gt:0',
             'bank_account_id' => 'required|exists:bank_accounts,id',
-            'notes' => 'nullable|string|max:500',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
-                'status' => 422,
+                'success' => false,
                 'message' => 'Validation failed.',
                 'errors' => $validator->errors()
             ], 422);
         }
 
-        // Check if bank account belongs to user and matches account type
+        // Verify bank account belongs to provider
         $bankAccount = BankAccount::where('id', $request->bank_account_id)
             ->where('user_id', $user->id)
-            ->where('account_type', $accountType)
             ->first();
 
         if (!$bankAccount) {
-            return response()->json(['status' => 400, 'message' => 'Selected bank account is invalid or does not belong to you.'], 400);
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => [
+                    'bank_account_id' => ['Selected bank account does not belong to you.']
+                ]
+            ], 422);
         }
 
         $settings = SystemSettingModel::first();
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
+        // Calculate available balance
         if ($accountType === 'provider') {
             $completedPayments = Payment::where('provider_id', $user->id)
                 ->where('status', 'captured')
@@ -62,18 +168,19 @@ class WithdrawalController extends Controller
                 })
                 ->get();
 
-            $grossCompleted = (float) $completedPayments->sum('amount');
-            $azhlFee = $grossCompleted * ($azhlPercentage / 100.00);
-            $totalEarnings = max(0, $grossCompleted - $azhlFee);
+            $totalEarnings = 0.0;
+            foreach ($completedPayments as $p) {
+                $totalEarnings += max(0, ((float)$p->amount) - $azhlFeePerOrder);
+            }
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
-                ->whereIn('status', ['completed', 'approved', 'paid'])
+                ->where('status', 'completed')
                 ->sum('amount');
 
-            $pendingWithdrawals = (float) Withdrawal::where('user_id', $user->id)
+            $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
-                ->whereIn('status', ['requested', 'pending'])
+                ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
                 ->sum('amount');
         } else {
             $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
@@ -85,33 +192,35 @@ class WithdrawalController extends Controller
                 ->where('status', 'captured')
                 ->get();
 
-            $grossCompleted = (float) $completedPayments->sum('amount');
-            $azhlFee = $grossCompleted * ($azhlPercentage / 100.00);
-            $totalEarnings = max(0, $grossCompleted - $azhlFee);
+            $totalEarnings = 0.0;
+            foreach ($completedPayments as $p) {
+                $totalEarnings += max(0, ((float)$p->amount) - $azhlFeePerOrder);
+            }
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'marketplace')
-                ->whereIn('status', ['completed', 'approved', 'paid'])
+                ->where('status', 'completed')
                 ->sum('amount');
 
-            $pendingWithdrawals = (float) Withdrawal::where('user_id', $user->id)
+            $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'marketplace')
-                ->whereIn('status', ['requested', 'pending'])
+                ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
                 ->sum('amount');
         }
 
-        $availableBalance = max(0, $totalEarnings - $totalWithdrawn - $pendingWithdrawals);
+        $availableBalance = max(0, $totalEarnings - $totalWithdrawn - $reservedAmount);
         $requestedAmount = (float) $request->amount;
 
         if ($requestedAmount > $availableBalance) {
             return response()->json([
-                'status' => 400,
-                'message' => "Insufficient available balance. Your available balance for withdrawal is {$availableBalance} SAR.",
-                'data' => [
-                    'available_balance' => round($availableBalance, 2),
-                    'requested_amount' => round($requestedAmount, 2),
+                'success' => false,
+                'message' => 'Insufficient available balance.',
+                'errors' => [
+                    'amount' => [
+                        'The withdrawal amount cannot exceed your available balance.'
+                    ]
                 ]
-            ], 400);
+            ], 422);
         }
 
         $withdrawal = Withdrawal::create([
@@ -121,39 +230,36 @@ class WithdrawalController extends Controller
             'amount' => $requestedAmount,
             'currency' => 'SAR',
             'status' => 'requested',
-            'notes' => $request->notes,
         ]);
 
-        $withdrawal->load('bankAccount');
-
         return response()->json([
-            'status' => 200,
+            'success' => true,
             'message' => 'Withdrawal request submitted successfully.',
             'data' => [
                 'id' => $withdrawal->id,
-                'withdrawal_request_id' => 'WTH-' . str_pad($withdrawal->id, 5, '0', STR_PAD_LEFT),
+                'withdrawal_no' => 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT),
                 'amount' => (float) $withdrawal->amount,
                 'currency' => $withdrawal->currency,
                 'status' => 'requested',
-                'bank' => [
+                'bank_account' => [
                     'id' => $bankAccount->id,
                     'bank_name' => $bankAccount->bank_name,
-                    'account_title' => $bankAccount->account_title,
                     'iban' => $bankAccount->iban,
                 ],
-                'created_at' => $withdrawal->created_at ? $withdrawal->created_at->format('Y-m-d H:i:s') : null,
+                'requested_at' => $withdrawal->created_at ? $withdrawal->created_at->toIso8601String() : null,
             ]
-        ]);
+        ], 200);
     }
 
     /**
-     * Get Transaction History API (Supports Pagination & Filter: null, all, credit, withdraw)
+     * Provider / Marketplace Combined Paginated Transaction History API
+     * Contract matching Page 7 & 8 of Specification Doc
      */
     public function transactionHistory(Request $request)
     {
         $user = auth('sanctum')->user();
         if (!$user) {
-            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
         $accountType = $request->input('account_type', 'provider');
@@ -163,11 +269,11 @@ class WithdrawalController extends Controller
         }
 
         $settings = SystemSettingModel::first();
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
         $transactions = collect();
 
-        // 1. Fetch Credits (Completed Job/Order Payments) if filter is 'all' or 'credit'
+        // 1. Credit Transactions
         if (in_array($filter, ['all', 'credit'])) {
             if ($accountType === 'provider') {
                 $payments = Payment::with(['job.category'])
@@ -178,25 +284,30 @@ class WithdrawalController extends Controller
                     })
                     ->get();
 
-                foreach ($payments as $payment) {
-                    $grossAmount = (float) $payment->amount;
-                    $azhlFee = $grossAmount * ($azhlPercentage / 100.00);
-                    $creditedAmount = max(0, $grossAmount - $azhlFee);
-                    $job = $payment->job;
+                foreach ($payments as $p) {
+                    $gross = (float) $p->amount;
+                    $azhlFee = $azhlFeePerOrder;
+                    $net = max(0, $gross - $azhlFee);
+                    $job = $p->job;
 
                     $transactions->push([
-                        'id' => 'CRD-' . $payment->id,
+                        'id' => (int) $p->id,
                         'type' => 'credit',
-                        'transaction_label' => 'Credit',
-                        'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
-                        'order_number' => optional($job)->id ? '#ORD-' . $job->id : '#ORD-' . $payment->job_id,
-                        'gross_order_amount' => round($grossAmount, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'credited_amount' => round($creditedAmount, 2),
-                        'order_status' => 'Completed',
-                        'completed_date' => $payment->updated_at ? $payment->updated_at->format('Y-m-d') : null,
-                        'completed_time' => $payment->updated_at ? $payment->updated_at->format('H:i:s') : null,
-                        'created_at' => $payment->updated_at ? $payment->updated_at->toIso8601String() : null,
+                        'label' => 'Credit',
+                        'amount' => round($net, 2),
+                        'currency' => strtoupper($p->currency ?: 'SAR'),
+                        'created_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                        'credit' => [
+                            'order_id' => (int) ($job ? $job->id : $p->job_id),
+                            'order_no' => $job ? ('ORD-' . str_pad($job->id, 6, '0', STR_PAD_LEFT)) : ('ORD-' . $p->job_id),
+                            'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'Service Order'),
+                            'order_status' => 'completed',
+                            'gross_amount' => round($gross, 2),
+                            'azhl_fee' => round($azhlFee, 2),
+                            'net_amount' => round($net, 2),
+                            'completed_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                        ],
+                        'withdraw' => null,
                     ]);
                 }
             } else {
@@ -210,92 +321,92 @@ class WithdrawalController extends Controller
                     ->where('status', 'captured')
                     ->get();
 
-                foreach ($payments as $payment) {
-                    $grossAmount = (float) $payment->amount;
-                    $azhlFee = $grossAmount * ($azhlPercentage / 100.00);
-                    $creditedAmount = max(0, $grossAmount - $azhlFee);
-                    $order = $payment->marketplaceOrder;
+                foreach ($payments as $p) {
+                    $gross = (float) $p->amount;
+                    $azhlFee = $azhlFeePerOrder;
+                    $net = max(0, $gross - $azhlFee);
+                    $order = $p->marketplaceOrder;
 
                     $transactions->push([
-                        'id' => 'CRD-MKT-' . $payment->id,
+                        'id' => (int) $p->id,
                         'type' => 'credit',
-                        'transaction_label' => 'Credit',
-                        'order_title' => 'Marketplace Product Order',
-                        'order_number' => optional($order)->order_number ?: '#ORD-' . $payment->marketplace_order_id,
-                        'gross_order_amount' => round($grossAmount, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'credited_amount' => round($creditedAmount, 2),
-                        'order_status' => 'Completed',
-                        'completed_date' => $payment->updated_at ? $payment->updated_at->format('Y-m-d') : null,
-                        'completed_time' => $payment->updated_at ? $payment->updated_at->format('H:i:s') : null,
-                        'created_at' => $payment->updated_at ? $payment->updated_at->toIso8601String() : null,
+                        'label' => 'Credit',
+                        'amount' => round($net, 2),
+                        'currency' => strtoupper($p->currency ?: 'SAR'),
+                        'created_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                        'credit' => [
+                            'order_id' => (int) ($order ? $order->id : $p->marketplace_order_id),
+                            'order_no' => optional($order)->order_number ?: ('ORD-' . $p->marketplace_order_id),
+                            'order_title' => 'Marketplace Product Order',
+                            'order_status' => 'completed',
+                            'gross_amount' => round($gross, 2),
+                            'azhl_fee' => round($azhlFee, 2),
+                            'net_amount' => round($net, 2),
+                            'completed_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                        ],
+                        'withdraw' => null,
                     ]);
                 }
             }
         }
 
-        // 2. Fetch Withdrawals if filter is 'all' or 'withdraw'
+        // 2. Withdrawal Transactions
         if (in_array($filter, ['all', 'withdraw'])) {
             $withdrawals = Withdrawal::with('bankAccount')
                 ->where('user_id', $user->id)
                 ->where('account_type', $accountType)
                 ->get();
 
-            foreach ($withdrawals as $withdrawal) {
-                $statusDisplay = ucfirst($withdrawal->status);
-                if ($withdrawal->status === 'requested' || $withdrawal->status === 'pending') {
-                    $statusDisplay = 'Requested';
-                } elseif ($withdrawal->status === 'approved' || $withdrawal->status === 'paid' || $withdrawal->status === 'completed') {
-                    $statusDisplay = 'Completed';
-                } elseif ($withdrawal->status === 'rejected') {
-                    $statusDisplay = 'Rejected';
-                }
-
-                $bank = $withdrawal->bankAccount;
+            foreach ($withdrawals as $w) {
+                $bank = $w->bankAccount;
 
                 $transactions->push([
-                    'id' => 'WTH-' . str_pad($withdrawal->id, 5, '0', STR_PAD_LEFT),
+                    'id' => (int) $w->id,
                     'type' => 'withdraw',
-                    'transaction_label' => 'Withdraw',
-                    'withdrawal_request_id' => 'WTH-' . str_pad($withdrawal->id, 5, '0', STR_PAD_LEFT),
-                    'withdrawal_amount' => round((float) $withdrawal->amount, 2),
-                    'bank' => $bank ? [
-                        'id' => $bank->id,
-                        'bank_name' => $bank->bank_name,
-                        'account_title' => $bank->account_title,
-                        'iban' => $bank->iban,
-                    ] : null,
-                    'request_date' => $withdrawal->created_at ? $withdrawal->created_at->format('Y-m-d') : null,
-                    'request_time' => $withdrawal->created_at ? $withdrawal->created_at->format('H:i:s') : null,
-                    'status' => $statusDisplay,
-                    'rejection_reason' => $withdrawal->status === 'rejected' ? ($withdrawal->admin_notes ?: 'Request rejected by admin') : null,
-                    'created_at' => $withdrawal->created_at ? $withdrawal->created_at->toIso8601String() : null,
+                    'label' => 'Withdraw',
+                    'amount' => round((float) $w->amount, 2),
+                    'currency' => strtoupper($w->currency ?: 'SAR'),
+                    'created_at' => $w->created_at ? $w->created_at->toIso8601String() : null,
+                    'credit' => null,
+                    'withdraw' => [
+                        'withdrawal_id' => (int) $w->id,
+                        'withdrawal_no' => 'WDR-' . str_pad($w->id, 6, '0', STR_PAD_LEFT),
+                        'bank_name' => optional($bank)->bank_name ?: 'Bank',
+                        'status' => $w->status ?: 'requested',
+                        'requested_at' => $w->created_at ? $w->created_at->toIso8601String() : null,
+                        'completed_at' => in_array($w->status, ['completed', 'paid']) && $w->updated_at ? $w->updated_at->toIso8601String() : null,
+                        'rejected_at' => $w->status === 'rejected' && $w->updated_at ? $w->updated_at->toIso8601String() : null,
+                        'rejection_reason' => $w->status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
+                    ]
                 ]);
             }
         }
 
-        // Sort descending by created_at timestamp
-        $sortedTransactions = $transactions->sortByDesc('created_at')->values();
+        // Sort DESC by created_at
+        $sorted = $transactions->sortByDesc('created_at')->values();
 
-        // Pagination setup
-        $perPage = (int) $request->input('per_page', 15);
         $page = (int) $request->input('page', 1);
+        $perPage = (int) $request->input('per_page', 20);
+        $total = $sorted->count();
+        $lastPage = (int) ceil($total / $perPage) ?: 1;
         $offset = ($page - 1) * $perPage;
 
-        $paginatedData = $sortedTransactions->slice($offset, $perPage)->values();
-        $total = $sortedTransactions->count();
-        $lastPage = (int) ceil($total / $perPage);
+        $paginated = $sorted->slice($offset, $perPage)->values();
 
         return response()->json([
-            'status' => 200,
-            'message' => 'Transaction history fetched successfully.',
+            'success' => true,
+            'message' => 'Transactions retrieved successfully.',
             'data' => [
-                'current_page' => $page,
-                'per_page' => $perPage,
-                'total' => $total,
-                'last_page' => $lastPage ?: 1,
-                'filter' => $filter,
-                'transactions' => $paginatedData,
+                'transactions' => $paginated,
+                'pagination' => [
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'last_page' => $lastPage,
+                    'total' => $total,
+                    'from' => $total > 0 ? $offset + 1 : 0,
+                    'to' => min($offset + $perPage, $total),
+                    'has_more' => $page < $lastPage,
+                ]
             ]
         ]);
     }

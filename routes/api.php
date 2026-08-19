@@ -206,6 +206,10 @@ Route::post(
     Route::delete('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
     Route::post('customer/bank-accounts/{id}/delete', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
 
+    // Customer Transaction History & Wallet Summary Routes
+    Route::get('customer/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
+    Route::get('customer/wallet/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
+
     // Admin Refund Action APIs (Spec Doc Page 6)
     Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);
     Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept']);

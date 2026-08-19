@@ -108,6 +108,7 @@ class CustomerBankAccountController extends Controller
     /**
      * Update Customer Bank Account
      * PUT /api/v1/customer/bank-accounts/{id}
+     * POST /api/v1/customer/bank-accounts/{id}/update
      */
     public function updateBankAccount(Request $request, $id)
     {
@@ -163,6 +164,48 @@ class CustomerBankAccountController extends Controller
             'success' => true,
             'message' => 'Bank account updated successfully.',
             'data' => $bankAccount
+        ]);
+    }
+
+    /**
+     * Delete Customer Bank Account
+     * DELETE /api/v1/customer/bank-accounts/{id}
+     * POST /api/v1/customer/bank-accounts/{id}/delete
+     */
+    public function deleteBankAccount(Request $request, $id)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $bankAccount = BankAccount::where('id', $id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$bankAccount) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bank account not found.'
+            ], 404);
+        }
+
+        $wasPrimary = $bankAccount->is_primary;
+        $bankAccount->delete();
+
+        if ($wasPrimary) {
+            $nextPrimary = BankAccount::where('user_id', $user->id)
+                ->where('account_type', 'customer')
+                ->first();
+
+            if ($nextPrimary) {
+                $nextPrimary->update(['is_primary' => true]);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Bank account deleted successfully.'
         ]);
     }
 }

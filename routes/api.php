@@ -197,10 +197,14 @@ Route::post(
     // Order Cancellation & Refund Specification Routes
     Route::post('orders/{order_id}/cancel', [\App\Http\Controllers\Api\OrderCancellationController::class, 'cancelOrder']);
 
-    // Customer Bank Account Routes
+    // Customer Bank Account Routes (Max 3 Limit)
     Route::get('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'getBankAccounts']);
     Route::post('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::post('customer/save-bank-account', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
     Route::put('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::post('customer/bank-accounts/{id}/update', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::delete('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
+    Route::post('customer/bank-accounts/{id}/delete', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
 
     // Admin Refund Action APIs (Spec Doc Page 6)
     Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);

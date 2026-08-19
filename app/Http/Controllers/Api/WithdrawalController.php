@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
+use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
@@ -32,40 +33,69 @@ class WithdrawalController extends Controller
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
         if ($accountType === 'provider') {
-            // 1. Pending Amount: Gross value of active/held provider orders
-            $pendingAmount = (float) Payment::where('provider_id', $user->id)
-                ->whereHas('job', function ($q) {
-                    $q->whereIn('status', ['quoted', 'hired', 'in_progress', 'pending']);
+            // 1. Pending Amount: Orders from orders table or payments table that are pending/in-progress
+            $pendingOrdersPrice = (float) Orders::where('provider_id', $user->id)
+                ->whereIn('status', ['open', 'pending', 'accepted', 'on_the_way', 'arrived', 'working', 'provider_completed', 'quoted'])
+                ->sum('price');
+
+            $pendingPaymentsAmount = (float) Payment::where('provider_id', $user->id)
+                ->whereIn('status', ['pending', 'processing', 'initiated'])
+                ->whereDoesntHave('job', function ($q) {
+                    $q->whereIn('status', ['completed', 'finished', 'accepted']);
                 })
                 ->sum('amount');
 
-            // 2. Total Earnings: Sum of net provider credits from completed orders (gross - fixed azhl_fee)
-            $completedPayments = Payment::where('provider_id', $user->id)
-                ->where('status', 'captured')
-                ->whereHas('job', function ($q) {
-                    $q->whereIn('status', ['completed', 'accepted', 'finished']);
-                })
+            $pendingAmount = max($pendingOrdersPrice, $pendingPaymentsAmount);
+
+            // 2. Completed Orders & Net Total Earnings
+            // Fetch completed orders from Orders table
+            $completedOrders = Orders::with(['job.category'])
+                ->where('provider_id', $user->id)
+                ->where('status', 'completed')
                 ->get();
 
-            $totalEarnings = 0.0;
-            foreach ($completedPayments as $p) {
-                $gross = (float) $p->amount;
-                $net = max(0, $gross - $azhlFeePerOrder);
-                $totalEarnings += $net;
+            // Also check captured payments if not already in completedOrders
+            $capturedPayments = Payment::where('provider_id', $user->id)
+                ->where('status', 'captured')
+                ->get();
+
+            $completedMap = collect();
+
+            foreach ($completedOrders as $ord) {
+                $gross = (float) ($ord->price ?? 0);
+                $key = 'order_' . $ord->id;
+                $completedMap->put($key, [
+                    'gross' => $gross,
+                    'net' => max(0, $gross - $azhlFeePerOrder),
+                ]);
             }
 
-            // 3. Total Withdrawn: Sum of withdrawals where status = completed only
+            foreach ($capturedPayments as $pay) {
+                $gross = (float) ($pay->amount ?? 0);
+                $key = 'job_' . $pay->job_id;
+                if (!$completedMap->has($key)) {
+                    $completedMap->put($key, [
+                        'gross' => $gross,
+                        'net' => max(0, $gross - $azhlFeePerOrder),
+                    ]);
+                }
+            }
+
+            $totalEarnings = (float) $completedMap->sum('net');
+
+            // 3. Total Withdrawn: Sum of completed withdrawals
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
                 ->sum('amount');
 
-            // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
+            // 4. Reserved Funds: Active withdrawal requests currently requested/pending/accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
                 ->sum('amount');
         } else {
+            // Marketplace Seller Calculations
             $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
                 ->pluck('marketplace_order_id')
                 ->unique()
@@ -81,7 +111,7 @@ class WithdrawalController extends Controller
 
             $totalEarnings = 0.0;
             foreach ($completedPayments as $p) {
-                $gross = (float) $p->amount;
+                $gross = (float) ($p->amount ?? 0);
                 $net = max(0, $gross - $azhlFeePerOrder);
                 $totalEarnings += $net;
             }
@@ -103,10 +133,10 @@ class WithdrawalController extends Controller
             'success' => true,
             'message' => 'Provider wallet summary retrieved successfully.',
             'data' => [
-                'total_earnings' => round($totalEarnings, 2),
-                'pending_amount' => round($pendingAmount, 2),
-                'available_for_withdrawal' => round($availableForWithdrawal, 2),
-                'total_withdrawn' => round($totalWithdrawn, 2),
+                'total_earnings' => round((float) ($totalEarnings ?? 0), 2),
+                'pending_amount' => round((float) ($pendingAmount ?? 0), 2),
+                'available_for_withdrawal' => round((float) ($availableForWithdrawal ?? 0), 2),
+                'total_withdrawn' => round((float) ($totalWithdrawn ?? 0), 2),
                 'currency' => 'SAR'
             ]
         ]);
@@ -141,7 +171,6 @@ class WithdrawalController extends Controller
             ], 422);
         }
 
-        // Verify bank account belongs to provider
         $bankAccount = BankAccount::where('id', $request->bank_account_id)
             ->where('user_id', $user->id)
             ->first();
@@ -159,19 +188,32 @@ class WithdrawalController extends Controller
         $settings = SystemSettingModel::first();
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
-        // Calculate available balance
         if ($accountType === 'provider') {
-            $completedPayments = Payment::where('provider_id', $user->id)
-                ->where('status', 'captured')
-                ->whereHas('job', function ($q) {
-                    $q->whereIn('status', ['completed', 'accepted', 'finished']);
-                })
+            $completedOrders = Orders::where('provider_id', $user->id)
+                ->where('status', 'completed')
                 ->get();
 
-            $totalEarnings = 0.0;
-            foreach ($completedPayments as $p) {
-                $totalEarnings += max(0, ((float)$p->amount) - $azhlFeePerOrder);
+            $completedPayments = Payment::where('provider_id', $user->id)
+                ->where('status', 'captured')
+                ->get();
+
+            $completedMap = collect();
+
+            foreach ($completedOrders as $ord) {
+                $gross = (float) ($ord->price ?? 0);
+                $key = 'order_' . $ord->id;
+                $completedMap->put($key, max(0, $gross - $azhlFeePerOrder));
             }
+
+            foreach ($completedPayments as $pay) {
+                $gross = (float) ($pay->amount ?? 0);
+                $key = 'job_' . $pay->job_id;
+                if (!$completedMap->has($key)) {
+                    $completedMap->put($key, max(0, $gross - $azhlFeePerOrder));
+                }
+            }
+
+            $totalEarnings = (float) $completedMap->sum();
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
@@ -194,7 +236,7 @@ class WithdrawalController extends Controller
 
             $totalEarnings = 0.0;
             foreach ($completedPayments as $p) {
-                $totalEarnings += max(0, ((float)$p->amount) - $azhlFeePerOrder);
+                $totalEarnings += max(0, ((float)($p->amount ?? 0)) - $azhlFeePerOrder);
             }
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
@@ -276,22 +318,57 @@ class WithdrawalController extends Controller
         // 1. Credit Transactions
         if (in_array($filter, ['all', 'credit'])) {
             if ($accountType === 'provider') {
-                $payments = Payment::with(['job.category'])
+                $completedOrders = Orders::with(['job.category'])
                     ->where('provider_id', $user->id)
-                    ->where('status', 'captured')
-                    ->whereHas('job', function ($q) {
-                        $q->whereIn('status', ['completed', 'accepted', 'finished']);
-                    })
+                    ->where('status', 'completed')
                     ->get();
 
-                foreach ($payments as $p) {
-                    $gross = (float) $p->amount;
+                $capturedPayments = Payment::with(['job.category'])
+                    ->where('provider_id', $user->id)
+                    ->where('status', 'captured')
+                    ->get();
+
+                $processedOrderIds = [];
+
+                foreach ($completedOrders as $ord) {
+                    $gross = (float) ($ord->price ?? 0);
+                    $azhlFee = $azhlFeePerOrder;
+                    $net = max(0, $gross - $azhlFee);
+                    $job = $ord->job;
+                    $processedOrderIds[] = $ord->id;
+
+                    $transactions->push([
+                        'id' => (int) $ord->id,
+                        'type' => 'credit',
+                        'label' => 'Credit',
+                        'amount' => round($net, 2),
+                        'currency' => 'SAR',
+                        'created_at' => $ord->updated_at ? $ord->updated_at->toIso8601String() : null,
+                        'credit' => [
+                            'order_id' => (int) $ord->id,
+                            'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
+                            'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
+                            'order_status' => 'completed',
+                            'gross_amount' => round($gross, 2),
+                            'azhl_fee' => round($azhlFee, 2),
+                            'net_amount' => round($net, 2),
+                            'completed_at' => $ord->updated_at ? $ord->updated_at->toIso8601String() : null,
+                        ],
+                        'withdraw' => null,
+                    ]);
+                }
+
+                foreach ($capturedPayments as $p) {
+                    if ($p->job_id && in_array($p->job_id, $processedOrderIds)) {
+                        continue;
+                    }
+                    $gross = (float) ($p->amount ?? 0);
                     $azhlFee = $azhlFeePerOrder;
                     $net = max(0, $gross - $azhlFee);
                     $job = $p->job;
 
                     $transactions->push([
-                        'id' => (int) $p->id,
+                        'id' => (int) (900000 + $p->id),
                         'type' => 'credit',
                         'label' => 'Credit',
                         'amount' => round($net, 2),
@@ -322,7 +399,7 @@ class WithdrawalController extends Controller
                     ->get();
 
                 foreach ($payments as $p) {
-                    $gross = (float) $p->amount;
+                    $gross = (float) ($p->amount ?? 0);
                     $azhlFee = $azhlFeePerOrder;
                     $net = max(0, $gross - $azhlFee);
                     $order = $p->marketplaceOrder;
@@ -364,7 +441,7 @@ class WithdrawalController extends Controller
                     'id' => (int) $w->id,
                     'type' => 'withdraw',
                     'label' => 'Withdraw',
-                    'amount' => round((float) $w->amount, 2),
+                    'amount' => round((float) ($w->amount ?? 0), 2),
                     'currency' => strtoupper($w->currency ?: 'SAR'),
                     'created_at' => $w->created_at ? $w->created_at->toIso8601String() : null,
                     'credit' => null,
@@ -382,7 +459,6 @@ class WithdrawalController extends Controller
             }
         }
 
-        // Sort DESC by created_at
         $sorted = $transactions->sortByDesc('created_at')->values();
 
         $page = (int) $request->input('page', 1);

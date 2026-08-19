@@ -202,6 +202,12 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('payments', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.index');
     Route::get('payments-transactions', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.transactions');
 
+    // Admin Withdrawal Requests Management (Blade Web UI)
+    Route::get('withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index'])->name('admin.withdrawals.index');
+    Route::patch('withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept'])->name('admin.withdrawals.accept');
+    Route::patch('withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete'])->name('admin.withdrawals.complete');
+    Route::patch('withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject'])->name('admin.withdrawals.reject');
+
 
     // =====================================================================System Settings Start===============================================================================
 

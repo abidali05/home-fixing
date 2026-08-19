@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
 use App\Models\Orders;
 use App\Models\Payment;
@@ -16,7 +17,7 @@ class OrderCancellationController extends Controller
     /**
      * Cancel an Order & Trigger Customer Refund Request
      * POST /api/v1/orders/{order_id}/cancel
-     * Contract matching Pages 2-8 of Order Cancellation & Refund Specification
+     * Contract matching Order Cancellation & Refund Specification with Azhl Fee Deduction
      */
     public function cancelOrder(Request $request, $order_id)
     {
@@ -99,7 +100,10 @@ class OrderCancellationController extends Controller
             $order->cancelled_at = $cancelledAt;
             $order->save();
 
-            // 5. Check if Captured Payment Exists for Full Refund
+            // 5. Calculate Azhl System Fee & Customer Net Refund Amount
+            $settings = SystemSettingModel::first();
+            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+
             $payment = Payment::where('job_id', $order->job_id)
                 ->orWhere('id', $order->id)
                 ->where('status', 'captured')
@@ -112,6 +116,9 @@ class OrderCancellationController extends Controller
             $refundData = null;
 
             if ($isPaid && $paidAmount > 0) {
+                // Customer Net Refund Amount = Paid Amount minus Azhl System Fee (e.g. 50 - 5 = 45 SAR)
+                $refundAmount = max(0, $paidAmount - $azhlFee);
+
                 // Customer Bank Account for Refund
                 $bankAccountId = $request->input('bank_account_id');
                 if (!$bankAccountId) {
@@ -127,7 +134,7 @@ class OrderCancellationController extends Controller
                         'payment_id' => optional($payment)->id,
                         'customer_id' => $order->user_id,
                         'bank_account_id' => $bankAccountId,
-                        'amount' => $paidAmount,
+                        'amount' => $refundAmount,
                         'currency' => $payment ? ($payment->currency ?: 'SAR') : 'SAR',
                         'status' => 'requested',
                         'gateway' => 'bank_transfer',
@@ -142,6 +149,8 @@ class OrderCancellationController extends Controller
                 $refundData = [
                     'id' => $refund->id,
                     'refund_no' => $refund->refund_no,
+                    'paid_amount' => $paidAmount,
+                    'azhl_fee' => $azhlFee,
                     'amount' => (float) $refund->amount,
                     'currency' => $refund->currency,
                     'status' => $refund->status,
@@ -151,7 +160,7 @@ class OrderCancellationController extends Controller
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Order cancelled successfully. Full customer refund request initiated.',
+                    'message' => "Order cancelled successfully. Net customer refund ({$refundAmount} SAR) initiated after Azhl fee deduction ({$azhlFee} SAR).",
                     'data' => [
                         'order_id' => (int) $order->id,
                         'order_no' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
@@ -161,6 +170,8 @@ class OrderCancellationController extends Controller
                         'cancelled_at' => $cancelledAt->toIso8601String(),
                         'payment' => [
                             'paid_amount' => $paidAmount,
+                            'azhl_fee' => $azhlFee,
+                            'net_refund_amount' => $refundAmount,
                             'currency' => 'SAR',
                         ],
                         'refund' => $refundData,

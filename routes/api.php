@@ -193,6 +193,20 @@ Route::post(
     Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept']);
     Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete']);
     Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject']);
+
+    // Order Cancellation & Refund Specification Routes
+    Route::post('orders/{order_id}/cancel', [\App\Http\Controllers\Api\OrderCancellationController::class, 'cancelOrder']);
+
+    // Customer Bank Account Routes
+    Route::get('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'getBankAccounts']);
+    Route::post('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::put('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
+
+    // Admin Refund Action APIs (Spec Doc Page 6)
+    Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

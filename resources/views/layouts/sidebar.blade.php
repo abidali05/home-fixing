@@ -134,6 +134,10 @@
                             <a class="nav-link {{ Route::currentRouteName() == 'admin.withdrawals.index' ? 'active' : '' }}"
                                 href="{{ route('admin.withdrawals.index') }}">Withdrawal Requests</a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ Route::currentRouteName() == 'admin.refunds.index' ? 'active' : '' }}"
+                                href="{{ route('admin.refunds.index') }}">Customer Refund Requests</a>
+                        </li>
                         <li class="nav-item {{ in_array('6', $rolePermissions) ? '' : 'd-none' }}">
                             <a class="nav-link {{ Route::currentRouteName() == 'roles.index' ? 'active' : '' }}"
                                 href="{{ route('roles.index') }}">Roles</a>

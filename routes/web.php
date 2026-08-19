@@ -202,6 +202,18 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('payments', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.index');
     Route::get('payments-transactions', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.transactions');
 
+    // Admin Withdrawal Requests Management (Blade Web UI)
+    Route::get('withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index'])->name('admin.withdrawals.index');
+    Route::patch('withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept'])->name('admin.withdrawals.accept');
+    Route::patch('withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete'])->name('admin.withdrawals.complete');
+    Route::patch('withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject'])->name('admin.withdrawals.reject');
+
+    // Admin Refund Requests Management (Blade Web UI)
+    Route::get('refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index'])->name('admin.refunds.index');
+    Route::patch('refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept'])->name('admin.refunds.accept');
+    Route::patch('refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete'])->name('admin.refunds.complete');
+    Route::patch('refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject'])->name('admin.refunds.reject');
+
 
     // =====================================================================System Settings Start===============================================================================
 

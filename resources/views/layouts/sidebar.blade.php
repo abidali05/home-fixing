@@ -15,26 +15,7 @@
         <a class="navbar-brand m-0" href="{{ url('/') }}">
             <img src="{{ optional($setting)->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('uploads/system_settings/Logo1.png') }}"
                 class="navbar-brand-img me-2" alt="main_logo"/>
-            {{-- <span class="ms-2 font-weight-bold">{{ optional($setting)->system_name ?? 'Home Fixing' }}</span> --}}
         </a>
-        {{-- @if(!optional(Auth::guard('admin')->user())->is_company)
-        <div class="dropdown me-2 position-static">
-            <a href="#" class="position-relative d-inline-block" id="adminNotificationsBell" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false">
-                <i class="bi bi-bell-fill fs-5" style="color: rgba(255,255,255,0.85) !important;"></i>
-                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="adminNotificationBadge" style="font-size: 0.55rem; padding: 0.25em 0.4em; transform: translate(-30%, -30%) !important; display: none;">0</span>
-            </a>
-            <ul class="dropdown-menu py-2 px-3 shadow-lg border-0" aria-labelledby="adminNotificationsBell" id="adminNotificationDropdown">
-                <li class="dropdown-header text-dark font-weight-bold p-0 mb-2 d-flex align-items-center justify-content-between">
-                    <span>System Alerts</span>
-                    <span class="badge bg-danger rounded-pill" id="adminNotificationCountHeader" style="display: none; font-size: 0.65rem;">0</span>
-                </li>
-                <li><hr class="dropdown-divider my-1"></li>
-                <div id="adminNotificationItems">
-                    <li class="text-center text-muted py-2" id="noNotificationsItem">No pending alerts</li>
-                </div>
-            </ul>
-        </div>
-        @endif --}}
     </div>
 
     <div class="collapse navbar-collapse w-auto" id="sidenav-collapse-main">
@@ -81,74 +62,49 @@
                 </a>
             </li>
         @else
-            <!-- System Menu -->
-            <li class="nav-item {{ in_array('System', $allowed_modules) ? '' : 'd-none' }}">
-                @php
-                    $systemRoutes = [
-                        'servicecategory.index',
-                        'settings.index',
-                        'roles.index',
-                        'faqs.index',
-                        'faqs.create',
-                        'faqs.edit',
-                        'support_items.index',
-                        'support_items.create',
-                        'support_items.edit',
-                        'system_users.index',
-                        'system_users.create',
-                        'system_users.edit',
-                        'admin.notifications.create',
-                    ];
-                    $isSystemOpen = in_array(Route::currentRouteName(), $systemRoutes);
-                @endphp
 
-                <a class="nav-link {{ $isSystemOpen ? '' : 'collapsed' }} {{ $isSystemOpen ? 'active' : '' }}"
-                    data-bs-toggle="collapse" href="#SystemSettings" role="button"
-                    aria-expanded="{{ $isSystemOpen ? 'true' : 'false' }}" aria-controls="SystemSettings">
+            <!-- 💰 Financial Management Menu (Top Level) -->
+            <li class="nav-item">
+                @php
+                    $financeRoutes = [
+                        'admin.payments.index',
+                        'admin.payments.transactions',
+                        'admin.withdrawals.index',
+                        'admin.refunds.index',
+                    ];
+                    $isFinanceOpen = in_array(Route::currentRouteName(), $financeRoutes);
+                @endphp
+                <a class="nav-link {{ $isFinanceOpen ? '' : 'collapsed' }} {{ $isFinanceOpen ? 'active' : '' }}"
+                    data-bs-toggle="collapse" href="#FinanceManagement" role="button"
+                    aria-expanded="{{ $isFinanceOpen ? 'true' : 'false' }}" aria-controls="FinanceManagement">
                     <div class="d-flex align-items-center flex-grow-1">
                         <div class="icon">
-                            <i class="ni ni-settings text-dark text-sm opacity-10"></i>
+                            <i class="ni ni-money-coins text-dark text-sm opacity-10"></i>
                         </div>
-                        <span class="nav-link-text">System</span>
+                        <span class="nav-link-text">Financial Management</span>
                     </div>
                     <i class="bi bi-chevron-down sidebar-chevron"></i>
                 </a>
 
-                <div class="collapse collapse-submenu {{ $isSystemOpen ? 'show' : '' }}" id="SystemSettings">
+                <div class="collapse collapse-submenu {{ $isFinanceOpen ? 'show' : '' }}" id="FinanceManagement">
                     <ul class="nav flex-column">
-                        <li class="nav-item {{ in_array('1', $rolePermissions) ? '' : 'd-none' }}">
-                            <a class="nav-link {{ Route::currentRouteName() == 'servicecategory.index' ? 'active' : '' }}"
-                                href="{{ route('servicecategory.index') }}">
-                                Service Categories
-                            </a>
-                        </li>
-                        <li class="nav-item {{ in_array('5', $rolePermissions) ? '' : 'd-none' }}">
-                            <a class="nav-link {{ Route::currentRouteName() == 'settings.index' ? 'active' : '' }}"
-                                href="{{ route('settings.index') }}">Settings</a>
-                        </li>
                         <li class="nav-item">
                             <a class="nav-link {{ Route::currentRouteName() == 'admin.payments.index' ? 'active' : '' }}"
-                                href="{{ route('admin.payments.index') }}">Payments & Transactions</a>
-                        </li>
-                        <li class="nav-item {{ in_array('6', $rolePermissions) ? '' : 'd-none' }}">
-                            <a class="nav-link {{ Route::currentRouteName() == 'roles.index' ? 'active' : '' }}"
-                                href="{{ route('roles.index') }}">Roles</a>
-                        </li>
-                        <li class="nav-item {{ in_array('10', $rolePermissions) ? '' : 'd-none' }}">
-                            <a class="nav-link {{ Route::currentRouteName() == 'system_users.index' ? 'active' : '' }}"
-                                href="{{ route('system_users.index') }}">System Users</a>
+                                href="{{ route('admin.payments.index') }}">
+                                Payments & Transactions
+                            </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {{ in_array(Route::currentRouteName(), ['faqs.index', 'faqs.create', 'faqs.edit']) ? 'active' : '' }}"
-                                href="{{ route('faqs.index') }}">FAQs</a>
+                            <a class="nav-link {{ Route::currentRouteName() == 'admin.withdrawals.index' ? 'active' : '' }}"
+                                href="{{ route('admin.withdrawals.index') }}">
+                                Provider & Seller Withdrawals
+                            </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {{ in_array(Route::currentRouteName(), ['support_items.index', 'support_items.create', 'support_items.edit']) ? 'active' : '' }}"
-                                href="{{ route('support_items.index') }}">Support</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link {{ Route::currentRouteName() == 'admin.notifications.create' ? 'active' : '' }}"
-                                href="{{ route('admin.notifications.create') }}">Send Notifications</a>
+                            <a class="nav-link {{ Route::currentRouteName() == 'admin.refunds.index' ? 'active' : '' }}"
+                                href="{{ route('admin.refunds.index') }}">
+                                Customer Refund Requests
+                            </a>
                         </li>
                     </ul>
                 </div>
@@ -192,7 +148,7 @@
                     <ul class="nav flex-column">
                         <li class="nav-item {{ in_array('14', $rolePermissions) ? '' : 'd-none' }}">
                             <a class="nav-link {{ Route::currentRouteName() == 'users.index' ? 'active' : '' }}"
-                                href="{{ route('users.index') }}">Users</a>
+                                href="{{ route('users.index') }}">Customers (Users)</a>
                         </li>
                         <li class="nav-item {{ in_array('18', $rolePermissions) ? '' : 'd-none' }}">
                             <a class="nav-link {{ Route::currentRouteName() == 'providers.index' ? 'active' : '' }}"
@@ -200,7 +156,7 @@
                         </li>
                         <li class="nav-item">
                             <a class="nav-link {{ in_array(Route::currentRouteName(), ['sellers.index', 'sellers.show', 'sellers.edit']) ? 'active' : '' }}"
-                                href="{{ route('sellers.index') }}">Sellers</a>
+                                href="{{ route('sellers.index') }}">Marketplace Sellers</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link {{ Route::currentRouteName() == 'account_active_requests.index' ? 'active' : '' }}"
@@ -297,6 +253,75 @@
                         <li class="nav-item">
                             <a class="nav-link {{ in_array(Route::currentRouteName(), ['marketplace.campaigns.index', 'marketplace.campaigns.create', 'marketplace.campaigns.edit']) ? 'active' : '' }}"
                                 href="{{ route('marketplace.campaigns.index') }}">Campaign Management</a>
+                        </li>
+                    </ul>
+                </div>
+            </li>
+
+            <!-- System Menu -->
+            <li class="nav-item {{ in_array('System', $allowed_modules) ? '' : 'd-none' }}">
+                @php
+                    $systemRoutes = [
+                        'servicecategory.index',
+                        'settings.index',
+                        'roles.index',
+                        'faqs.index',
+                        'faqs.create',
+                        'faqs.edit',
+                        'support_items.index',
+                        'support_items.create',
+                        'support_items.edit',
+                        'system_users.index',
+                        'system_users.create',
+                        'system_users.edit',
+                        'admin.notifications.create',
+                    ];
+                    $isSystemOpen = in_array(Route::currentRouteName(), $systemRoutes);
+                @endphp
+
+                <a class="nav-link {{ $isSystemOpen ? '' : 'collapsed' }} {{ $isSystemOpen ? 'active' : '' }}"
+                    data-bs-toggle="collapse" href="#SystemSettings" role="button"
+                    aria-expanded="{{ $isSystemOpen ? 'true' : 'false' }}" aria-controls="SystemSettings">
+                    <div class="d-flex align-items-center flex-grow-1">
+                        <div class="icon">
+                            <i class="ni ni-settings text-dark text-sm opacity-10"></i>
+                        </div>
+                        <span class="nav-link-text">System</span>
+                    </div>
+                    <i class="bi bi-chevron-down sidebar-chevron"></i>
+                </a>
+
+                <div class="collapse collapse-submenu {{ $isSystemOpen ? 'show' : '' }}" id="SystemSettings">
+                    <ul class="nav flex-column">
+                        <li class="nav-item {{ in_array('1', $rolePermissions) ? '' : 'd-none' }}">
+                            <a class="nav-link {{ Route::currentRouteName() == 'servicecategory.index' ? 'active' : '' }}"
+                                href="{{ route('servicecategory.index') }}">
+                                Service Categories
+                            </a>
+                        </li>
+                        <li class="nav-item {{ in_array('5', $rolePermissions) ? '' : 'd-none' }}">
+                            <a class="nav-link {{ Route::currentRouteName() == 'settings.index' ? 'active' : '' }}"
+                                href="{{ route('settings.index') }}">Settings</a>
+                        </li>
+                        <li class="nav-item {{ in_array('6', $rolePermissions) ? '' : 'd-none' }}">
+                            <a class="nav-link {{ Route::currentRouteName() == 'roles.index' ? 'active' : '' }}"
+                                href="{{ route('roles.index') }}">Roles</a>
+                        </li>
+                        <li class="nav-item {{ in_array('10', $rolePermissions) ? '' : 'd-none' }}">
+                            <a class="nav-link {{ Route::currentRouteName() == 'system_users.index' ? 'active' : '' }}"
+                                href="{{ route('system_users.index') }}">System Users</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ in_array(Route::currentRouteName(), ['faqs.index', 'faqs.create', 'faqs.edit']) ? 'active' : '' }}"
+                                href="{{ route('faqs.index') }}">FAQs</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ in_array(Route::currentRouteName(), ['support_items.index', 'support_items.create', 'support_items.edit']) ? 'active' : '' }}"
+                                href="{{ route('support_items.index') }}">Support</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ Route::currentRouteName() == 'admin.notifications.create' ? 'active' : '' }}"
+                                href="{{ route('admin.notifications.create') }}">Send Notifications</a>
                         </li>
                     </ul>
                 </div>

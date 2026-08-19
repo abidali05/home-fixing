@@ -272,58 +272,64 @@ class ProviderBankAccountController extends Controller
     }
 
     /**
-     * Get Provider detailed financial summary (total_earnings, available_for_withdraw, pending_amount, total_withdraw)
+     * Get Provider wallet summary (total_earnings, pending_amount, available_for_withdrawal, total_withdrawn)
      */
     public function financialSummary()
     {
         $user = auth('sanctum')->user();
         if (!$user) {
-            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
         $settings = \App\Models\Admin\SystemSettingModel::first();
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
-        // Captured Payments for Provider
-        $capturedPayments = \App\Models\Payment::where('provider_id', $user->id)
+        // 1. Pending Amount: Gross value of active/held provider orders
+        $pendingAmount = (float) \App\Models\Payment::where('provider_id', $user->id)
+            ->whereHas('job', function ($q) {
+                $q->whereIn('status', ['quoted', 'hired', 'in_progress', 'pending']);
+            })
+            ->sum('amount');
+
+        // 2. Total Earnings: Sum of net provider credits from completed orders (gross - fixed azhl_fee)
+        $completedPayments = \App\Models\Payment::where('provider_id', $user->id)
             ->where('status', 'captured')
+            ->whereHas('job', function ($q) {
+                $q->whereIn('status', ['completed', 'accepted', 'finished']);
+            })
             ->get();
 
-        $grossEarnings = (float) $capturedPayments->sum('amount');
-        $azhlCommission = $grossEarnings * ($azhlPercentage / 100.00);
-        $netEarnings = max(0, $grossEarnings - $azhlCommission);
+        $totalEarnings = 0.0;
+        foreach ($completedPayments as $payment) {
+            $gross = (float) $payment->amount;
+            $net = max(0, $gross - $azhlFeePerOrder);
+            $totalEarnings += $net;
+        }
 
-        // Pending Payments / Earnings (Processing payments or pending jobs)
-        $pendingPayments = \App\Models\Payment::where('provider_id', $user->id)
-            ->whereIn('status', ['pending', 'processing', 'initiated'])
-            ->sum('amount');
-
-        // Total Withdrawals
+        // 3. Total Withdrawn: Sum of withdrawals where status = completed only
         $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
-            ->whereIn('status', ['approved', 'paid'])
+            ->where('status', 'completed')
             ->sum('amount');
 
-        $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
+        $reservedAmount = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
-            ->where('status', 'pending')
+            ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
             ->sum('amount');
 
-        $availableForWithdraw = max(0, $netEarnings - $totalWithdrawn - $pendingWithdrawals);
+        // 5. Available for Withdrawal: Net credits not withdrawn and not reserved
+        $availableForWithdrawal = max(0, $totalEarnings - $totalWithdrawn - $reservedAmount);
 
         return response()->json([
-            'status' => 200,
-            'message' => 'Provider financial summary fetched successfully.',
+            'success' => true,
+            'message' => 'Provider wallet summary retrieved successfully.',
             'data' => [
-                'currency' => 'SAR',
-                'gross_total_earnings' => round($grossEarnings, 2),
-                'net_total_earnings' => round($netEarnings, 2),
-                'azhl_commission_percentage' => $azhlPercentage,
-                'azhl_commission_amount' => round($azhlCommission, 2),
-                'available_for_withdraw' => round($availableForWithdraw, 2),
-                'pending_amount' => round((float) $pendingPayments, 2),
-                'total_withdraw' => round($totalWithdrawn, 2),
-                'pending_withdraw_request' => round($pendingWithdrawals, 2),
+                'total_earnings' => round($totalEarnings, 2),
+                'pending_amount' => round($pendingAmount, 2),
+                'available_for_withdrawal' => round($availableForWithdrawal, 2),
+                'total_withdrawn' => round($totalWithdrawn, 2),
+                'currency' => 'SAR'
             ]
         ]);
     }

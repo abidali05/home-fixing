@@ -108,15 +108,29 @@
                                         </div>
 
                                         <div class="mb-4">
-                                            <label for="azhl_percentage" class="form-label fw-semibold">Azhl Commission Percentage (%)</label>
+                                            <label for="azhl_fee" class="form-label fw-semibold">Azhl Fixed Platform Fee (SAR per order)</label>
                                             <div class="input-group input-group-alternative">
-                                                <input type="number" step="0.1" min="0" max="100" class="form-control form-control-lg @error('azhl_percentage') is-invalid @enderror"
-                                                    name="azhl_percentage" id="azhl_percentage"
-                                                    value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 10) }}" placeholder="e.g. 10" required>
-                                                <span class="input-group-text font-weight-bold">%</span>
+                                                <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('azhl_fee') is-invalid @enderror"
+                                                    name="azhl_fee" id="azhl_fee"
+                                                    value="{{ old('azhl_fee', $settings->azhl_fee ?? 5.00) }}" placeholder="e.g. 5.00" required>
+                                                <span class="input-group-text font-weight-bold">SAR</span>
                                             </div>
-                                            <small class="text-muted d-block mt-1">Enter commission percentage retained by Azhl system on completed orders (e.g. 5, 10, 15).</small>
-                                            @error('azhl_percentage')
+                                            <small class="text-muted d-block mt-1">Fixed Rial amount deducted by Azhl from provider/seller earnings per completed order (e.g. 5 SAR).</small>
+                                            @error('azhl_fee')
+                                                <div class="invalid-feedback">{{ $message }}</div>
+                                            @enderror
+                                        </div>
+
+                                        <div class="mb-4">
+                                            <label for="referral_amount" class="form-label fw-semibold">Referral Bonus Amount (SAR)</label>
+                                            <div class="input-group input-group-alternative">
+                                                <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('referral_amount') is-invalid @enderror"
+                                                    name="referral_amount" id="referral_amount"
+                                                    value="{{ old('referral_amount', $settings->referral_amount ?? 10.00) }}" placeholder="e.g. 10.00" required>
+                                                <span class="input-group-text font-weight-bold">SAR</span>
+                                            </div>
+                                            <small class="text-muted d-block mt-1">Fixed Rial reward amount credited to users/providers upon successful referral.</small>
+                                            @error('referral_amount')
                                                 <div class="invalid-feedback">{{ $message }}</div>
                                             @enderror
                                         </div>

@@ -79,7 +79,7 @@ class WithdrawalAdminController extends Controller
                     'id' => $withdrawal->id,
                     'withdrawal_no' => 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT),
                     'status' => 'accepted',
-                    'accepted_at' => $withdrawal->updated_at ? $withdrawal->updated_at->toIso8601String() : null,
+                    'accepted_at' => $withdrawal->updated_at ? $withdrawal->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                 ]
             ]);
         }
@@ -120,7 +120,7 @@ class WithdrawalAdminController extends Controller
                     'withdrawal_no' => 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT),
                     'status' => 'completed',
                     'bank_reference' => $bankReference,
-                    'completed_at' => $withdrawal->updated_at ? $withdrawal->updated_at->toIso8601String() : null,
+                    'completed_at' => $withdrawal->updated_at ? $withdrawal->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                 ]
             ]);
         }
@@ -161,7 +161,7 @@ class WithdrawalAdminController extends Controller
                     'withdrawal_no' => 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT),
                     'status' => 'rejected',
                     'reason' => $reason,
-                    'rejected_at' => $withdrawal->updated_at ? $withdrawal->updated_at->toIso8601String() : null,
+                    'rejected_at' => $withdrawal->updated_at ? $withdrawal->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                 ]
             ]);
         }

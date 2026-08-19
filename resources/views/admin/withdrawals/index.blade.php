@@ -8,13 +8,13 @@
 
         {{-- Flash Alerts --}}
         @if (session('success'))
-            <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <div class="alert alert-success alert-dismissible fade show text-white" role="alert">
                 {{ session('success') }}
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
         @endif
         @if (session('error'))
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <div class="alert alert-danger alert-dismissible fade show text-white" role="alert">
                 {{ session('error') }}
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
@@ -33,7 +33,7 @@
                             <table class="table table-bordered table-striped table-hover mb-0 align-middle text-sm" id="WithdrawalsTable">
                                 <thead class="thead-light">
                                     <tr>
-                                        <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Ref # / Date</th>
+                                        <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Ref # / Date (Saudi Time)</th>
                                         <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Type</th>
                                         <th class="text-uppercase text-secondary text-xxs font-weight-bolder">User / Owner</th>
                                         <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Amount</th>
@@ -49,11 +49,12 @@
                                             $user = $withdrawal->user;
                                             $refNo = 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT);
                                             $status = strtolower($withdrawal->status);
+                                            $saudiDate = $withdrawal->created_at ? $withdrawal->created_at->setTimezone('Asia/Riyadh')->format('Y-m-d H:i:s') : 'N/A';
                                         @endphp
                                         <tr>
                                             <td>
                                                 <div class="fw-bold text-dark">{{ $refNo }}</div>
-                                                <small class="text-muted">{{ $withdrawal->created_at ? $withdrawal->created_at->format('Y-m-d H:i') : 'N/A' }}</small>
+                                                <small class="text-muted" title="Saudi Arabia Time (Asia/Riyadh)">{{ $saudiDate }}</small>
                                             </td>
                                             <td>
                                                 @if (strtolower($withdrawal->account_type) === 'marketplace')
@@ -73,7 +74,7 @@
                                                 @if ($bank)
                                                     <div class="fw-bold text-dark">{{ $bank->bank_name }}</div>
                                                     <small class="d-block text-muted">Title: {{ $bank->account_title }}</small>
-                                                    <code class="text-xs">{{ $bank->iban }}</code>
+                                                    <code class="text-xs" style="word-break: break-all;">{{ $bank->iban }}</code>
                                                 @else
                                                     <span class="text-muted">N/A</span>
                                                 @endif
@@ -92,7 +93,7 @@
                                                 @endif
 
                                                 @if ($withdrawal->admin_notes)
-                                                    <small class="d-block text-muted mt-1" style="max-width: 180px;"><em>{{ $withdrawal->admin_notes }}</em></small>
+                                                    <small class="d-block text-muted mt-1" style="max-width: 200px; word-wrap: break-word; word-break: break-word;"><em>{{ $withdrawal->admin_notes }}</em></small>
                                                 @endif
                                             </td>
                                             <td class="text-center">
@@ -119,17 +120,19 @@
 
                                                     {{-- Modal: Complete Transfer --}}
                                                     <div class="modal fade text-start" id="completeModal{{ $withdrawal->id }}" tabindex="-1" aria-hidden="true">
-                                                        <div class="modal-dialog">
-                                                            <div class="modal-content">
+                                                        <div class="modal-dialog modal-dialog-centered">
+                                                            <div class="modal-content" style="max-width: 100%; overflow: hidden;">
                                                                 <form action="{{ route('admin.withdrawals.complete', $withdrawal->id) }}" method="POST">
                                                                     @csrf
                                                                     @method('PATCH')
                                                                     <div class="modal-header">
-                                                                        <h5 class="modal-title">Mark Withdrawal {{ $refNo }} as Completed</h5>
-                                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                                        <h5 class="modal-title font-weight-bold">Mark Withdrawal {{ $refNo }} as Completed</h5>
+                                                                        <button type="button" class="btn-close text-dark" data-bs-dismiss="modal" aria-label="Close"></button>
                                                                     </div>
-                                                                    <div class="modal-body">
-                                                                        <p class="mb-2">Enter the Bank Transfer Reference Number after transferring <strong>{{ number_format($withdrawal->amount, 2) }} SAR</strong>:</p>
+                                                                    <div class="modal-body" style="word-wrap: break-word; word-break: break-word; white-space: normal;">
+                                                                        <p class="mb-3 text-sm text-dark" style="word-wrap: break-word; word-break: break-word; white-space: normal;">
+                                                                            Enter the Bank Transfer Reference Number after transferring <strong>{{ number_format($withdrawal->amount, 2) }} SAR</strong>:
+                                                                        </p>
                                                                         <div class="mb-3">
                                                                             <label for="bank_reference{{ $withdrawal->id }}" class="form-label font-weight-bold">Bank Reference #</label>
                                                                             <input type="text" class="form-control" name="bank_reference" id="bank_reference{{ $withdrawal->id }}" placeholder="e.g. TXN-984512784" required>
@@ -146,17 +149,19 @@
 
                                                     {{-- Modal: Reject Request --}}
                                                     <div class="modal fade text-start" id="rejectModal{{ $withdrawal->id }}" tabindex="-1" aria-hidden="true">
-                                                        <div class="modal-dialog">
-                                                            <div class="modal-content">
+                                                        <div class="modal-dialog modal-dialog-centered">
+                                                            <div class="modal-content" style="max-width: 100%; overflow: hidden;">
                                                                 <form action="{{ route('admin.withdrawals.reject', $withdrawal->id) }}" method="POST">
                                                                     @csrf
                                                                     @method('PATCH')
                                                                     <div class="modal-header">
-                                                                        <h5 class="modal-title">Reject Withdrawal Request {{ $refNo }}</h5>
-                                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                                        <h5 class="modal-title font-weight-bold">Reject Withdrawal Request {{ $refNo }}</h5>
+                                                                        <button type="button" class="btn-close text-dark" data-bs-dismiss="modal" aria-label="Close"></button>
                                                                     </div>
-                                                                    <div class="modal-body">
-                                                                        <p class="text-danger mb-2">Rejecting this request will release the reserved <strong>{{ number_format($withdrawal->amount, 2) }} SAR</strong> back to the provider/seller's available balance.</p>
+                                                                    <div class="modal-body" style="word-wrap: break-word; word-break: break-word; white-space: normal;">
+                                                                        <p class="text-danger text-sm mb-3" style="word-wrap: break-word; word-break: break-word; white-space: normal;">
+                                                                            Rejecting this request will release the reserved <strong>{{ number_format($withdrawal->amount, 2) }} SAR</strong> back to the provider/seller's available balance.
+                                                                        </p>
                                                                         <div class="mb-3">
                                                                             <label for="reason{{ $withdrawal->id }}" class="form-label font-weight-bold">Rejection Reason</label>
                                                                             <textarea class="form-control" name="reason" id="reason{{ $withdrawal->id }}" rows="3" placeholder="e.g. The submitted IBAN could not be verified." required></textarea>

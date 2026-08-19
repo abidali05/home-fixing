@@ -145,7 +145,7 @@ class WithdrawalAdminController extends Controller
             return redirect()->back()->with('error', 'Completed or rejected requests cannot be processed again.');
         }
 
-        $reason = $request->input('reason', 'The submitted request could not be processed.');
+        $reason = $request->input('reason') ?: ($request->input('admin_notes') ?: ($request->input('rejection_reason') ?: 'The submitted request could not be processed.'));
 
         $withdrawal->update([
             'status' => 'rejected',

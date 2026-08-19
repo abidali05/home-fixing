@@ -11,6 +11,7 @@ use App\Models\ProviderProfile;
 use App\Models\ReferralReward;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class WithdrawalController extends Controller
@@ -156,85 +157,120 @@ class WithdrawalController extends Controller
      */
     public function requestWithdrawal(Request $request)
     {
-        $user = auth('sanctum')->user();
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
-        }
+        try {
+            $user = auth('sanctum')->user();
 
-        $accountType = $request->input('account_type', 'provider');
-        if (!in_array($accountType, ['provider', 'marketplace'])) {
-            $accountType = 'provider';
-        }
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated.'
+                ], 401);
+            }
 
-        $validator = Validator::make($request->all(), [
-            'amount' => 'required|numeric|gt:0',
-            'bank_account_id' => 'required|exists:bank_accounts,id',
-        ]);
+            $accountType = $request->input('account_type', 'provider');
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed.',
-                'errors' => $validator->errors()
-            ], 422);
-        }
+            if (!in_array($accountType, ['provider', 'marketplace'])) {
+                $accountType = 'provider';
+            }
 
-        $bankAccount = BankAccount::where('id', $request->bank_account_id)
-            ->where('user_id', $user->id)
-            ->first();
+            $validator = Validator::make($request->all(), [
+                'amount' => 'required|numeric|gt:0',
+                'bank_account_id' => 'required|exists:bank_accounts,id',
+            ]);
 
-        if (!$bankAccount) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed.',
-                'errors' => [
-                    'bank_account_id' => ['Selected bank account does not belong to you.']
-                ]
-            ], 422);
-        }
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
 
-        $stats = $this->calculateWalletBalance($user->id, $accountType);
-        $availableBalance = (float) $stats['available_for_withdrawal'];
-        $requestedAmount = (float) $request->amount;
+            $bankAccount = BankAccount::where('id', $request->bank_account_id)
+                ->where('user_id', $user->id)
+                ->first();
 
-        if ($requestedAmount > $availableBalance) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Insufficient available balance.',
-                'errors' => [
-                    'amount' => [
-                        'The withdrawal amount cannot exceed your available balance.'
+            if (!$bankAccount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'errors' => [
+                        'bank_account_id' => [
+                            'Selected bank account does not belong to you.'
+                        ]
                     ]
+                ], 422);
+            }
+
+            $stats = $this->calculateWalletBalance(
+                $user->id,
+                $accountType
+            );
+
+            $availableBalance = (float) $stats['available_for_withdrawal'];
+            $requestedAmount = (float) $request->amount;
+
+            if ($requestedAmount > $availableBalance) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Insufficient available balance.',
+                    'errors' => [
+                        'amount' => [
+                            'The withdrawal amount cannot exceed your available balance.'
+                        ]
+                    ]
+                ], 422);
+            }
+
+            $withdrawal = Withdrawal::create([
+                'user_id' => $user->id,
+                'account_type' => $accountType,
+                'bank_account_id' => $bankAccount->id,
+                'amount' => $requestedAmount,
+                'currency' => 'SAR',
+                'status' => 'pending',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Withdrawal request submitted successfully.',
+                'data' => [
+                    'id' => $withdrawal->id,
+                    'withdrawal_no' => 'WDR-' . str_pad(
+                        $withdrawal->id,
+                        6,
+                        '0',
+                        STR_PAD_LEFT
+                    ),
+                    'amount' => (float) $withdrawal->amount,
+                    'currency' => $withdrawal->currency,
+                    'status' => $withdrawal->status,
+                    'bank_account' => [
+                        'id' => $bankAccount->id,
+                        'bank_name' => $bankAccount->bank_name,
+                        'iban' => $bankAccount->iban,
+                    ],
+                    'requested_at' => $withdrawal->created_at
+                        ? $withdrawal->created_at->toIso8601String()
+                        : null,
                 ]
-            ], 422);
+            ], 200);
+        } catch (\Throwable $e) {
+
+            Log::error('Withdrawal request failed', [
+                'user_id' => auth('sanctum')->id(),
+                'request' => $request->all(),
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Something went wrong while processing your withdrawal request.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
         }
-
-        $withdrawal = Withdrawal::create([
-            'user_id' => $user->id,
-            'account_type' => $accountType,
-            'bank_account_id' => $bankAccount->id,
-            'amount' => $requestedAmount,
-            'currency' => 'SAR',
-            'status' => 'requested',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Withdrawal request submitted successfully.',
-            'data' => [
-                'id' => $withdrawal->id,
-                'withdrawal_no' => 'WDR-' . str_pad($withdrawal->id, 6, '0', STR_PAD_LEFT),
-                'amount' => (float) $withdrawal->amount,
-                'currency' => $withdrawal->currency,
-                'status' => 'requested',
-                'bank_account' => [
-                    'id' => $bankAccount->id,
-                    'bank_name' => $bankAccount->bank_name,
-                    'iban' => $bankAccount->iban,
-                ],
-                'requested_at' => $withdrawal->created_at ? $withdrawal->created_at->toIso8601String() : null,
-            ]
-        ], 200);
     }
 
     /**
@@ -388,9 +424,10 @@ class WithdrawalController extends Controller
                         'withdrawal_no' => 'WDR-' . str_pad($w->id, 6, '0', STR_PAD_LEFT),
                         'bank_name' => optional($bank)->bank_name ?: 'Bank',
                         'status' => $w->status ?: 'requested',
-                        'requested_at' => $w->created_at ? $w->created_at->toIso8601String() : null,
-                        'completed_at' => in_array($w->status, ['completed', 'paid']) && $w->updated_at ? $w->updated_at->toIso8601String() : null,
-                        'rejected_at' => $w->status === 'rejected' && $w->updated_at ? $w->updated_at->toIso8601String() : null,
+                        'requested_at' => $w->created_at ? $w->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'accepted_at' => in_array($w->status, ['accepted', 'completed', 'paid']) && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'completed_at' => in_array($w->status, ['completed', 'paid']) && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'rejected_at' => $w->status === 'rejected' && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'rejection_reason' => $w->status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
                     ]
                 ]);

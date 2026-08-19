@@ -1,17 +1,20 @@
 <?php
 
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BankController;
+use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\Api\GeneralContoller;
-use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\TermsConditionController;
 use App\Http\Controllers\Api\TapWebhookController;
 use App\Http\Controllers\Api\User\HiringController;
 use App\Http\Controllers\Api\User\OrdersController;
-use App\Http\Controllers\CampaignController;
-use App\Http\Controllers\PrivacyController;
-use App\Http\Controllers\TermsConditionController;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\Provider\ProviderBankAccountController;
+use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
+use App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController;
 
 // ===================================================================Public Routes Start===================================================================
 Route::prefix('v1')->group(function () {
@@ -144,30 +147,33 @@ Route::post(
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 
     // Marketplace Tap Payment Routes
-    Route::post('marketplace/orders/{order}/initiate-payment', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'initiatePayment']);
-    Route::post('marketplace/payments/charge', [\App\Http\Controllers\Api\Marketplace\MarketplacePaymentController::class, 'charge']);
+    Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
+    Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
 
     // Provider Bank & Financial Summary Routes
-    Route::post('provider/validate-iban', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'validateIban']);
-    Route::get('provider/financial-summary', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'financialSummary']);
-    Route::get('provider/bank-accounts', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'getBankAccounts']);
-    Route::get('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'showBankAccount']);
-    Route::post('provider/save-bank-account', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts/{id}/update', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::put('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::delete('provider/bank-accounts/{id}', [\App\Http\Controllers\Api\Provider\ProviderBankAccountController::class, 'deleteBankAccount']);
+    Route::post('provider/validate-iban', [ProviderBankAccountController::class, 'validateIban']);
+    Route::get('provider/financial-summary', [ProviderBankAccountController::class, 'financialSummary']);
+    Route::get('provider/bank-accounts', [ProviderBankAccountController::class, 'getBankAccounts']);
+    Route::get('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'showBankAccount']);
+    Route::post('provider/save-bank-account', [ProviderBankAccountController::class, 'saveBankAccount']);
+    Route::post('provider/bank-accounts', [ProviderBankAccountController::class, 'saveBankAccount']);
+    Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
+    Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
+    Route::delete('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'deleteBankAccount']);
 
     // Marketplace Seller Bank & Financial Summary Routes
-    Route::post('marketplace/validate-iban', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'validateIban']);
-    Route::get('marketplace/financial-summary', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'financialSummary']);
-    Route::get('marketplace/bank-accounts', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'getBankAccounts']);
-    Route::get('marketplace/bank-accounts/{id}', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'showBankAccount']);
-    Route::post('marketplace/save-bank-account', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'saveBankAccount']);
-    Route::post('marketplace/bank-accounts', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'saveBankAccount']);
-    Route::post('marketplace/bank-accounts/{id}/update', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'updateBankAccount']);
-    Route::put('marketplace/bank-accounts/{id}', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'updateBankAccount']);
-    Route::delete('marketplace/bank-accounts/{id}', [\App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController::class, 'deleteBankAccount']);
+    Route::post('marketplace/validate-iban', [MarketplaceBankAccountController::class, 'validateIban']);
+    Route::get('marketplace/financial-summary', [MarketplaceBankAccountController::class, 'financialSummary']);
+    Route::get('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'getBankAccounts']);
+    Route::get('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'showBankAccount']);
+    Route::post('marketplace/save-bank-account', [MarketplaceBankAccountController::class, 'saveBankAccount']);
+    Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
+    Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+    Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+    // Withdrawal & Transaction History Routes (Document Specs)
+    Route::post('withdrawals/request', [\App\Http\Controllers\Api\WithdrawalController::class, 'requestWithdrawal']);
+    Route::post('withdrawals', [\App\Http\Controllers\Api\WithdrawalController::class, 'requestWithdrawal']);
+    Route::get('transactions', [\App\Http\Controllers\Api\WithdrawalController::class, 'transactionHistory']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

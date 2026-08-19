@@ -284,46 +284,51 @@ class ProviderBankAccountController extends Controller
         $settings = \App\Models\Admin\SystemSettingModel::first();
         $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
-        // Captured Payments for Provider
-        $capturedPayments = \App\Models\Payment::where('provider_id', $user->id)
+        // 1. Pending Amount: Total gross amount for jobs that are hired/in-progress but not yet completed
+        $pendingPayments = \App\Models\Payment::where('provider_id', $user->id)
+            ->whereHas('job', function ($q) {
+                $q->whereIn('status', ['quoted', 'hired', 'in_progress', 'pending']);
+            })
+            ->sum('amount');
+
+        // 2. Completed Orders: Jobs that are completed/accepted by customer
+        $completedPayments = \App\Models\Payment::where('provider_id', $user->id)
             ->where('status', 'captured')
+            ->whereHas('job', function ($q) {
+                $q->whereIn('status', ['completed', 'accepted', 'finished']);
+            })
             ->get();
 
-        $grossEarnings = (float) $capturedPayments->sum('amount');
-        $azhlCommission = $grossEarnings * ($azhlPercentage / 100.00);
-        $netEarnings = max(0, $grossEarnings - $azhlCommission);
+        $grossCompleted = (float) $completedPayments->sum('amount');
+        $azhlFee = $grossCompleted * ($azhlPercentage / 100.00);
+        $totalEarnings = max(0, $grossCompleted - $azhlFee);
 
-        // Pending Payments / Earnings (Processing payments or pending jobs)
-        $pendingPayments = \App\Models\Payment::where('provider_id', $user->id)
-            ->whereIn('status', ['pending', 'processing', 'initiated'])
-            ->sum('amount');
-
-        // Total Withdrawals
+        // 3. Total Withdrawn (Completed/Paid/Approved withdrawals)
         $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
-            ->whereIn('status', ['approved', 'paid'])
+            ->whereIn('status', ['completed', 'approved', 'paid'])
             ->sum('amount');
 
-        $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // 4. Pending Withdrawal Requests (Currently 'requested' or 'pending')
+        $requestedWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
-            ->where('status', 'pending')
+            ->whereIn('status', ['requested', 'pending'])
             ->sum('amount');
 
-        $availableForWithdraw = max(0, $netEarnings - $totalWithdrawn - $pendingWithdrawals);
+        // 5. Available for Withdrawal
+        $availableForWithdrawal = max(0, $totalEarnings - $totalWithdrawn - $requestedWithdrawals);
 
         return response()->json([
             'status' => 200,
             'message' => 'Provider financial summary fetched successfully.',
             'data' => [
                 'currency' => 'SAR',
-                'gross_total_earnings' => round($grossEarnings, 2),
-                'net_total_earnings' => round($netEarnings, 2),
-                'azhl_commission_percentage' => $azhlPercentage,
-                'azhl_commission_amount' => round($azhlCommission, 2),
-                'available_for_withdraw' => round($availableForWithdraw, 2),
+                'total_earnings' => round($totalEarnings, 2),
+                'available_for_withdrawal' => round($availableForWithdrawal, 2),
                 'pending_amount' => round((float) $pendingPayments, 2),
-                'total_withdraw' => round($totalWithdrawn, 2),
-                'pending_withdraw_request' => round($pendingWithdrawals, 2),
+                'total_withdrawn' => round($totalWithdrawn, 2),
+                'azhl_fee_percentage' => $azhlPercentage,
+                'azhl_fee_amount' => round($azhlFee, 2),
             ]
         ]);
     }

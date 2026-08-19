@@ -8,7 +8,6 @@ use App\Models\MarketplaceOrder;
 use App\Models\Payment;
 use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class MarketplacePaymentController extends Controller

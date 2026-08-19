@@ -33,63 +33,30 @@ class WithdrawalController extends Controller
         $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
 
         if ($accountType === 'provider') {
-            // 1. Pending Amount: Orders from orders table or payments table that are pending/in-progress
-            $pendingOrdersPrice = (float) Orders::where('provider_id', $user->id)
+            // 1. Pending Amount: Orders from orders table that are active/pending
+            $pendingAmount = (float) Orders::where('provider_id', $user->id)
                 ->whereIn('status', ['open', 'pending', 'accepted', 'on_the_way', 'arrived', 'working', 'provider_completed', 'quoted'])
                 ->sum('price');
 
-            $pendingPaymentsAmount = (float) Payment::where('provider_id', $user->id)
-                ->whereIn('status', ['pending', 'processing', 'initiated'])
-                ->whereDoesntHave('job', function ($q) {
-                    $q->whereIn('status', ['completed', 'finished', 'accepted']);
-                })
-                ->sum('amount');
-
-            $pendingAmount = max($pendingOrdersPrice, $pendingPaymentsAmount);
-
-            // 2. Completed Orders & Net Total Earnings
-            // Fetch completed orders from Orders table
-            $completedOrders = Orders::with(['job.category'])
-                ->where('provider_id', $user->id)
+            // 2. Completed Orders & Net Total Earnings: Orders where status = 'completed'
+            $completedOrders = Orders::where('provider_id', $user->id)
                 ->where('status', 'completed')
                 ->get();
 
-            // Also check captured payments if not already in completedOrders
-            $capturedPayments = Payment::where('provider_id', $user->id)
-                ->where('status', 'captured')
-                ->get();
-
-            $completedMap = collect();
-
+            $totalEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $gross = (float) ($ord->price ?? 0);
-                $key = 'order_' . $ord->id;
-                $completedMap->put($key, [
-                    'gross' => $gross,
-                    'net' => max(0, $gross - $azhlFeePerOrder),
-                ]);
+                $net = max(0, $gross - $azhlFeePerOrder);
+                $totalEarnings += $net;
             }
 
-            foreach ($capturedPayments as $pay) {
-                $gross = (float) ($pay->amount ?? 0);
-                $key = 'job_' . $pay->job_id;
-                if (!$completedMap->has($key)) {
-                    $completedMap->put($key, [
-                        'gross' => $gross,
-                        'net' => max(0, $gross - $azhlFeePerOrder),
-                    ]);
-                }
-            }
-
-            $totalEarnings = (float) $completedMap->sum('net');
-
-            // 3. Total Withdrawn: Sum of completed withdrawals
+            // 3. Total Withdrawn: Sum of withdrawals where status = completed only
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
                 ->sum('amount');
 
-            // 4. Reserved Funds: Active withdrawal requests currently requested/pending/accepted
+            // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')
                 ->whereIn('status', ['requested', 'pending', 'accepted', 'approved'])
@@ -193,27 +160,11 @@ class WithdrawalController extends Controller
                 ->where('status', 'completed')
                 ->get();
 
-            $completedPayments = Payment::where('provider_id', $user->id)
-                ->where('status', 'captured')
-                ->get();
-
-            $completedMap = collect();
-
+            $totalEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $gross = (float) ($ord->price ?? 0);
-                $key = 'order_' . $ord->id;
-                $completedMap->put($key, max(0, $gross - $azhlFeePerOrder));
+                $totalEarnings += max(0, $gross - $azhlFeePerOrder);
             }
-
-            foreach ($completedPayments as $pay) {
-                $gross = (float) ($pay->amount ?? 0);
-                $key = 'job_' . $pay->job_id;
-                if (!$completedMap->has($key)) {
-                    $completedMap->put($key, max(0, $gross - $azhlFeePerOrder));
-                }
-            }
-
-            $totalEarnings = (float) $completedMap->sum();
 
             $totalWithdrawn = (float) Withdrawal::where('user_id', $user->id)
                 ->where('account_type', 'provider')

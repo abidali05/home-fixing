@@ -410,6 +410,7 @@ class WithdrawalController extends Controller
 
             foreach ($withdrawals as $w) {
                 $bank = $w->bankAccount;
+                $status = strtolower($w->status ?: 'requested');
 
                 $transactions->push([
                     'id' => (int) $w->id,
@@ -417,18 +418,18 @@ class WithdrawalController extends Controller
                     'label' => 'Withdraw',
                     'amount' => round((float) ($w->amount ?? 0), 2),
                     'currency' => strtoupper($w->currency ?: 'SAR'),
-                    'created_at' => $w->created_at ? $w->created_at->toIso8601String() : null,
+                    'created_at' => $w->created_at ? $w->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                     'credit' => null,
                     'withdraw' => [
                         'withdrawal_id' => (int) $w->id,
                         'withdrawal_no' => 'WDR-' . str_pad($w->id, 6, '0', STR_PAD_LEFT),
                         'bank_name' => optional($bank)->bank_name ?: 'Bank',
-                        'status' => $w->status ?: 'requested',
+                        'status' => $status,
                         'requested_at' => $w->created_at ? $w->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
-                        'accepted_at' => in_array($w->status, ['accepted', 'completed', 'paid']) && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
-                        'completed_at' => in_array($w->status, ['completed', 'paid']) && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
-                        'rejected_at' => $w->status === 'rejected' && $w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
-                        'rejection_reason' => $w->status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
+                        'accepted_at' => in_array($status, ['accepted', 'completed', 'paid']) ? ($w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null) : null,
+                        'completed_at' => in_array($status, ['completed', 'paid']) ? ($w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null) : null,
+                        'rejected_at' => $status === 'rejected' ? ($w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null) : null,
+                        'rejection_reason' => $status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
                     ]
                 ]);
             }

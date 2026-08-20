@@ -1,11 +1,17 @@
 <?php
 
+use App\Http\Controllers\Admin\RefundAdminController;
+use App\Http\Controllers\Admin\WithdrawalAdminController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BankController;
+use App\Http\Controllers\Api\Customer\CustomerBankAccountController;
+use App\Http\Controllers\Api\Customer\CustomerRefundController;
+use App\Http\Controllers\Api\Customer\CustomerTransactionController;
 use App\Http\Controllers\Api\GeneralContoller;
 use App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController;
 use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\OrderCancellationController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\Provider\ProviderBankAccountController;
 use App\Http\Controllers\Api\TapWebhookController;
@@ -15,7 +21,6 @@ use App\Http\Controllers\Api\WithdrawalController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\TermsConditionController;
-use App\Http\Controllers\Admin\WithdrawalAdminController;
 use Illuminate\Support\Facades\Route;
 
 // ===================================================================Public Routes Start===================================================================
@@ -57,7 +62,7 @@ Route::prefix('v1')->group(function () {
 // ================================================================== Protected Routes Start================================================================
 
 Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
-Route::post(
+    Route::post(
         '/bank/iban/verify',
         [BankController::class, 'verifyIban']
     );
@@ -98,80 +103,44 @@ Route::post(
     Route::get('view-all-post-requests', [GeneralContoller::class, 'view_all_post_requests']);
     Route::get('job/{id}', [GeneralContoller::class, 'getJobDetail']);
     Route::middleware('Role:1')->group(function () {
-        Route::get('service-requests', [GeneralContoller::class, 'service_requests']);
-
-        Route::get('provider-home', [GeneralContoller::class, 'provider_home']);
-        Route::get('view-all-direct-requests', [GeneralContoller::class, 'view_all_direct_requests']);
-        Route::post('accept-reject-request', [GeneralContoller::class, 'accept_reject_request']);
-        Route::get('provider-orders', [GeneralContoller::class, 'my_orders']);
-
-        Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid']);
+        Route::post('submit-bid/{id}', [GeneralContoller::class, 'submit_bid']);
+        Route::post('update-order-status/{id}', [GeneralContoller::class, 'update_order_status']);
+        Route::get('provider-orders', [GeneralContoller::class, 'provider_orders']);
         Route::get('my-bids', [GeneralContoller::class, 'my_bids']);
-        Route::get('provider-reviews', [GeneralContoller::class, 'provider_reviews']);
+
+        // Provider Bank Account Routes
+        Route::get('provider/bank-accounts', [ProviderBankAccountController::class, 'getBankAccounts']);
+        Route::get('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'showBankAccount']);
+        Route::post('provider/save-bank-account', [ProviderBankAccountController::class, 'saveBankAccount']);
+        Route::post('provider/bank-accounts', [ProviderBankAccountController::class, 'saveBankAccount']);
+        Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
+        Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
     });
+    // ================================================================== Provider Routes End====================================================================
 
-    Route::post('update-order-status/{id}', [GeneralContoller::class, 'update_order_status']);
-
-    Route::post('/marketplace/product/add', [AuthController::class, 'addProduct']);
-    Route::get('/marketplace/products', [AuthController::class, 'getProducts']);
-    Route::get('/product/{id}', [AuthController::class, 'getProductDetail']);
-    Route::post('/marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
-    Route::post('/marketplace/post-campaigns', [CampaignController::class, 'store']);
-    Route::get('/marketplace/get-campaigns', [CampaignController::class, 'index']);
-    Route::get('/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
-    Route::get('/marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
-    Route::get('/marketplace/dashboard', [AuthController::class, 'marketplaceDashboard']);
-    Route::post('/add-to-cart', [AuthController::class, 'addToCart']);
-    Route::get('/cart', [AuthController::class, 'getCart']);
-    Route::post('/cart/update-quantity', [AuthController::class, 'updateCartQuantity']);
-    Route::post('/cart/clear', [AuthController::class, 'clearCart']);
-    Route::post('/marketplace/checkout', [AuthController::class, 'checkout']);
-    Route::get('/customer-orders', [AuthController::class, 'customerOrders']);
-    Route::get('/customer-orders/{id}', [AuthController::class, 'customerOrderDetail']);
-    Route::post('/customer-orders/{id}/delivery-response', [AuthController::class, 'updateCustomerDeliveryResponse']);
-    Route::post('/marketplace/shop-review', [AuthController::class, 'submitMarketplaceShopReview']);
-    Route::get('/marketplace/shop/analytics', [AuthController::class, 'shopAnalytics']);
-    Route::get('/marketplace/orders', [AuthController::class, 'marketplaceOrders']);
-    Route::get('/marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
-    Route::post('/marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
-    Route::get('/marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
-    Route::post('store-fcm-token', [NotificationController::class, 'store_fcm_token']);
+    // Notifications
     Route::get('notifications', [NotificationController::class, 'index']);
-    Route::get('get-notifications', [NotificationController::class, 'index']);
-    Route::get('notifications/unread', [NotificationController::class, 'unread']);
-    Route::get('notifications/unread-count', [NotificationController::class, 'unread_count']);
-    Route::post('notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
-    Route::post('notifications/read-all', [NotificationController::class, 'mark_all_as_read']);
+    Route::get('notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::post('notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+    Route::delete('notifications/{id}', [NotificationController::class, 'destroy']);
+    Route::delete('notifications', [NotificationController::class, 'clearAll']);
 
-    // Tap Payments API Routes
+    // Tap Payment Gateway Routes
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
+    Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
+    Route::get('payments/callback', [PaymentController::class, 'callback']);
 
-    // Marketplace Tap Payment Routes
-    Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
-    Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
-
-    // Provider Bank & Financial Summary Routes
-    Route::post('provider/validate-iban', [ProviderBankAccountController::class, 'validateIban']);
-    Route::get('provider/financial-summary', [ProviderBankAccountController::class, 'financialSummary']);
-    Route::get('provider/bank-accounts', [ProviderBankAccountController::class, 'getBankAccounts']);
-    Route::get('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'showBankAccount']);
-    Route::post('provider/save-bank-account', [ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts', [ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::delete('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'deleteBankAccount']);
-
-    // Marketplace Seller Bank & Financial Summary Routes
-    Route::post('marketplace/validate-iban', [MarketplaceBankAccountController::class, 'validateIban']);
-    Route::get('marketplace/financial-summary', [MarketplaceBankAccountController::class, 'financialSummary']);
+    // Marketplace Bank Account Routes
     Route::get('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'getBankAccounts']);
     Route::get('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'showBankAccount']);
     Route::post('marketplace/save-bank-account', [MarketplaceBankAccountController::class, 'saveBankAccount']);
     Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
     Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
     Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+
     // Withdrawal & Transaction History Routes (Document Specs Page 18)
     Route::post('withdrawals/request', [WithdrawalController::class, 'requestWithdrawal']);
     Route::post('withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
@@ -189,38 +158,38 @@ Route::post(
     Route::get('marketplace/wallet/transactions', [WithdrawalController::class, 'transactionHistory']);
     Route::post('marketplace/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
 
-    // Admin Action APIs (Spec Doc Page 13 & 18)
-    Route::get('admin/withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject']);
+    // Admin Withdrawal Action APIs (Spec Doc Page 13 & 18)
+    Route::get('admin/withdrawals', [WithdrawalAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [WithdrawalAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [WithdrawalAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [WithdrawalAdminController::class, 'reject']);
 
     // Order Cancellation & Refund Specification Routes
-    Route::post('orders/{order_id}/cancel', [\App\Http\Controllers\Api\OrderCancellationController::class, 'cancelOrder']);
+    Route::post('orders/{order_id}/cancel', [OrderCancellationController::class, 'cancelOrder']);
 
     // Customer Bank Account Routes (Max 3 Limit)
-    Route::get('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'getBankAccounts']);
-    Route::post('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
-    Route::post('customer/save-bank-account', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
-    Route::put('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
-    Route::post('customer/bank-accounts/{id}/update', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
-    Route::delete('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
-    Route::post('customer/bank-accounts/{id}/delete', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
+    Route::get('customer/bank-accounts', [CustomerBankAccountController::class, 'getBankAccounts']);
+    Route::post('customer/bank-accounts', [CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::post('customer/save-bank-account', [CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::put('customer/bank-accounts/{id}', [CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::post('customer/bank-accounts/{id}/update', [CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::delete('customer/bank-accounts/{id}', [CustomerBankAccountController::class, 'deleteBankAccount']);
+    Route::post('customer/bank-accounts/{id}/delete', [CustomerBankAccountController::class, 'deleteBankAccount']);
 
     // Customer Transaction History & Wallet Summary Routes
-    Route::get('customer/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
-    Route::get('customer/wallet/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
+    Route::get('customer/transactions', [CustomerTransactionController::class, 'transactionHistory']);
+    Route::get('customer/wallet/transactions', [CustomerTransactionController::class, 'transactionHistory']);
 
     // Dedicated Standalone Customer Refund Request APIs (After Order Cancellation)
-    Route::post('customer/refunds/request', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
-    Route::post('orders/{order_id}/refund', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
-    Route::post('refunds/request', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
+    Route::post('customer/refunds/request', [CustomerRefundController::class, 'requestRefund']);
+    Route::post('orders/{order_id}/refund', [CustomerRefundController::class, 'requestRefund']);
+    Route::post('refunds/request', [CustomerRefundController::class, 'requestRefund']);
 
     // Admin Refund Action APIs (Spec Doc Page 6)
-    Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject']);
+    Route::get('admin/refunds', [RefundAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [RefundAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/complete', [RefundAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [RefundAdminController::class, 'reject']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)

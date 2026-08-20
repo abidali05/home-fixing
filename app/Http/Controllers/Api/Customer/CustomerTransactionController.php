@@ -26,6 +26,14 @@ class CustomerTransactionController extends Controller
             $filter = 'all';
         }
 
+        // Fetch all customer orders & refunds for cross-referencing
+        $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
+
+        $allCustomerRefunds = Refund::where('customer_id', $user->id)
+            ->orWhereIn('order_id', $customerOrderIds)
+            ->get()
+            ->keyBy('order_id');
+
         // 1. Calculate Financial Summary
         $capturedPaymentsSum = (float) Payment::where('user_id', $user->id)
             ->where('status', 'captured')
@@ -37,11 +45,15 @@ class CustomerTransactionController extends Controller
                 ->sum('price');
         }
 
-        $completedRefundsSum = (float) Refund::where('customer_id', $user->id)
+        $completedRefundsSum = (float) Refund::where(function($q) use ($user, $customerOrderIds) {
+                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
+            })
             ->whereIn('status', ['refunded', 'completed', 'paid'])
             ->sum('amount');
 
-        $pendingRefundsSum = (float) Refund::where('customer_id', $user->id)
+        $pendingRefundsSum = (float) Refund::where(function($q) use ($user, $customerOrderIds) {
+                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
+            })
             ->whereIn('status', ['requested', 'processing', 'pending', 'accepted'])
             ->sum('amount');
 
@@ -63,6 +75,40 @@ class CustomerTransactionController extends Controller
 
                 $processedOrderIds[] = (int) $orderId;
 
+                // Check if this order has an associated Refund Request
+                $associatedRefund = $allCustomerRefunds->get($orderId);
+                $refundData = null;
+
+                if ($associatedRefund) {
+                    $rawStatus = strtolower($associatedRefund->status ?: 'requested');
+                    $status = $rawStatus;
+                    if (in_array($rawStatus, ['refunded', 'completed', 'paid'])) {
+                        $status = 'completed';
+                    } elseif ($rawStatus === 'accepted') {
+                        $status = 'accepted';
+                    } elseif (in_array($rawStatus, ['rejected', 'failed'])) {
+                        $status = 'rejected';
+                    } else {
+                        $status = 'requested';
+                    }
+
+                    $refundData = [
+                        'refund_id' => (int) $associatedRefund->id,
+                        'refund_no' => $associatedRefund->refund_no ?: ('REF-' . str_pad($associatedRefund->id, 6, '0', STR_PAD_LEFT)),
+                        'order_id' => (int) $orderId,
+                        'order_no' => $orderNo,
+                        'amount' => round((float) ($associatedRefund->amount ?? 0), 2),
+                        'currency' => strtoupper($associatedRefund->currency ?: 'SAR'),
+                        'status' => $status,
+                        'refund_reference' => $associatedRefund->bank_reference ?: $associatedRefund->gateway_refund_id,
+                        'requested_at' => $associatedRefund->created_at ? $associatedRefund->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'accepted_at' => in_array($status, ['accepted', 'completed']) && $associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'completed_at' => $status === 'completed' ? ($associatedRefund->refunded_at ? $associatedRefund->refunded_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                        'rejected_at' => $status === 'rejected' ? ($associatedRefund->failed_at ? $associatedRefund->failed_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                        'rejection_reason' => $status === 'rejected' ? ($associatedRefund->failure_reason ?: $associatedRefund->admin_notes) : null,
+                    ];
+                }
+
                 $transactions->push([
                     'id' => (int) $p->id,
                     'type' => 'debit',
@@ -79,7 +125,7 @@ class CustomerTransactionController extends Controller
                         'tap_charge_id' => $p->tap_charge_id ?: null,
                         'paid_at' => $p->created_at ? $p->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                     ],
-                    'refund' => null,
+                    'refund' => $refundData,
                 ]);
             }
 
@@ -97,6 +143,39 @@ class CustomerTransactionController extends Controller
                 $job = $ord->job;
                 $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service');
 
+                $associatedRefund = $allCustomerRefunds->get($ord->id);
+                $refundData = null;
+
+                if ($associatedRefund) {
+                    $rawStatus = strtolower($associatedRefund->status ?: 'requested');
+                    $status = $rawStatus;
+                    if (in_array($rawStatus, ['refunded', 'completed', 'paid'])) {
+                        $status = 'completed';
+                    } elseif ($rawStatus === 'accepted') {
+                        $status = 'accepted';
+                    } elseif (in_array($rawStatus, ['rejected', 'failed'])) {
+                        $status = 'rejected';
+                    } else {
+                        $status = 'requested';
+                    }
+
+                    $refundData = [
+                        'refund_id' => (int) $associatedRefund->id,
+                        'refund_no' => $associatedRefund->refund_no ?: ('REF-' . str_pad($associatedRefund->id, 6, '0', STR_PAD_LEFT)),
+                        'order_id' => (int) $ord->id,
+                        'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
+                        'amount' => round((float) ($associatedRefund->amount ?? 0), 2),
+                        'currency' => strtoupper($associatedRefund->currency ?: 'SAR'),
+                        'status' => $status,
+                        'refund_reference' => $associatedRefund->bank_reference ?: $associatedRefund->gateway_refund_id,
+                        'requested_at' => $associatedRefund->created_at ? $associatedRefund->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'accepted_at' => in_array($status, ['accepted', 'completed']) && $associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'completed_at' => $status === 'completed' ? ($associatedRefund->refunded_at ? $associatedRefund->refunded_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                        'rejected_at' => $status === 'rejected' ? ($associatedRefund->failed_at ? $associatedRefund->failed_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                        'rejection_reason' => $status === 'rejected' ? ($associatedRefund->failure_reason ?: $associatedRefund->admin_notes) : null,
+                    ];
+                }
+
                 $transactions->push([
                     'id' => (int) (700000 + $ord->id),
                     'type' => 'debit',
@@ -113,24 +192,19 @@ class CustomerTransactionController extends Controller
                         'tap_charge_id' => null,
                         'paid_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                     ],
-                    'refund' => null,
+                    'refund' => $refundData,
                 ]);
             }
         }
 
         // 3. Credit Transactions (Customer Refund Requests & Settled Refunds)
         if (in_array($filter, ['all', 'credit', 'refund'])) {
-            $refunds = Refund::with(['order.job.category', 'bankAccount'])
-                ->where('customer_id', $user->id)
-                ->get();
-
-            foreach ($r = $refunds as $refundItem) {
+            foreach ($allCustomerRefunds as $refundItem) {
                 $order = $refundItem->order;
                 $job = optional($order)->job;
                 $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: 'Cancelled Order Refund');
                 $rawStatus = strtolower($refundItem->status ?: 'requested');
 
-                // Map status to clean standardized string
                 $status = $rawStatus;
                 if (in_array($rawStatus, ['refunded', 'completed', 'paid'])) {
                     $status = 'completed';
@@ -156,7 +230,7 @@ class CustomerTransactionController extends Controller
                         'order_id' => (int) ($refundItem->order_id ?: 0),
                         'order_no' => $refundItem->order_id ? ('ORD-' . str_pad($refundItem->order_id, 6, '0', STR_PAD_LEFT)) : 'N/A',
                         'order_title' => $orderTitle,
-                        'status' => $status, // requested, accepted, completed, rejected
+                        'status' => $status,
                         'refund_reference' => $refundItem->bank_reference ?: $refundItem->gateway_refund_id,
                         'requested_at' => $refundItem->created_at ? $refundItem->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'accepted_at' => in_array($status, ['accepted', 'completed']) && $refundItem->updated_at ? $refundItem->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,

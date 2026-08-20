@@ -47,19 +47,19 @@ Route::prefix('v1')->group(function () {
     Route::get('cities', [GeneralContoller::class, 'cities']);
     Route::get('faqs', [GeneralContoller::class, 'faqs_list']);
     Route::get('support-items', [GeneralContoller::class, 'support_list']);
-    Route::get('/marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
-    Route::post('/marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
-    Route::post('/marketplace/product-view', [AuthController::class, 'recordProductView']);
+    Route::get('marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
+    Route::post('marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
+    Route::post('marketplace/product-view', [AuthController::class, 'recordProductView']);
 
-    Route::get('/privacy/{role}', [PrivacyController::class, 'index']);
-    Route::get('/terms-conditions/{role}', [TermsConditionController::class, 'index']);
+    Route::get('privacy/{role}', [PrivacyController::class, 'index']);
+    Route::get('terms-conditions/{role}', [TermsConditionController::class, 'index']);
 });
 // ===================================================================Public Routes End=====================================================================
 
 
 // ================================================================== Protected Routes Start================================================================
 Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
-    Route::post('/bank/iban/verify', [BankController::class, 'verifyIban']);
+    Route::post('bank/iban/verify', [BankController::class, 'verifyIban']);
 
     Route::post('logout', [AuthController::class, 'logout']);
     Route::post('active-account-request', [AuthController::class, 'activeAccountRequest']);
@@ -128,29 +128,29 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
 
     // ================================================================== Marketplace Routes Start===============================================================
-    Route::post('/marketplace/product/add', [AuthController::class, 'addProduct']);
-    Route::get('/marketplace/products', [AuthController::class, 'getProducts']);
-    Route::get('/product/{id}', [AuthController::class, 'getProductDetail']);
-    Route::post('/marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
-    Route::post('/marketplace/post-campaigns', [CampaignController::class, 'store']);
-    Route::get('/marketplace/get-campaigns', [CampaignController::class, 'index']);
-    Route::get('/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
-    Route::get('/marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
-    Route::get('/marketplace/dashboard', [AuthController::class, 'marketplaceDashboard']);
-    Route::post('/add-to-cart', [AuthController::class, 'addToCart']);
-    Route::get('/cart', [AuthController::class, 'getCart']);
-    Route::post('/cart/update-quantity', [AuthController::class, 'updateCartQuantity']);
-    Route::post('/cart/clear', [AuthController::class, 'clearCart']);
-    Route::post('/marketplace/checkout', [AuthController::class, 'checkout']);
-    Route::get('/customer-orders', [AuthController::class, 'customerOrders']);
-    Route::get('/customer-orders/{id}', [AuthController::class, 'customerOrderDetail']);
-    Route::post('/customer-orders/{id}/delivery-response', [AuthController::class, 'updateCustomerDeliveryResponse']);
-    Route::post('/marketplace/shop-review', [AuthController::class, 'submitMarketplaceShopReview']);
-    Route::get('/marketplace/shop/analytics', [AuthController::class, 'shopAnalytics']);
-    Route::get('/marketplace/orders', [AuthController::class, 'marketplaceOrders']);
-    Route::get('/marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
-    Route::post('/marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
-    Route::get('/marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
+    Route::post('marketplace/product/add', [AuthController::class, 'addProduct']);
+    Route::get('marketplace/products', [AuthController::class, 'getProducts']);
+    Route::get('product/{id}', [AuthController::class, 'getProductDetail']);
+    Route::post('marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
+    Route::post('marketplace/post-campaigns', [CampaignController::class, 'store']);
+    Route::get('marketplace/get-campaigns', [CampaignController::class, 'index']);
+    Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+    Route::get('marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
+    Route::get('marketplace/dashboard', [AuthController::class, 'marketplaceDashboard']);
+    Route::post('add-to-cart', [AuthController::class, 'addToCart']);
+    Route::get('cart', [AuthController::class, 'getCart']);
+    Route::post('cart/update-quantity', [AuthController::class, 'updateCartQuantity']);
+    Route::post('cart/clear', [AuthController::class, 'clearCart']);
+    Route::post('marketplace/checkout', [AuthController::class, 'checkout']);
+    Route::get('customer-orders', [AuthController::class, 'customerOrders']);
+    Route::get('customer-orders/{id}', [AuthController::class, 'customerOrderDetail']);
+    Route::post('customer-orders/{id}/delivery-response', [AuthController::class, 'updateCustomerDeliveryResponse']);
+    Route::post('marketplace/shop-review', [AuthController::class, 'submitMarketplaceShopReview']);
+    Route::get('marketplace/shop/analytics', [AuthController::class, 'shopAnalytics']);
+    Route::get('marketplace/orders', [AuthController::class, 'marketplaceOrders']);
+    Route::get('marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
+    Route::post('marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
+    Route::get('marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
 
     // Marketplace Seller Bank Account Routes
     Route::post('marketplace/validate-iban', [MarketplaceBankAccountController::class, 'validateIban']);

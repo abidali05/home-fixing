@@ -1921,14 +1921,15 @@ public function verify_otp(Request $request)
     {
         try {
             $user = auth('sanctum')->user();
-            $lat  = $user->latitude;
-            $lng  = $user->longitude;
+            $lat  = $user ? $user->latitude : null;
+            $lng  = $user ? $user->longitude : null;
+            $userId = $user ? $user->id : 0;
 
             $marketplaces = User::query()
                 ->select('users.*')
                 ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->where('users.id', '!=', $user->id)
+                ->where('users.id', '!=', $userId)
                 ->where('users.marketplace_status', 'active')
                 ->when($lat && $lng, function ($q) use ($lat, $lng) {
                     $q->whereRaw(

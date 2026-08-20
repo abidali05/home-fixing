@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\User;
 
 use App\Models\Orders;
+use App\Models\Payment;
+use App\Models\Refund;
 use Illuminate\Http\Request;
 use App\Models\JobRequestModel;
 use Illuminate\Support\Facades\Log;
@@ -16,10 +18,21 @@ use Illuminate\Support\Facades\DB;
 
 class OrdersController extends Controller
 {
-    public function my_orders()
+    /**
+     * Get Customer Orders by Status Categories with Pagination & Refund Status Tracking
+     * GET /api/v1/my-orders?page=1&per_page=20&filter=all
+     */
+    public function my_orders(Request $request)
     {
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthenticated.', 401);
+            }
+
+            $page = (int) $request->input('page', 1);
+            $perPage = (int) $request->input('per_page', 20);
+            $filter = strtolower($request->input('filter', $request->input('status', 'all')));
 
             $statuses = [
                 'ongoing_orders' => ['arrived', 'on_the_way', 'working', 'provider_completed'],
@@ -29,14 +42,38 @@ class OrdersController extends Controller
                 'open_orders' => ['open'],
             ];
 
+            // Fetch all customer refunds for fast mapping
+            $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
+            $customerRefunds = Refund::where('customer_id', $user->id)
+                ->orWhereIn('order_id', $customerOrderIds)
+                ->get()
+                ->keyBy('order_id');
+
+            $capturedJobIds = Payment::where('user_id', $user->id)
+                ->where('status', 'captured')
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
 
             $data = [];
+            $totalCount = 0;
 
-            foreach ($statuses as $key => $status) {
-                $orders = Orders::with(['job.category', 'provider'])
+            foreach ($statuses as $key => $statusArray) {
+                if ($filter !== 'all' && $filter !== $key) {
+                    $data[$key] = [];
+                    continue;
+                }
+
+                $query = Orders::with(['job.category', 'provider'])
                     ->where('user_id', $user->id)
-                    ->whereIn('status', (array) $status)
-                    ->orderBy('id','DESC')
+                    ->whereIn('status', (array) $statusArray)
+                    ->orderBy('id', 'DESC');
+
+                $categoryTotal = $query->count();
+                $totalCount += $categoryTotal;
+
+                $orders = $query->skip(($page - 1) * $perPage)
+                    ->take($perPage)
                     ->get();
 
                 foreach ($orders as $order) {
@@ -46,10 +83,62 @@ class OrdersController extends Controller
                             ? asset('uploads/service_category/' . $category->path)
                             : asset('assets/img/default.jpg');
                     }
+
+                    // For cancelled_orders: Attach refund status lifecycle details
+                    if ($key === 'cancelled_orders' || strtolower($order->status) === 'cancelled') {
+                        $refund = $customerRefunds->get($order->id);
+                        $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
+
+                        $refundData = null;
+                        if ($refund) {
+                            $rawStatus = strtolower($refund->status ?: 'requested');
+                            $refundStatusStr = $rawStatus;
+                            if (in_array($rawStatus, ['refunded', 'completed', 'paid'])) {
+                                $refundStatusStr = 'completed';
+                            } elseif ($rawStatus === 'accepted') {
+                                $refundStatusStr = 'accepted';
+                            } elseif (in_array($rawStatus, ['rejected', 'failed'])) {
+                                $refundStatusStr = 'rejected';
+                            } else {
+                                $refundStatusStr = 'requested';
+                            }
+
+                            $refundData = [
+                                'refund_id' => (int) $refund->id,
+                                'refund_no' => $refund->refund_no ?: ('REF-' . str_pad($refund->id, 6, '0', STR_PAD_LEFT)),
+                                'order_id' => (int) $order->id,
+                                'amount' => round((float) ($refund->amount ?? 0), 2),
+                                'currency' => strtoupper($refund->currency ?: 'SAR'),
+                                'status' => $refundStatusStr, // requested, accepted, completed, rejected
+                                'refund_reference' => $refund->bank_reference ?: $refund->gateway_refund_id,
+                                'requested_at' => $refund->created_at ? $refund->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                                'accepted_at' => in_array($refundStatusStr, ['accepted', 'completed']) && $refund->updated_at ? $refund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                                'completed_at' => $refundStatusStr === 'completed' ? ($refund->refunded_at ? $refund->refunded_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($refund->updated_at ? $refund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                                'rejected_at' => $refundStatusStr === 'rejected' ? ($refund->failed_at ? $refund->failed_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($refund->updated_at ? $refund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null)) : null,
+                                'rejection_reason' => $refundStatusStr === 'rejected' ? ($refund->failure_reason ?: $refund->admin_notes) : null,
+                            ];
+                        }
+
+                        $order->refund_status = $refundData ? $refundData['status'] : ($isPaid ? 'eligible' : 'not_required');
+                        $order->can_request_refund = $isPaid && !$refund;
+                        $order->refund = $refundData;
+                    }
                 }
 
                 $data[$key] = $orders;
             }
+
+            $lastPage = (int) ceil($totalCount / $perPage) ?: 1;
+
+            $data['pagination'] = [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'last_page' => $lastPage,
+                'total' => $totalCount,
+                'from' => $totalCount > 0 ? (($page - 1) * $perPage) + 1 : 0,
+                'to' => min($page * $perPage, $totalCount),
+                'has_more' => $page < $lastPage,
+            ];
 
             return $this->success($data, 'My orders loaded successfully.');
         } catch (\Throwable $e) {
@@ -68,298 +157,61 @@ class OrdersController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return $this->validationError($validator->errors(), 'Validation failed.');
+            return $this->error($validator->errors()->first(), 422);
         }
 
-        DB::beginTransaction();
-
         try {
-            $customer = auth('sanctum')->user();
-            if (!$customer) {
-                return $this->error('Unauthorized.', 401);
-            }
-            if ((int) $customer->role !== 0) {
-                return $this->error('Only customers can submit feedback.', 403);
-            }
+            DB::beginTransaction();
 
-            $userId = $customer->id;
-            $order = Orders::where('id', $request->order_id)
-                ->where('user_id', $userId)
-                ->where('provider_id', $request->provider_id)
-                ->first();
-
+            $order = Orders::find($request->order_id);
             if (!$order) {
-                return $this->error('Order not found for this customer/provider.', 404);
+                return $this->error('Order not found', 404);
+            }
+
+            if ($order->status !== 'completed') {
+                return $this->error('Feedback can only be submitted for completed orders', 400);
             }
 
             $existingReview = Reviews::where('order_id', $request->order_id)
-                ->where('user_id', $userId)
+                ->where('user_id', auth('sanctum')->id())
                 ->first();
 
             if ($existingReview) {
-                return $this->error('You have already submitted a review for this order.', 409);
+                return $this->error('Feedback already submitted for this order', 400);
             }
 
-            Reviews::create([
+            $review = Reviews::create([
                 'order_id' => $request->order_id,
+                'user_id' => auth('sanctum')->id(),
                 'provider_id' => $request->provider_id,
-                'user_id' => $userId,
                 'rating' => $request->rating,
                 'review' => $request->review,
             ]);
 
-            DB::commit();
-
             $provider = User::find($request->provider_id);
             if ($provider) {
+                $reviews = Reviews::where('provider_id', $request->provider_id)->get();
+                $avgRating = round($reviews->avg('rating'), 1);
+
+                $provider->rating = $avgRating;
+                $provider->save();
+            }
+
+            if ($provider) {
                 try {
-                    $provider->notify((new ProviderFeedbackReceivedNotification($order, $customer, (float) $request->rating))->afterCommit());
+                    $provider->notify(new ProviderFeedbackReceivedNotification($review));
                 } catch (\Throwable $notificationException) {
                     Log::error('Failed to send provider feedback notification: ' . $notificationException->getMessage());
                 }
             }
 
-            return $this->success(null, 'Review submitted successfully.');
+            DB::commit();
+
+            return $this->success($review, 'Feedback submitted successfully.');
         } catch (\Throwable $e) {
             DB::rollBack();
-            Log::error('Feedback submission failed: ' . $e->getMessage());
-            return $this->error('Failed to submit review.', 500);
-        }
-    }
-
-    public function getReceipt($id)
-    {
-        try {
-            $user = auth('sanctum')->user();
-            if (!$user) {
-                return $this->error('Unauthorized.', 401);
-            }
-
-            // Find order where user is either the customer or the provider
-            $order = Orders::with(['job.category', 'provider', 'user'])
-                ->where(function ($query) use ($user) {
-                    $query->where('user_id', $user->id)
-                          ->orWhere('provider_id', $user->id);
-                })
-                ->where('id', $id)
-                ->first();
-
-            if (!$order) {
-                return $this->error('Order not found or unauthorized.', 404);
-            }
-
-            $setting = \App\Models\Admin\SystemSettingModel::first();
-
-            $receiptData = [
-                'receipt_id' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                'order_id' => $order->id,
-                'system_name' => optional($setting)->system_name ?? 'Home Fixing',
-                'order_date' => $order->created_at ? $order->created_at->toIso8601String() : null,
-                'customer' => [
-                    'id' => optional($order->user)->id,
-                    'name' => optional($order->user)->name ?? 'Customer',
-                    'phone' => optional($order->user)->phone,
-                ],
-                'provider' => [
-                    'id' => optional($order->provider)->id,
-                    'name' => optional($order->provider)->name ?? 'Provider',
-                    'phone' => optional($order->provider)->phone,
-                ],
-                'job_details' => [
-                    'category' => optional($order->job->category)->name ?? 'Service',
-                    'description' => optional($order->job)->description,
-                ],
-                'amount' => (float) $order->price,
-                'currency' => 'SAR',
-                'status' => $order->status,
-                'source' => $order->source,
-            ];
-
-            return $this->success($receiptData, 'Service receipt data loaded successfully.');
-        } catch (\Throwable $e) {
-            Log::error('Error in getReceipt: ' . $e->getMessage());
-            return $this->error('Failed to load receipt data.', 500);
-        }
-    }
-
-    public function getMarketplaceReceipt($id)
-    {
-        try {
-            $user = auth('sanctum')->user();
-            if (!$user) {
-                return $this->error('Unauthorized.', 401);
-            }
-
-            // Find order with all relevant relations
-            $order = \App\Models\MarketplaceOrder::with([
-                'customer',
-                'items.product.category',
-                'items.shop.marketplaceProfile'
-            ])
-                ->where('id', $id)
-                ->first();
-
-            if (!$order) {
-                return $this->error('Order not found.', 404);
-            }
-
-            // Verify authorization: either customer or shop owner of one of the items
-            $isCustomer = $order->user_id == $user->id;
-            $shopIds = $order->items->pluck('shop_id')->toArray();
-            $isShopOwner = in_array($user->id, $shopIds);
-
-            if (!$isCustomer && !$isShopOwner) {
-                return $this->error('Unauthorized to view this receipt.', 403);
-            }
-
-            $setting = \App\Models\Admin\SystemSettingModel::first();
-
-            // Format items with complete details
-            $itemsData = [];
-            $computedSubtotal = 0;
-            foreach ($order->items as $item) {
-                if ($isShopOwner && $item->shop_id != $user->id) {
-                    continue;
-                }
-
-                $itemPrice = (float) $item->base_price;
-                $itemQty = (int) $item->quantity;
-                $itemSubtotal = (float) $item->total_price;
-                $computedSubtotal += $itemSubtotal;
-
-                $productData = null;
-                if ($item->product) {
-                    $bannerUrl = !empty($item->product->banner_image)
-                        ? asset('storage/' . $item->product->banner_image)
-                        : asset('assets/img/default.jpg');
-
-                    $images = $item->product->product_images;
-                    if (is_string($images)) {
-                        $images = array_filter(explode(',', $images));
-                    }
-
-                    $formattedImages = collect($images ?: [])
-                        ->map(function ($img) {
-                            return asset('storage/' . $img);
-                        })
-                        ->values();
-
-                    $productData = [
-                        'id' => $item->product->id,
-                        'product_name' => $item->product->product_name,
-                        'product_description' => $item->product->product_description,
-                        'banner_image' => $bannerUrl,
-                        'product_images' => $formattedImages,
-                        'price' => (float) $item->product->price,
-                        'sale_price' => $item->product->sale_price ? (float) $item->product->sale_price : null,
-                        'sku' => $item->product->sku,
-                        'category' => optional($item->product->category)->name,
-                    ];
-                }
-
-                $shopProfile = optional($item->shop)->marketplaceProfile;
-                $shopData = [
-                    'id' => optional($item->shop)->id,
-                    'name' => optional($item->shop)->name,
-                    'email' => optional($item->shop)->email,
-                    'phone' => optional($item->shop)->phone,
-                    'shop_title' => optional($shopProfile)->shop_title ?? optional($item->shop)->name ?? 'Shop',
-                    'banner_image' => optional($shopProfile)->banner_image ? asset('storage/' . $shopProfile->banner_image) : null,
-                    'shop_address' => optional($shopProfile)->address,
-                ];
-
-                $itemsData[] = [
-                    'id' => $item->id,
-                    'marketplace_order_id' => $item->marketplace_order_id,
-                    'product_id' => $item->product_id,
-                    'shop_id' => $item->shop_id,
-                    'product_name' => $item->product_name ?? optional($item->product)->product_name ?? 'Product',
-                    'product_title' => $item->product_name ?? optional($item->product)->product_name ?? 'Product',
-                    'shop_title' => optional($shopProfile)->shop_title ?? optional($item->shop)->name ?? 'Shop',
-                    'quantity' => $itemQty,
-                    'base_price' => $itemPrice,
-                    'price' => $itemPrice,
-                    'total_price' => $itemSubtotal,
-                    'subtotal' => $itemSubtotal,
-                    'created_at' => $item->created_at ? $item->created_at->toIso8601String() : null,
-                    'updated_at' => $item->updated_at ? $item->updated_at->toIso8601String() : null,
-                    'product' => $productData,
-                    'shop' => $shopData,
-                ];
-            }
-
-            $deliveryCharges = (float) $order->shipping_cost;
-
-            $customerData = null;
-            if ($order->customer) {
-                $customerData = [
-                    'id' => $order->customer->id,
-                    'name' => $order->customer->name,
-                    'email' => $order->customer->email,
-                    'phone' => $order->customer->phone,
-                    'image' => $order->customer->image ? asset('storage/' . $order->customer->image) : null,
-                ];
-            }
-
-            $receiptData = [
-                'receipt_id' => 'MKT-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
-                'order_id' => $order->id,
-                'order_number' => $order->order_number,
-                'system_name' => optional($setting)->system_name ?? 'Home Fixing',
-                'system_logo' => optional($setting)->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('assets/img/logo.png'),
-                'order_date' => $order->created_at ? $order->created_at->toIso8601String() : null,
-                'subtotal' => $computedSubtotal,
-                'delivery_charges' => $isShopOwner ? 0 : $deliveryCharges,
-                'discount' => (float) $order->discount_price,
-                'tax' => (float) $order->tax_amount,
-                'total_amount' => $isShopOwner ? $computedSubtotal : (float) $order->total_amount,
-                'currency' => 'SAR',
-                'payment_status' => $order->payment_status ?? 'pending',
-                'payment_method' => $order->payment_method,
-                'status' => $order->status,
-                'notes' => $order->notes,
-
-                // Order metadata & complete fields
-                'order' => [
-                    'id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'user_id' => $order->user_id,
-                    'shipping_address' => $order->shipping_address,
-                    'subtotal' => $isShopOwner ? $computedSubtotal : (float) $order->subtotal,
-                    'shipping_cost' => $isShopOwner ? 0 : (float) $order->shipping_cost,
-                    'tax_amount' => (float) $order->tax_amount,
-                    'coupon_code' => $order->coupon_code,
-                    'discount_price' => (float) $order->discount_price,
-                    'total_amount' => $isShopOwner ? $computedSubtotal : (float) $order->total_amount,
-                    'payment_method' => $order->payment_method,
-                    'payment_status' => $order->payment_status ?? 'pending',
-                    'notes' => $order->notes,
-                    'delivery_response_reason' => $order->delivery_response_reason,
-                    'status' => $order->status,
-                    'created_at' => $order->created_at ? $order->created_at->toIso8601String() : null,
-                    'updated_at' => $order->updated_at ? $order->updated_at->toIso8601String() : null,
-                ],
-
-                // Customer data
-                'customer' => $customerData,
-
-                // Items array with full product and shop data
-                'items' => $itemsData,
-
-                // Summary
-                'summary' => [
-                    'subtotal' => $computedSubtotal,
-                    'delivery_charges' => $isShopOwner ? 0 : $deliveryCharges,
-                    'discount' => (float) $order->discount_price,
-                    'tax' => (float) $order->tax_amount,
-                    'total_amount' => $isShopOwner ? $computedSubtotal : (float) $order->total_amount,
-                ]
-            ];
-
-            return $this->success($receiptData, 'Marketplace receipt data loaded successfully.');
-        } catch (\Throwable $e) {
-            Log::error('Error in getMarketplaceReceipt: ' . $e->getMessage());
-            return $this->error('Failed to load receipt data.', 500);
+            Log::error('Error submitting feedback: ' . $e->getMessage());
+            return $this->error('Failed to submit feedback', 500);
         }
     }
 }

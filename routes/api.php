@@ -1,11 +1,17 @@
 <?php
 
+use App\Http\Controllers\Admin\RefundAdminController;
+use App\Http\Controllers\Admin\WithdrawalAdminController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BankController;
+use App\Http\Controllers\Api\Customer\CustomerBankAccountController;
+use App\Http\Controllers\Api\Customer\CustomerRefundController;
+use App\Http\Controllers\Api\Customer\CustomerTransactionController;
 use App\Http\Controllers\Api\GeneralContoller;
 use App\Http\Controllers\Api\Marketplace\MarketplaceBankAccountController;
 use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\OrderCancellationController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\Provider\ProviderBankAccountController;
 use App\Http\Controllers\Api\TapWebhookController;
@@ -15,10 +21,26 @@ use App\Http\Controllers\Api\WithdrawalController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\TermsConditionController;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
+
+// Cache Clear Utility Route for Live Server Sync
+Route::get('v1/clear-cache', function () {
+    Artisan::call('optimize:clear');
+    return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+});
+Route::get('clear-cache', function () {
+    Artisan::call('optimize:clear');
+    return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+});
 
 // ===================================================================Public Routes Start===================================================================
 Route::prefix('v1')->group(function () {
+    Route::get('clear-cache', function () {
+        Artisan::call('optimize:clear');
+        return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+    });
+
     Route::post('check-phone-availability', [AuthController::class, 'check_phone_availability']);
     Route::post('check-phone-registered', [AuthController::class, 'check_phone_registered']);
     Route::post('send-otp', [AuthController::class, 'send_otp']);
@@ -41,25 +63,27 @@ Route::prefix('v1')->group(function () {
     Route::get('cities', [GeneralContoller::class, 'cities']);
     Route::get('faqs', [GeneralContoller::class, 'faqs_list']);
     Route::get('support-items', [GeneralContoller::class, 'support_list']);
-    Route::get('/marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
-    Route::post('/marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
-    Route::post('/marketplace/product-view', [AuthController::class, 'recordProductView']);
 
-    Route::get('/privacy/{role}', [PrivacyController::class, 'index']);
-    Route::get('/terms-conditions/{role}', [TermsConditionController::class, 'index']);
+    // Public Marketplace Catalog Routes
+    Route::get('marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
+    Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+    Route::get('marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
+    Route::get('marketplace/products', [AuthController::class, 'getProducts']);
+    Route::get('product/{id}', [AuthController::class, 'getProductDetail']);
+    Route::get('marketplace/get-campaigns', [CampaignController::class, 'index']);
+
+    Route::post('marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
+    Route::post('marketplace/product-view', [AuthController::class, 'recordProductView']);
+
+    Route::get('privacy/{role}', [PrivacyController::class, 'index']);
+    Route::get('terms-conditions/{role}', [TermsConditionController::class, 'index']);
 });
-
-
 // ===================================================================Public Routes End=====================================================================
 
 
 // ================================================================== Protected Routes Start================================================================
-
 Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
-Route::post(
-        '/bank/iban/verify',
-        [BankController::class, 'verifyIban']
-    );
+    Route::post('bank/iban/verify', [BankController::class, 'verifyIban']);
 
     Route::post('logout', [AuthController::class, 'logout']);
     Route::post('active-account-request', [AuthController::class, 'activeAccountRequest']);
@@ -75,6 +99,8 @@ Route::post(
 
     Route::get('track-order/{id}', [GeneralContoller::class, 'track_order']);
     Route::post('cancel-order/{id}', [GeneralContoller::class, 'cancel_order']);
+
+    // Customer Role (0) Routes
     Route::middleware('Role:0')->group(function () {
         Route::post('direct-hire', [HiringController::class, 'direct_hire']);
         Route::post('post-service-request', [HiringController::class, 'post_service_request']);
@@ -96,44 +122,73 @@ Route::post(
     // ================================================================== Provider Routes Start==================================================================
     Route::get('view-all-post-requests', [GeneralContoller::class, 'view_all_post_requests']);
     Route::get('job/{id}', [GeneralContoller::class, 'getJobDetail']);
+
     Route::middleware('Role:1')->group(function () {
         Route::get('service-requests', [GeneralContoller::class, 'service_requests']);
-
         Route::get('provider-home', [GeneralContoller::class, 'provider_home']);
         Route::get('view-all-direct-requests', [GeneralContoller::class, 'view_all_direct_requests']);
         Route::post('accept-reject-request', [GeneralContoller::class, 'accept_reject_request']);
         Route::get('provider-orders', [GeneralContoller::class, 'my_orders']);
 
+        Route::post('submit-bid/{id}', [GeneralContoller::class, 'submit_bid']);
         Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid']);
         Route::get('my-bids', [GeneralContoller::class, 'my_bids']);
         Route::get('provider-reviews', [GeneralContoller::class, 'provider_reviews']);
+
+        // Provider Bank Account & Financial Routes
+        Route::post('provider/validate-iban', [ProviderBankAccountController::class, 'validateIban']);
+        Route::get('provider/financial-summary', [ProviderBankAccountController::class, 'financialSummary']);
+        Route::get('provider/bank-accounts', [ProviderBankAccountController::class, 'getBankAccounts']);
+        Route::get('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'showBankAccount']);
+        Route::post('provider/save-bank-account', [ProviderBankAccountController::class, 'saveBankAccount']);
+        Route::post('provider/bank-accounts', [ProviderBankAccountController::class, 'saveBankAccount']);
+        Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
+        Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
+        Route::delete('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'deleteBankAccount']);
     });
 
     Route::post('update-order-status/{id}', [GeneralContoller::class, 'update_order_status']);
+    // ================================================================== Provider Routes End====================================================================
 
-    Route::post('/marketplace/product/add', [AuthController::class, 'addProduct']);
-    Route::get('/marketplace/products', [AuthController::class, 'getProducts']);
-    Route::get('/product/{id}', [AuthController::class, 'getProductDetail']);
-    Route::post('/marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
-    Route::post('/marketplace/post-campaigns', [CampaignController::class, 'store']);
-    Route::get('/marketplace/get-campaigns', [CampaignController::class, 'index']);
-    Route::get('/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
-    Route::get('/marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
-    Route::get('/marketplace/dashboard', [AuthController::class, 'marketplaceDashboard']);
-    Route::post('/add-to-cart', [AuthController::class, 'addToCart']);
-    Route::get('/cart', [AuthController::class, 'getCart']);
-    Route::post('/cart/update-quantity', [AuthController::class, 'updateCartQuantity']);
-    Route::post('/cart/clear', [AuthController::class, 'clearCart']);
-    Route::post('/marketplace/checkout', [AuthController::class, 'checkout']);
-    Route::get('/customer-orders', [AuthController::class, 'customerOrders']);
-    Route::get('/customer-orders/{id}', [AuthController::class, 'customerOrderDetail']);
-    Route::post('/customer-orders/{id}/delivery-response', [AuthController::class, 'updateCustomerDeliveryResponse']);
-    Route::post('/marketplace/shop-review', [AuthController::class, 'submitMarketplaceShopReview']);
-    Route::get('/marketplace/shop/analytics', [AuthController::class, 'shopAnalytics']);
-    Route::get('/marketplace/orders', [AuthController::class, 'marketplaceOrders']);
-    Route::get('/marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
-    Route::post('/marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
-    Route::get('/marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
+
+    // ================================================================== Marketplace Routes Start===============================================================
+    Route::post('marketplace/product/add', [AuthController::class, 'addProduct']);
+    Route::get('marketplace/products', [AuthController::class, 'getProducts']);
+    Route::get('product/{id}', [AuthController::class, 'getProductDetail']);
+    Route::post('marketplace/product/update/{id}', [AuthController::class, 'updateProduct']);
+    Route::post('marketplace/post-campaigns', [CampaignController::class, 'store']);
+    Route::get('marketplace/get-campaigns', [CampaignController::class, 'index']);
+    Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+    Route::get('marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
+    Route::get('marketplace/dashboard', [AuthController::class, 'marketplaceDashboard']);
+    Route::post('add-to-cart', [AuthController::class, 'addToCart']);
+    Route::get('cart', [AuthController::class, 'getCart']);
+    Route::post('cart/update-quantity', [AuthController::class, 'updateCartQuantity']);
+    Route::post('cart/clear', [AuthController::class, 'clearCart']);
+    Route::post('marketplace/checkout', [AuthController::class, 'checkout']);
+    Route::get('customer-orders', [AuthController::class, 'customerOrders']);
+    Route::get('customer-orders/{id}', [AuthController::class, 'customerOrderDetail']);
+    Route::post('customer-orders/{id}/delivery-response', [AuthController::class, 'updateCustomerDeliveryResponse']);
+    Route::post('marketplace/shop-review', [AuthController::class, 'submitMarketplaceShopReview']);
+    Route::get('marketplace/shop/analytics', [AuthController::class, 'shopAnalytics']);
+    Route::get('marketplace/orders', [AuthController::class, 'marketplaceOrders']);
+    Route::get('marketplace/orders/{id}', [AuthController::class, 'marketplaceOrderDetail']);
+    Route::post('marketplace/orders/{id}/status', [AuthController::class, 'updateMarketplaceOrderStatus']);
+    Route::get('marketplace/product/delete/{id}', [AuthController::class, 'deleteProduct']);
+
+    // Marketplace Seller Bank Account Routes
+    Route::post('marketplace/validate-iban', [MarketplaceBankAccountController::class, 'validateIban']);
+    Route::get('marketplace/financial-summary', [MarketplaceBankAccountController::class, 'financialSummary']);
+    Route::get('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'getBankAccounts']);
+    Route::get('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'showBankAccount']);
+    Route::post('marketplace/save-bank-account', [MarketplaceBankAccountController::class, 'saveBankAccount']);
+    Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
+    Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+    Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+    // ================================================================== Marketplace Routes End=================================================================
+
+
+    // Notifications
     Route::post('store-fcm-token', [NotificationController::class, 'store_fcm_token']);
     Route::get('notifications', [NotificationController::class, 'index']);
     Route::get('get-notifications', [NotificationController::class, 'index']);
@@ -146,32 +201,13 @@ Route::post(
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
+    Route::get('payments/callback', [PaymentController::class, 'callback']);
 
     // Marketplace Tap Payment Routes
     Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
 
-    // Provider Bank & Financial Summary Routes
-    Route::post('provider/validate-iban', [ProviderBankAccountController::class, 'validateIban']);
-    Route::get('provider/financial-summary', [ProviderBankAccountController::class, 'financialSummary']);
-    Route::get('provider/bank-accounts', [ProviderBankAccountController::class, 'getBankAccounts']);
-    Route::get('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'showBankAccount']);
-    Route::post('provider/save-bank-account', [ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts', [ProviderBankAccountController::class, 'saveBankAccount']);
-    Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
-    Route::delete('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'deleteBankAccount']);
-
-    // Marketplace Seller Bank & Financial Summary Routes
-    Route::post('marketplace/validate-iban', [MarketplaceBankAccountController::class, 'validateIban']);
-    Route::get('marketplace/financial-summary', [MarketplaceBankAccountController::class, 'financialSummary']);
-    Route::get('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'getBankAccounts']);
-    Route::get('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'showBankAccount']);
-    Route::post('marketplace/save-bank-account', [MarketplaceBankAccountController::class, 'saveBankAccount']);
-    Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
-    Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
-    Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
-    // Withdrawal & Transaction History Routes (Document Specs Page 18)
+    // Withdrawal & Transaction History Routes
     Route::post('withdrawals/request', [WithdrawalController::class, 'requestWithdrawal']);
     Route::post('withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
     Route::get('transactions', [WithdrawalController::class, 'transactionHistory']);
@@ -188,44 +224,56 @@ Route::post(
     Route::get('marketplace/wallet/transactions', [WithdrawalController::class, 'transactionHistory']);
     Route::post('marketplace/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
 
-    // Admin Action APIs (Spec Doc Page 13 & 18)
-    Route::get('admin/withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete']);
-    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject']);
+    // Admin Withdrawal Action APIs
+    Route::get('admin/withdrawals', [WithdrawalAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/accept', [WithdrawalAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/complete', [WithdrawalAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/withdrawals/{id}/reject', [WithdrawalAdminController::class, 'reject']);
 
     // Order Cancellation & Refund Specification Routes
-    Route::post('orders/{order_id}/cancel', [\App\Http\Controllers\Api\OrderCancellationController::class, 'cancelOrder']);
+    Route::post('orders/{order_id}/cancel', [OrderCancellationController::class, 'cancelOrder']);
 
     // Customer Bank Account Routes (Max 3 Limit)
-    Route::get('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'getBankAccounts']);
-    Route::post('customer/bank-accounts', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
-    Route::post('customer/save-bank-account', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'saveBankAccount']);
-    Route::put('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
-    Route::post('customer/bank-accounts/{id}/update', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'updateBankAccount']);
-    Route::delete('customer/bank-accounts/{id}', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
-    Route::post('customer/bank-accounts/{id}/delete', [\App\Http\Controllers\Api\Customer\CustomerBankAccountController::class, 'deleteBankAccount']);
+    Route::get('customer/bank-accounts', [CustomerBankAccountController::class, 'getBankAccounts']);
+    Route::post('customer/bank-accounts', [CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::post('customer/save-bank-account', [CustomerBankAccountController::class, 'saveBankAccount']);
+    Route::put('customer/bank-accounts/{id}', [CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::post('customer/bank-accounts/{id}/update', [CustomerBankAccountController::class, 'updateBankAccount']);
+    Route::delete('customer/bank-accounts/{id}', [CustomerBankAccountController::class, 'deleteBankAccount']);
+    Route::post('customer/bank-accounts/{id}/delete', [CustomerBankAccountController::class, 'deleteBankAccount']);
 
     // Customer Transaction History & Wallet Summary Routes
-    Route::get('customer/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
-    Route::get('customer/wallet/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
+    Route::get('customer/transactions', [CustomerTransactionController::class, 'transactionHistory']);
+    Route::get('customer/wallet/transactions', [CustomerTransactionController::class, 'transactionHistory']);
 
-    // Admin Refund Action APIs (Spec Doc Page 6)
-    Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete']);
-    Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject']);
+    // Dedicated Customer Refund Request & History Specification Routes
+    Route::post('customer/refunds/request', [CustomerRefundController::class, 'requestRefund']);
+    Route::post('orders/{order_id}/refund', [CustomerRefundController::class, 'requestRefund']);
+    Route::post('refunds/request', [CustomerRefundController::class, 'requestRefund']);
+    Route::get('customer/refunds', [CustomerRefundController::class, 'getRefunds']);
+    Route::get('refunds', [CustomerRefundController::class, 'getRefunds']);
+    Route::get('customer/refunds/{id}', [CustomerRefundController::class, 'showRefund']);
+
+    // Admin Refund Action APIs
+    Route::get('admin/refunds', [RefundAdminController::class, 'index']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/accept', [RefundAdminController::class, 'accept']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/complete', [RefundAdminController::class, 'complete']);
+    Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [RefundAdminController::class, 'reject']);
 });
 
 // Public Tap Webhook Routes (Both root and v1)
 Route::post('webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 
-// Root level aliases for payment endpoints
+// Root level aliases for payment and marketplace endpoints
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 });
+
+// Public alias for marketplace get-all
+Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+Route::get('v1/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
 
 // ================================================================== Protected Routes End==================================================================

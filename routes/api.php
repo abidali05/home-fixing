@@ -21,10 +21,26 @@ use App\Http\Controllers\Api\WithdrawalController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\TermsConditionController;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
+
+// Cache Clear Utility Route for Live Server Sync
+Route::get('v1/clear-cache', function () {
+    Artisan::call('optimize:clear');
+    return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+});
+Route::get('clear-cache', function () {
+    Artisan::call('optimize:clear');
+    return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+});
 
 // ===================================================================Public Routes Start===================================================================
 Route::prefix('v1')->group(function () {
+    Route::get('clear-cache', function () {
+        Artisan::call('optimize:clear');
+        return response()->json(['success' => true, 'message' => 'Application and route cache cleared successfully.']);
+    });
+
     Route::post('check-phone-availability', [AuthController::class, 'check_phone_availability']);
     Route::post('check-phone-registered', [AuthController::class, 'check_phone_registered']);
     Route::post('send-otp', [AuthController::class, 'send_otp']);

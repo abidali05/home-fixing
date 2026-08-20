@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\WithdrawalController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\PrivacyController;
 use App\Http\Controllers\TermsConditionController;
+use App\Http\Controllers\Admin\WithdrawalAdminController;
 use Illuminate\Support\Facades\Route;
 
 // ===================================================================Public Routes Start===================================================================
@@ -209,6 +210,11 @@ Route::post(
     // Customer Transaction History & Wallet Summary Routes
     Route::get('customer/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
     Route::get('customer/wallet/transactions', [\App\Http\Controllers\Api\Customer\CustomerTransactionController::class, 'transactionHistory']);
+
+    // Dedicated Standalone Customer Refund Request APIs (After Order Cancellation)
+    Route::post('customer/refunds/request', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
+    Route::post('orders/{order_id}/refund', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
+    Route::post('refunds/request', [\App\Http\Controllers\Api\Customer\CustomerRefundController::class, 'requestRefund']);
 
     // Admin Refund Action APIs (Spec Doc Page 6)
     Route::get('admin/refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index']);

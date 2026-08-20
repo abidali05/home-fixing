@@ -30,7 +30,7 @@ class CustomerTransactionController extends Controller
         $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
 
         $allCustomerRefunds = Refund::where('customer_id', $user->id)
-            ->orWhereIn('order_id', $customerOrderIds)
+        ->orWhereIn('order_id', $customerOrderIds)
             ->get()
             ->keyBy('order_id');
 

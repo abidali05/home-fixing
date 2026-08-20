@@ -50,4 +50,9 @@ return [
         'redirect_url' => env('TAP_REDIRECT_URL', 'https://admin.azhlksa.com/tap/redirect'),
     ],
 
+    'ibanapi' => [
+        'base_url' => env('IBANAPI_BASE_URL', 'https://api.ibanapi.com/v1'),
+        'key' => env('IBANAPI_KEY', ''),
+    ],
+
 ];

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\BankAccount;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 
 class CustomerBankAccountController extends Controller
@@ -20,11 +21,16 @@ class CustomerBankAccountController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $bankAccounts = BankAccount::where('user_id', $user->id)
-            ->where('account_type', 'customer')
-            ->orderByDesc('is_primary')
-            ->orderByDesc('id')
-            ->get();
+        $query = BankAccount::where('user_id', $user->id)
+            ->where('account_type', 'customer');
+
+        if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+            $query->orderByDesc('is_primary');
+        } elseif (Schema::hasColumn('bank_accounts', 'is_default')) {
+            $query->orderByDesc('is_default');
+        }
+
+        $bankAccounts = $query->orderByDesc('id')->get();
 
         return response()->json([
             'success' => true,
@@ -69,6 +75,7 @@ class CustomerBankAccountController extends Controller
             'account_number' => 'nullable|string|max:50',
             'swift_code' => 'nullable|string|max:20',
             'is_primary' => 'nullable|boolean',
+            'is_default' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -79,15 +86,25 @@ class CustomerBankAccountController extends Controller
             ], 422);
         }
 
-        $isPrimary = $request->boolean('is_primary', $existingCount === 0);
+        $isPrimary = $request->boolean('is_primary', $request->boolean('is_default', $existingCount === 0));
 
         if ($isPrimary) {
-            BankAccount::where('user_id', $user->id)
-                ->where('account_type', 'customer')
-                ->update(['is_primary' => false]);
+            $updateData = [];
+            if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+                $updateData['is_primary'] = false;
+            }
+            if (Schema::hasColumn('bank_accounts', 'is_default')) {
+                $updateData['is_default'] = false;
+            }
+
+            if (!empty($updateData)) {
+                BankAccount::where('user_id', $user->id)
+                    ->where('account_type', 'customer')
+                    ->update($updateData);
+            }
         }
 
-        $bankAccount = BankAccount::create([
+        $createData = [
             'user_id' => $user->id,
             'account_type' => 'customer',
             'bank_name' => trim($request->bank_name),
@@ -95,8 +112,16 @@ class CustomerBankAccountController extends Controller
             'iban' => strtoupper(trim($request->iban)),
             'account_number' => $request->account_number ? trim($request->account_number) : null,
             'swift_code' => $request->swift_code ? strtoupper(trim($request->swift_code)) : null,
-            'is_primary' => $isPrimary,
-        ]);
+        ];
+
+        if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+            $createData['is_primary'] = $isPrimary;
+        }
+        if (Schema::hasColumn('bank_accounts', 'is_default')) {
+            $createData['is_default'] = $isPrimary;
+        }
+
+        $bankAccount = BankAccount::create($createData);
 
         return response()->json([
             'success' => true,
@@ -135,6 +160,7 @@ class CustomerBankAccountController extends Controller
             'account_number' => 'nullable|string|max:50',
             'swift_code' => 'nullable|string|max:20',
             'is_primary' => 'nullable|boolean',
+            'is_default' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -145,20 +171,40 @@ class CustomerBankAccountController extends Controller
             ], 422);
         }
 
-        if ($request->has('is_primary') && $request->boolean('is_primary')) {
-            BankAccount::where('user_id', $user->id)
-                ->where('account_type', 'customer')
-                ->update(['is_primary' => false]);
+        $wantsPrimary = $request->has('is_primary') ? $request->boolean('is_primary') : ($request->has('is_default') ? $request->boolean('is_default') : false);
+
+        if ($wantsPrimary) {
+            $resetData = [];
+            if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+                $resetData['is_primary'] = false;
+            }
+            if (Schema::hasColumn('bank_accounts', 'is_default')) {
+                $resetData['is_default'] = false;
+            }
+            if (!empty($resetData)) {
+                BankAccount::where('user_id', $user->id)
+                    ->where('account_type', 'customer')
+                    ->update($resetData);
+            }
         }
 
-        $bankAccount->update(array_filter([
-            'bank_name' => $request->has('bank_name') ? trim($request->bank_name) : null,
-            'account_title' => $request->has('account_title') ? trim($request->account_title) : null,
-            'iban' => $request->has('iban') ? strtoupper(trim($request->iban)) : null,
-            'account_number' => $request->has('account_number') ? trim($request->account_number) : null,
-            'swift_code' => $request->has('swift_code') ? strtoupper(trim($request->swift_code)) : null,
-            'is_primary' => $request->has('is_primary') ? $request->boolean('is_primary') : null,
-        ], fn($v) => $v !== null));
+        $updateData = [];
+        if ($request->has('bank_name')) $updateData['bank_name'] = trim($request->bank_name);
+        if ($request->has('account_title')) $updateData['account_title'] = trim($request->account_title);
+        if ($request->has('iban')) $updateData['iban'] = strtoupper(trim($request->iban));
+        if ($request->has('account_number')) $updateData['account_number'] = trim($request->account_number);
+        if ($request->has('swift_code')) $updateData['swift_code'] = strtoupper(trim($request->swift_code));
+
+        if ($request->has('is_primary') || $request->has('is_default')) {
+            if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+                $updateData['is_primary'] = $wantsPrimary;
+            }
+            if (Schema::hasColumn('bank_accounts', 'is_default')) {
+                $updateData['is_default'] = $wantsPrimary;
+            }
+        }
+
+        $bankAccount->update($updateData);
 
         return response()->json([
             'success' => true,
@@ -190,7 +236,7 @@ class CustomerBankAccountController extends Controller
             ], 404);
         }
 
-        $wasPrimary = $bankAccount->is_primary;
+        $wasPrimary = ($bankAccount->is_primary ?? false) || ($bankAccount->is_default ?? false);
         $bankAccount->delete();
 
         if ($wasPrimary) {
@@ -199,7 +245,16 @@ class CustomerBankAccountController extends Controller
                 ->first();
 
             if ($nextPrimary) {
-                $nextPrimary->update(['is_primary' => true]);
+                $setPrimaryData = [];
+                if (Schema::hasColumn('bank_accounts', 'is_primary')) {
+                    $setPrimaryData['is_primary'] = true;
+                }
+                if (Schema::hasColumn('bank_accounts', 'is_default')) {
+                    $setPrimaryData['is_default'] = true;
+                }
+                if (!empty($setPrimaryData)) {
+                    $nextPrimary->update($setPrimaryData);
+                }
             }
         }
 

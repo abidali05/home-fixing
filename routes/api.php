@@ -47,7 +47,15 @@ Route::prefix('v1')->group(function () {
     Route::get('cities', [GeneralContoller::class, 'cities']);
     Route::get('faqs', [GeneralContoller::class, 'faqs_list']);
     Route::get('support-items', [GeneralContoller::class, 'support_list']);
+
+    // Public Marketplace Catalog Routes
     Route::get('marketplace/active-campaigns', [CampaignController::class, 'activeCampaigns']);
+    Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+    Route::get('marketplace/get-detail/{id}', [AuthController::class, 'getMarketplaceDetail']);
+    Route::get('marketplace/products', [AuthController::class, 'getProducts']);
+    Route::get('product/{id}', [AuthController::class, 'getProductDetail']);
+    Route::get('marketplace/get-campaigns', [CampaignController::class, 'index']);
+
     Route::post('marketplace/store-visit', [AuthController::class, 'recordMarketplaceStoreVisit']);
     Route::post('marketplace/product-view', [AuthController::class, 'recordProductView']);
 
@@ -241,11 +249,15 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 Route::post('webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 
-// Root level aliases for payment endpoints
+// Root level aliases for payment and marketplace endpoints
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
 });
+
+// Public alias for marketplace get-all
+Route::get('marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
+Route::get('v1/marketplace/get-all', [AuthController::class, 'getAllMarketplace']);
 
 // ================================================================== Protected Routes End==================================================================

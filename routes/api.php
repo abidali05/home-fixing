@@ -210,6 +210,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('marketplace/checkout/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
     Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
+    Route::get('marketplace/payments/{payment}/status', [MarketplacePaymentController::class, 'status']);
 
     // Withdrawal & Transaction History Routes
     Route::post('withdrawals/request', [WithdrawalController::class, 'requestWithdrawal']);

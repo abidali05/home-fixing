@@ -278,4 +278,57 @@ class MarketplacePaymentController extends Controller
             return response()->json(['success' => false, 'message' => 'Payment processing failed: ' . $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Check Marketplace Payment Status & Fetch Created Order after Webview Payment Completion
+     * GET /api/v1/marketplace/payments/{paymentId}/status
+     */
+    public function status(Request $request, $paymentId)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+            }
+
+            $payment = Payment::where('id', $paymentId)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if (!$payment) {
+                return response()->json(['success' => false, 'message' => 'Payment record not found.'], 404);
+            }
+
+            // Verify live status from Tap Payments if not yet captured
+            if ($payment->tap_charge_id && $payment->status !== 'captured') {
+                try {
+                    $this->tapPaymentService->verifyCharge($payment->tap_charge_id, $payment);
+                    $payment->refresh();
+                } catch (\Throwable $e) {
+                    Log::warning("MarketplacePaymentController status check exception: " . $e->getMessage());
+                }
+            }
+
+            $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Marketplace payment status retrieved successfully.',
+                'data' => [
+                    'payment_id' => (int) $payment->id,
+                    'status' => strtolower($payment->status),
+                    'amount' => (float) $payment->amount,
+                    'currency' => $payment->currency ?: 'SAR',
+                    'tap_charge_id' => $payment->tap_charge_id,
+                    'marketplace_order_id' => $order ? (int) $order->id : null,
+                    'order_number' => $order ? $order->order_number : null,
+                    'order' => $order,
+                ]
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('MarketplacePaymentController: Error checking payment status - ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to check payment status.'], 500);
+        }
+    }
 }

@@ -185,6 +185,8 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('marketplace/bank-accounts', [MarketplaceBankAccountController::class, 'saveBankAccount']);
     Route::post('marketplace/bank-accounts/{id}/update', [MarketplaceBankAccountController::class, 'updateBankAccount']);
     Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
+    Route::delete('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'deleteBankAccount']);
+    Route::post('marketplace/bank-accounts/{id}/delete', [MarketplaceBankAccountController::class, 'deleteBankAccount']);
     // ================================================================== Marketplace Routes End=================================================================
 
 

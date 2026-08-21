@@ -96,6 +96,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('service-request-details/{id}', [HiringController::class, 'service_request_details']);
     Route::get('orders/{id}/receipt', [OrdersController::class, 'getReceipt']);
     Route::get('marketplace/orders/{id}/receipt', [OrdersController::class, 'getMarketplaceReceipt']);
+    Route::get('marketplace/order/{id}/receipt', [OrdersController::class, 'getMarketplaceReceipt']);
 
     Route::get('track-order/{id}', [GeneralContoller::class, 'track_order']);
     Route::post('cancel-order/{id}', [GeneralContoller::class, 'cancel_order']);

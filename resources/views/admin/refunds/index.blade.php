@@ -57,12 +57,19 @@
                                                 <small class="text-muted" title="Saudi Arabia Time (Asia/Riyadh)">{{ $saudiDate }}</small>
                                             </td>
                                             <td>
-                                                <span class="badge bg-outline-info text-info">Order #{{ $refund->order_id }}</span>
+                                                @if ($refund->marketplace_order_id)
+                                                    <span class="badge bg-purple text-white">Marketplace Order #{{ $refund->marketplace_order_id }}</span>
+                                                @else
+                                                    <span class="badge bg-outline-info text-info">Service Order #{{ $refund->order_id }}</span>
+                                                @endif
                                                 @if ($order && $order->cancelled_by_type)
                                                     <small class="d-block text-muted">By: <strong>{{ ucfirst($order->cancelled_by_type) }}</strong></small>
                                                 @endif
                                                 @if ($order && $order->cancellation_reason)
                                                     <small class="d-block text-muted" style="max-width: 180px; word-wrap: break-word;"><em>"{{ $order->cancellation_reason }}"</em></small>
+                                                @endif
+                                                @if ($refund->admin_notes)
+                                                    <small class="d-block text-muted" style="max-width: 180px; word-wrap: break-word;"><em>"{{ $refund->admin_notes }}"</em></small>
                                                 @endif
                                             </td>
                                             <td>

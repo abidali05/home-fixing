@@ -2,10 +2,17 @@
 
 namespace App\Services\Payment;
 
+use App\Models\Cart;
+use App\Models\MarketplaceOrder;
+use App\Models\MarketplaceOrderItem;
 use App\Models\Payment;
+use App\Models\Product;
+use App\Models\User;
 use App\Services\Job\HireProviderService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class TapPaymentService
 {
@@ -19,10 +26,6 @@ class TapPaymentService
 
     /**
      * Creates a charge using the Tap Payments API v2 with a client token.
-     *
-     * @param Payment $payment
-     * @param string $token
-     * @return array
      */
     public function createCharge(Payment $payment, string $token = 'src_all'): array
     {
@@ -102,7 +105,7 @@ class TapPaymentService
         if ($response->failed()) {
             $errorMessage = $responseData['errors'][0]['description'] ?? ($responseData['message'] ?? 'Failed to communicate with Tap Payments.');
             Log::error("TapPaymentService: Charge API request failed for payment #{$payment->id}: {$errorMessage}");
-            
+
             $payment->update([
                 'status' => 'failed',
                 'gateway_response' => $responseData,
@@ -115,9 +118,9 @@ class TapPaymentService
     }
 
     /**
-     * Creates a charge request on Tap Payments API for a Marketplace Order.
+     * Creates a charge request on Tap Payments API for a Marketplace Order or Cart Checkout.
      */
-    public function createMarketplaceCharge(Payment $payment, \App\Models\MarketplaceOrder $order, string $token = 'src_all'): array
+    public function createMarketplaceCharge(Payment $payment, ?MarketplaceOrder $order = null, string $token = 'src_all'): array
     {
         $secretKey = config('services.tap.secret_key');
         if (empty($secretKey)) {
@@ -127,27 +130,30 @@ class TapPaymentService
         $webhookUrl = config('services.tap.webhook_url') ?: 'https://admin.azhlksa.com/api/v1/webhooks/tap';
         $redirectUrl = config('services.tap.redirect_url') ?: 'https://admin.azhlksa.com/tap/redirect';
 
-        $user = $payment->user ?: \App\Models\User::find($payment->user_id);
+        $user = $payment->user ?: User::find($payment->user_id);
         $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '');
         if (strlen($phoneDigits) > 9) {
             $phoneDigits = substr($phoneDigits, -9);
         }
+
+        $orderNumber = $order ? $order->order_number : ("CART-{$payment->id}");
 
         $payload = [
             'amount' => (float) $payment->amount,
             'currency' => strtoupper($payment->currency ?: 'SAR'),
             'threeDSecure' => true,
             'save_card' => false,
-            'description' => "Payment for Marketplace Order #{$order->order_number}",
+            'description' => $order ? "Payment for Marketplace Order #{$order->order_number}" : "Payment for Marketplace Cart Checkout #{$payment->id}",
             'statement_descriptor' => "AZHL MARKETPLACE",
             'metadata' => [
                 'payment_id' => (string) $payment->id,
-                'marketplace_order_id' => (string) $order->id,
+                'marketplace_order_id' => $order ? (string) $order->id : '',
                 'user_id' => (string) $payment->user_id,
+                'type' => 'marketplace_checkout',
             ],
             'reference' => [
                 'transaction' => "MKT-{$payment->id}",
-                'order' => $order->order_number,
+                'order' => $orderNumber,
             ],
             'receipt' => [
                 'email' => true,
@@ -172,7 +178,7 @@ class TapPaymentService
             ],
         ];
 
-        Log::info("TapPaymentService: Initiating marketplace charge request for payment #{$payment->id} / order #{$order->id}", ['payload' => $payload]);
+        Log::info("TapPaymentService: Initiating marketplace charge request for payment #{$payment->id}", ['payload' => $payload]);
 
         $response = Http::withToken($secretKey)
             ->acceptJson()
@@ -195,9 +201,6 @@ class TapPaymentService
 
     /**
      * Retrieves charge details directly from Tap Payments API.
-     *
-     * @param string $chargeId
-     * @return array
      */
     public function retrieveCharge(string $chargeId): array
     {
@@ -221,11 +224,7 @@ class TapPaymentService
     }
 
     /**
-     * Verifies a charge status and executes provider hiring if status is CAPTURED.
-     *
-     * @param string $chargeId
-     * @param Payment $payment
-     * @return bool
+     * Verifies a charge status and executes provider hiring or marketplace order creation if status is CAPTURED.
      */
     public function verifyCharge(string $chargeId, Payment $payment): bool
     {
@@ -245,11 +244,12 @@ class TapPaymentService
             $payment->update([
                 'status' => 'captured',
                 'tap_charge_id' => $chargeId,
-                'gateway_response' => $chargeData,
+                'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
             ]);
 
+            // If order already existed
             if ($payment->marketplace_order_id) {
-                $order = \App\Models\MarketplaceOrder::find($payment->marketplace_order_id);
+                $order = MarketplaceOrder::find($payment->marketplace_order_id);
                 if ($order) {
                     $order->update([
                         'status' => 'confirmed',
@@ -257,6 +257,12 @@ class TapPaymentService
                     ]);
                 }
                 return true;
+            }
+
+            // If payment was for Cart Checkout (Order not created yet), convert Cart to Order NOW!
+            if (!$payment->job_id && !$payment->marketplace_order_id) {
+                $createdOrder = $this->convertCartToMarketplaceOrder($payment);
+                return (bool) $createdOrder;
             }
 
             // Hire Provider
@@ -267,7 +273,7 @@ class TapPaymentService
             $payment->update([
                 'status' => 'failed',
                 'tap_charge_id' => $chargeId,
-                'gateway_response' => $chargeData,
+                'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
             ]);
 
             return false;
@@ -277,17 +283,94 @@ class TapPaymentService
         $payment->update([
             'status' => 'processing',
             'tap_charge_id' => $chargeId,
-            'gateway_response' => $chargeData,
+            'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
         ]);
 
         return false;
     }
 
     /**
+     * Converts a customer's cart into a real MarketplaceOrder upon successful payment charge.
+     */
+    public function convertCartToMarketplaceOrder(Payment $payment): ?MarketplaceOrder
+    {
+        if ($payment->marketplace_order_id) {
+            return MarketplaceOrder::find($payment->marketplace_order_id);
+        }
+
+        $userId = $payment->user_id;
+        $user = User::find($userId);
+        if (!$user) {
+            return null;
+        }
+
+        $meta = is_array($payment->gateway_response) ? ($payment->gateway_response['checkout_metadata'] ?? []) : [];
+
+        $cartItems = Cart::with('product')
+            ->where('user_id', $userId)
+            ->get();
+
+        if ($cartItems->isEmpty() && empty($meta['cart_items'])) {
+            Log::warning("convertCartToMarketplaceOrder: No cart items found for user {$userId}");
+            return null;
+        }
+
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
+            $subtotal = (float) ($meta['subtotal'] ?? ($cartItems->isNotEmpty() ? $cartItems->sum('total_price') : $payment->amount));
+            $shippingCost = (float) ($meta['shipping_cost'] ?? 0);
+            $taxAmount = (float) ($meta['tax_amount'] ?? 0);
+            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $taxAmount));
+
+            $order = MarketplaceOrder::create([
+                'user_id' => $user->id,
+                'order_number' => 'ORD-' . now()->format('ymd') . Str::upper(Str::random(4)),
+                'shipping_address' => $meta['shipping_address'] ?? ($user->address ?? 'Default Address'),
+                'subtotal' => $subtotal,
+                'shipping_cost' => $shippingCost,
+                'tax_amount' => $taxAmount,
+                'discount_price' => 0,
+                'total_amount' => $totalAmount,
+                'payment_method' => 'tap',
+                'notes' => $meta['notes'] ?? null,
+                'status' => 'confirmed',
+            ]);
+
+            if ($cartItems->isNotEmpty()) {
+                $productIds = $cartItems->pluck('product_id')->unique()->values();
+                $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
+
+                foreach ($cartItems as $cartItem) {
+                    $product = $products->get($cartItem->product_id);
+                    if ($product) {
+                        MarketplaceOrderItem::create([
+                            'marketplace_order_id' => $order->id,
+                            'product_id' => $product->id,
+                            'shop_id' => !empty($product->user_id) ? $product->user_id : null,
+                            'product_name' => $product->product_name,
+                            'quantity' => $cartItem->quantity,
+                            'base_price' => $cartItem->base_price,
+                            'total_price' => $cartItem->total_price,
+                        ]);
+                    }
+                }
+
+                // Clear customer cart after order is successfully placed & paid!
+                Cart::where('user_id', $user->id)->delete();
+            }
+
+            $payment->update([
+                'marketplace_order_id' => $order->id,
+                'status' => 'captured',
+            ]);
+
+            Log::info("convertCartToMarketplaceOrder: Successfully created MarketplaceOrder #{$order->id} ({$order->order_number}) for payment #{$payment->id}");
+
+            return $order;
+        });
+    }
+
+    /**
      * Idempotently handles incoming Tap webhook notifications.
-     *
-     * @param array $payload
-     * @return bool
      */
     public function handleWebhook(array $payload): bool
     {
@@ -315,13 +398,13 @@ class TapPaymentService
             return false;
         }
 
-        // Idempotency check: If already captured, log & return true
-        if ($payment->status === 'captured') {
+        // Idempotency check: If already captured and order created, return true
+        if ($payment->status === 'captured' && $payment->marketplace_order_id) {
             Log::info("TapPaymentService: Payment #{$payment->id} is already captured. Webhook execution skipped.");
             return true;
         }
 
-        // Always retrieve fresh charge details directly from Tap API for security verification
+        // Retrieve fresh charge details directly from Tap API for security verification
         return $this->verifyCharge($chargeId, $payment);
     }
 }

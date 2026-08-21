@@ -204,6 +204,8 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('payments/callback', [PaymentController::class, 'callback']);
 
     // Marketplace Tap Payment Routes
+    Route::post('marketplace/cart/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
+    Route::post('marketplace/checkout/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
     Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
 

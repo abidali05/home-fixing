@@ -32,7 +32,7 @@ class MarketplacePaymentController extends Controller
         try {
             $user = auth('sanctum')->user();
             if (!$user) {
-                return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+                return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
             }
 
             $validator = Validator::make($request->all(), [
@@ -43,7 +43,7 @@ class MarketplacePaymentController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json(['status' => 422, 'message' => 'Validation failed.', 'errors' => $validator->errors()], 422);
+                return response()->json(['success' => false, 'message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
             }
 
             $cartItems = Cart::with('product')
@@ -51,13 +51,13 @@ class MarketplacePaymentController extends Controller
                 ->get();
 
             if ($cartItems->isEmpty()) {
-                return response()->json(['status' => 400, 'message' => 'Cart is empty.'], 400);
+                return response()->json(['success' => false, 'message' => 'Cart is empty.'], 400);
             }
 
             $invalidCartItems = $cartItems->filter(fn($ci) => !$ci->product);
             if ($invalidCartItems->isNotEmpty()) {
                 Cart::whereIn('id', $invalidCartItems->pluck('id'))->delete();
-                return response()->json(['status' => 422, 'message' => 'Some cart items were invalid and have been removed. Please review your cart.'], 422);
+                return response()->json(['success' => false, 'message' => 'Some cart items were invalid and have been removed. Please review your cart.'], 422);
             }
 
             $subtotal = (float) $cartItems->sum('total_price');
@@ -77,7 +77,7 @@ class MarketplacePaymentController extends Controller
             // Create Payment session for Cart Checkout
             $payment = Payment::create([
                 'user_id' => $user->id,
-                'marketplace_order_id' => null, // Order will be created ONLY after payment is captured!
+                'marketplace_order_id' => null, // Order created ONLY after payment capture
                 'job_id' => null,
                 'bid_id' => null,
                 'provider_id' => null,
@@ -91,7 +91,7 @@ class MarketplacePaymentController extends Controller
             ]);
 
             return response()->json([
-                'status' => 200,
+                'success' => true,
                 'message' => 'Marketplace Cart payment session initiated successfully.',
                 'data' => [
                     'payment_id' => (int) $payment->id,
@@ -107,7 +107,7 @@ class MarketplacePaymentController extends Controller
 
         } catch (\Throwable $e) {
             Log::error('MarketplacePaymentController: Error initiating cart payment - ' . $e->getMessage());
-            return response()->json(['status' => 500, 'message' => 'Failed to initiate cart payment.'], 500);
+            return response()->json(['success' => false, 'message' => 'Failed to initiate cart payment.'], 500);
         }
     }
 
@@ -120,7 +120,7 @@ class MarketplacePaymentController extends Controller
         try {
             $user = auth('sanctum')->user();
             if (!$user) {
-                return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+                return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
             }
 
             $order = MarketplaceOrder::where('id', $orderId)
@@ -128,11 +128,11 @@ class MarketplacePaymentController extends Controller
                 ->first();
 
             if (!$order) {
-                return response()->json(['status' => 404, 'message' => 'Marketplace Order not found.'], 404);
+                return response()->json(['success' => false, 'message' => 'Marketplace Order not found.'], 404);
             }
 
             if (in_array(strtolower($order->status), ['completed', 'delivered', 'cancelled'])) {
-                return response()->json(['status' => 400, 'message' => 'This order is no longer available for payment.'], 400);
+                return response()->json(['success' => false, 'message' => 'This order is no longer available for payment.'], 400);
             }
 
             $payment = Payment::firstOrCreate(
@@ -152,7 +152,7 @@ class MarketplacePaymentController extends Controller
             );
 
             return response()->json([
-                'status' => 200,
+                'success' => true,
                 'message' => 'Marketplace Order payment session initiated.',
                 'data' => [
                     'payment_id' => (int) $payment->id,
@@ -165,12 +165,12 @@ class MarketplacePaymentController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('MarketplacePaymentController: Error initiating payment - ' . $e->getMessage());
-            return response()->json(['status' => 500, 'message' => 'Failed to initiate payment.'], 500);
+            return response()->json(['success' => false, 'message' => 'Failed to initiate payment.'], 500);
         }
     }
 
     /**
-     * Step 2: Charge Marketplace Payment & Create Order on Payment Capture
+     * Step 2: Charge Marketplace Payment (Works WITH or WITHOUT token!)
      * POST /api/v1/marketplace/payments/charge
      */
     public function charge(ProcessChargeRequest $request)
@@ -178,20 +178,22 @@ class MarketplacePaymentController extends Controller
         try {
             $user = auth('sanctum')->user();
             $paymentId = $request->input('payment_id');
-            $token = $request->input('token', 'src_all') ?: 'src_all';
+
+            // If token is missing, default to 'src_all' (Tap Checkout Webview with Mada/Visa/Mastercard/ApplePay)
+            $token = $request->input('token') ?: 'src_all';
 
             $payment = Payment::where('id', $paymentId)
                 ->where('user_id', $user->id)
                 ->first();
 
             if (!$payment) {
-                return response()->json(['status' => 404, 'message' => 'Payment record not found.'], 404);
+                return response()->json(['success' => false, 'message' => 'Payment record not found.'], 404);
             }
 
             if ($payment->status === 'captured') {
                 $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
                 return response()->json([
-                    'status' => 200,
+                    'success' => true,
                     'message' => 'Payment is already captured and order created.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
@@ -199,6 +201,7 @@ class MarketplacePaymentController extends Controller
                         'order_number' => $order ? $order->order_number : null,
                         'status' => 'captured',
                         'tap_charge_id' => $payment->tap_charge_id,
+                        'redirect_url' => null,
                     ]
                 ], 200);
             }
@@ -221,10 +224,10 @@ class MarketplacePaymentController extends Controller
                 ]);
             }
 
-            // 3DS Authentication required
+            // 3DS Authentication / Tap Checkout Webview Required
             if (!empty($redirectUrl) && $chargeStatus !== 'CAPTURED') {
                 return response()->json([
-                    'status' => 200,
+                    'success' => true,
                     'message' => '3DS Authentication required. Please complete authentication via the redirect URL.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
@@ -248,7 +251,7 @@ class MarketplacePaymentController extends Controller
                 }
 
                 return response()->json([
-                    'status' => 200,
+                    'success' => true,
                     'message' => 'Payment processed successfully and Marketplace Order created.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
@@ -258,20 +261,21 @@ class MarketplacePaymentController extends Controller
                         'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
                         'status' => 'captured',
                         'tap_charge_id' => $tapChargeId,
+                        'redirect_url' => null,
                         'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
 
             return response()->json([
-                'status' => 400,
+                'success' => false,
                 'message' => $chargeResponse['response']['message'] ?? 'Payment failed or declined.',
                 'data' => $chargeResponse
             ], 400);
 
         } catch (\Throwable $e) {
             Log::error('MarketplacePaymentController: Error processing charge - ' . $e->getMessage());
-            return response()->json(['status' => 500, 'message' => 'Payment processing failed: ' . $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Payment processing failed: ' . $e->getMessage()], 500);
         }
     }
 }

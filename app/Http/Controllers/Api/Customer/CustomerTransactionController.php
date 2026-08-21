@@ -26,57 +26,56 @@ class CustomerTransactionController extends Controller
             $filter = 'all';
         }
 
-        // Fetch all customer orders & refunds for cross-referencing
-        $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
+        // Fetch all customer orders & refunds for fast cross-referencing
+        $customerOrders = Orders::with(['job.category'])
+            ->where('user_id', $user->id)
+            ->get();
+
+        $customerOrderIds = $customerOrders->pluck('id')->toArray();
+        $customerJobIds = $customerOrders->pluck('job_id')->filter()->toArray();
 
         $allCustomerRefunds = Refund::where('customer_id', $user->id)
-        ->orWhereIn('order_id', $customerOrderIds)
+            ->orWhereIn('order_id', $customerOrderIds)
             ->get()
             ->keyBy('order_id');
 
-        // 1. Calculate Financial Summary
-        $capturedPaymentsSum = (float) Payment::where('user_id', $user->id)
-            ->where('status', 'captured')
-            ->sum('amount');
-
-        if ($capturedPaymentsSum == 0) {
-            $capturedPaymentsSum = (float) Orders::where('user_id', $user->id)
-                ->where('paid_to_system', 1)
-                ->sum('price');
-        }
-
-        $completedRefundsSum = (float) Refund::where(function($q) use ($user, $customerOrderIds) {
-                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
-            })
-            ->whereIn('status', ['refunded', 'completed', 'paid'])
-            ->sum('amount');
-
-        $pendingRefundsSum = (float) Refund::where(function($q) use ($user, $customerOrderIds) {
-                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
-            })
-            ->whereIn('status', ['requested', 'processing', 'pending', 'accepted'])
-            ->sum('amount');
-
         $transactions = collect();
         $processedOrderIds = [];
+        $processedJobIds = [];
 
-        // 2. Debit Transactions (Customer Order Payments / Spends)
+        // 1. Debit Transactions (Actual Customer Payments / Spends)
         if (in_array($filter, ['all', 'debit', 'payment', 'spend'])) {
             $payments = Payment::with(['job.category', 'marketplaceOrder'])
                 ->where('user_id', $user->id)
+                ->whereIn('status', ['captured', 'completed', 'paid', 'success'])
                 ->get();
 
             foreach ($payments as $p) {
-                $job = $p->job;
-                $mkOrder = $p->marketplaceOrder;
-                $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: ($mkOrder ? 'Marketplace Product Order' : 'Service Order'));
-                $orderId = $job ? $job->id : ($mkOrder ? $mkOrder->id : $p->id);
-                $orderNo = $mkOrder && $mkOrder->order_number ? $mkOrder->order_number : ('ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT));
+                // Find actual Order model for this payment
+                $order = null;
+                if ($p->job_id) {
+                    $order = $customerOrders->where('job_id', $p->job_id)->first();
+                }
+                if (!$order && $p->marketplace_order_id) {
+                    $order = $customerOrders->where('id', $p->marketplace_order_id)->first();
+                }
 
-                $processedOrderIds[] = (int) $orderId;
+                $job = $p->job ?: optional($order)->job;
+                $mkOrder = $p->marketplaceOrder;
+
+                $orderId = $order ? $order->id : ($job ? $job->id : ($mkOrder ? $mkOrder->id : $p->id));
+                $orderNo = $order ? ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)) : ($mkOrder && $mkOrder->order_number ? $mkOrder->order_number : ('ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT)));
+                $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: ($mkOrder ? 'Marketplace Product Order' : 'Service Order'));
+
+                if ($order) {
+                    $processedOrderIds[] = (int) $order->id;
+                }
+                if ($p->job_id) {
+                    $processedJobIds[] = (int) $p->job_id;
+                }
 
                 // Check if this order has an associated Refund Request
-                $associatedRefund = $allCustomerRefunds->get($orderId);
+                $associatedRefund = $order ? $allCustomerRefunds->get($order->id) : null;
                 $refundData = null;
 
                 if ($associatedRefund) {
@@ -95,7 +94,7 @@ class CustomerTransactionController extends Controller
                     $refundData = [
                         'refund_id' => (int) $associatedRefund->id,
                         'refund_no' => $associatedRefund->refund_no ?: ('REF-' . str_pad($associatedRefund->id, 6, '0', STR_PAD_LEFT)),
-                        'order_id' => (int) $orderId,
+                        'order_id' => (int) ($order ? $order->id : 0),
                         'order_no' => $orderNo,
                         'amount' => round((float) ($associatedRefund->amount ?? 0), 2),
                         'currency' => strtoupper($associatedRefund->currency ?: 'SAR'),
@@ -129,14 +128,11 @@ class CustomerTransactionController extends Controller
                 ]);
             }
 
-            // Fallback for Customer Paid Orders not in Payment table
-            $paidOrders = Orders::with(['job.category'])
-                ->where('user_id', $user->id)
-                ->where('paid_to_system', 1)
-                ->get();
+            // Fallback for Customer Paid Orders with paid_to_system = 1 NOT in Payment table
+            $paidOrders = $customerOrders->where('paid_to_system', 1);
 
             foreach ($paidOrders as $ord) {
-                if (in_array((int) $ord->id, $processedOrderIds)) {
+                if (in_array((int) $ord->id, $processedOrderIds) || ($ord->job_id && in_array((int) $ord->job_id, $processedJobIds))) {
                     continue;
                 }
 
@@ -197,10 +193,10 @@ class CustomerTransactionController extends Controller
             }
         }
 
-        // 3. Credit Transactions (Customer Refund Requests & Settled Refunds)
+        // 2. Credit Transactions (Customer Refund Requests & Settled Refunds)
         if (in_array($filter, ['all', 'credit', 'refund'])) {
             foreach ($allCustomerRefunds as $refundItem) {
-                $order = $refundItem->order;
+                $order = $refundItem->order ?: $customerOrders->where('id', $refundItem->order_id)->first();
                 $job = optional($order)->job;
                 $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: 'Cancelled Order Refund');
                 $rawStatus = strtolower($refundItem->status ?: 'requested');
@@ -242,7 +238,18 @@ class CustomerTransactionController extends Controller
             }
         }
 
+        // Sort by created_at descending
         $sorted = $transactions->sortByDesc('created_at')->values();
+
+        // Recalculate accurate financial summary totals from valid transactions
+        $totalDebitSum = $sorted->where('type', 'debit')->sum('amount');
+        $totalCreditSum = $sorted->where('type', 'credit')->filter(function ($t) {
+            return isset($t['refund']['status']) && $t['refund']['status'] === 'completed';
+        })->sum('amount');
+
+        $pendingRefundsSum = $sorted->where('type', 'credit')->filter(function ($t) {
+            return isset($t['refund']['status']) && in_array($t['refund']['status'], ['requested', 'accepted']);
+        })->sum('amount');
 
         $page = (int) $request->input('page', 1);
         $perPage = (int) $request->input('per_page', 20);
@@ -257,7 +264,7 @@ class CustomerTransactionController extends Controller
             'message' => 'Customer transactions retrieved successfully.',
             'data' => [
                 'summary' => [
-                    'total_debit' => round($capturedPaymentsSum, 2),
+                    'total_debit' => round($totalDebitSum, 2),
                     'total_credit' => round($completedRefundsSum, 2),
                     'pending_refunds' => round($pendingRefundsSum, 2),
                     'currency' => 'SAR',

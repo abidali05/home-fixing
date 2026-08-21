@@ -252,7 +252,8 @@ class TapPaymentService
                 $order = MarketplaceOrder::find($payment->marketplace_order_id);
                 if ($order) {
                     $order->update([
-                        'status' => 'confirmed',
+                        'status' => 'accept',
+                        'payment_status' => 'paid',
                         'payment_method' => 'tap',
                     ]);
                 }
@@ -331,8 +332,9 @@ class TapPaymentService
                 'discount_price' => 0,
                 'total_amount' => $totalAmount,
                 'payment_method' => 'tap',
+                'payment_status' => 'paid',
                 'notes' => $meta['notes'] ?? null,
-                'status' => 'confirmed',
+                'status' => 'accept',
             ]);
 
             if ($cartItems->isNotEmpty()) {

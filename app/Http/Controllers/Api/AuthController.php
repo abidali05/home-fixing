@@ -2775,22 +2775,28 @@ public function verify_otp(Request $request)
                 });
 
             $totalOrdersReceived = (clone $orderQuery)->count();
-            $totalCompletedOrders = (clone $orderQuery)->where('status', 'completed')->count();
+
+            $totalCompletedOrders = (clone $orderQuery)
+                ->where(function ($q) {
+                    $q->whereIn('status', ['completed', 'mark_as_delivered', 'accept', 'processing', 'mark_as_shipped'])
+                      ->orWhere('payment_status', 'paid');
+                })
+                ->count();
 
             $totalSales = MarketplaceOrderItem::query()
                 ->where('shop_id', $user->id)
                 ->whereHas('order', function ($query) {
-                    $query->where('status', 'completed');
+                    $query->whereIn('status', ['accept', 'confirmed', 'processing', 'completed', 'mark_as_shipped', 'mark_as_delivered'])
+                          ->orWhere('payment_status', 'paid');
                 })
                 ->sum('total_price');
 
-            $pendingOrders = MarketplaceOrder::with(['items.product'])
-                ->where('status', 'pending')
+            $recentOrders = MarketplaceOrder::with(['items.product'])
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id);
                 })
                 ->latest()
-                ->limit(4)
+                ->limit(10)
                 ->get()
                 ->map(function ($order) use ($user) {
                     $item = $order->items->firstWhere('shop_id', $user->id);
@@ -2803,7 +2809,9 @@ public function verify_otp(Request $request)
                         'title' => $item?->product_name ?? $product?->product_name ?? 'Product',
                         'order_number' => $order->order_number ? '#' . $order->order_number : '#' . $order->id,
                         'status' => $order->status,
+                        'payment_status' => $order->payment_status ?: ((int)$order->paid_to_system === 1 ? 'paid' : 'pending'),
                         'time' => Carbon::parse($order->created_at)->format('h:i A'),
+                        'created_at' => $order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'order_id' => $order?->id,
                         'total_amount' => (float) ($order?->total_amount ?? 0),
                     ];
@@ -2812,10 +2820,11 @@ public function verify_otp(Request $request)
 
             return $this->success([
                 'total_products_count' => $totalProductsCount,
-                'total_sales' => (float) $totalSales,
+                'total_sales' => round((float) $totalSales, 2),
                 'total_orders_received' => $totalOrdersReceived,
                 'total_completed_orders' => $totalCompletedOrders,
-                'pending_orders' => $pendingOrders,
+                'pending_orders' => $recentOrders,
+                'recent_orders' => $recentOrders,
             ], 'Dashboard data fetched successfully');
         } catch (\Throwable $e) {
             Log::error('Error fetching marketplace dashboard: ' . $e->getMessage());
@@ -2882,7 +2891,7 @@ public function verify_otp(Request $request)
             [$startDate, $endDate] = $this->resolveAnalyticsPeriod($period, $user->id);
 
             $orders = MarketplaceOrder::query()
-                ->select('id', 'status', 'created_at', 'total_amount')
+                ->select('id', 'status', 'payment_status', 'created_at', 'total_amount')
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id);
                 })
@@ -2919,13 +2928,15 @@ public function verify_otp(Request $request)
                 })
                 ->sum('view_count');
 
+            $paidOrders = $orders->filter(function ($ord) {
+                return $ord->payment_status === 'paid' || in_array(strtolower($ord->status), ['accept', 'confirmed', 'processing', 'completed', 'mark_as_shipped', 'mark_as_delivered']);
+            });
+
             $summary = [
-                'total_earning' => round((float) $orders
-                    ->where('status', 'completed')
-                    ->sum('total_amount'), 2),
+                'total_earning' => round((float) $paidOrders->sum('total_amount'), 2),
                 'total_orders' => $orders->count(),
-                'completed_orders' => $orders->where('status', 'completed')->count(),
-                'cancelled_orders' => $orders->where('status', 'reject')->count(),
+                'completed_orders' => $paidOrders->count(),
+                'cancelled_orders' => $orders->whereIn('status', ['reject', 'cancelled'])->count(),
                 'store_visits' => $storeVisits,
                 'product_views' => $productViews,
                 'rating' => round((float) ($rating ?? 0), 1),

@@ -224,9 +224,15 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('provider/withdrawals', [WithdrawalController::class, 'transactionHistory']);
 
     // Marketplace Wallet & Withdrawal Specification Routes
+    Route::get('marketplace/wallet', [WithdrawalController::class, 'walletSummary']);
     Route::get('marketplace/wallet/summary', [WithdrawalController::class, 'walletSummary']);
     Route::get('marketplace/wallet/transactions', [WithdrawalController::class, 'transactionHistory']);
+    Route::get('marketplace/seller/transactions', [WithdrawalController::class, 'transactionHistory']);
+    Route::get('marketplace/seller/wallet', [WithdrawalController::class, 'walletSummary']);
+    Route::get('marketplace/seller/withdrawals', [WithdrawalController::class, 'transactionHistory']);
     Route::post('marketplace/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
+    Route::post('marketplace/seller/withdrawals', [WithdrawalController::class, 'requestWithdrawal']);
+    Route::post('marketplace/seller/withdrawals/request', [WithdrawalController::class, 'requestWithdrawal']);
 
     // Admin Withdrawal Action APIs
     Route::get('admin/withdrawals', [WithdrawalAdminController::class, 'index']);
@@ -250,13 +256,16 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('customer/transactions', [CustomerTransactionController::class, 'transactionHistory']);
     Route::get('customer/wallet/transactions', [CustomerTransactionController::class, 'transactionHistory']);
 
-    // Dedicated Customer Refund Request & History Specification Routes
+    // Dedicated Customer Refund Request & History Specification Routes (Service Orders & Marketplace Orders)
     Route::post('customer/refunds/request', [CustomerRefundController::class, 'requestRefund']);
+    Route::post('marketplace/refunds/request', [CustomerRefundController::class, 'requestRefund']);
     Route::post('orders/{order_id}/refund', [CustomerRefundController::class, 'requestRefund']);
     Route::post('refunds/request', [CustomerRefundController::class, 'requestRefund']);
     Route::get('customer/refunds', [CustomerRefundController::class, 'getRefunds']);
+    Route::get('marketplace/refunds', [CustomerRefundController::class, 'getRefunds']);
     Route::get('refunds', [CustomerRefundController::class, 'getRefunds']);
     Route::get('customer/refunds/{id}', [CustomerRefundController::class, 'showRefund']);
+    Route::get('marketplace/refunds/{id}', [CustomerRefundController::class, 'showRefund']);
 
     // Admin Refund Action APIs
     Route::get('admin/refunds', [RefundAdminController::class, 'index']);

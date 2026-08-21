@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
+use App\Models\MarketplaceOrder;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\Refund;
@@ -15,10 +16,10 @@ use Illuminate\Support\Facades\Validator;
 class CustomerRefundController extends Controller
 {
     /**
-     * Standalone Customer Refund Request API for Cancelled Orders
+     * Standalone Customer Refund Request API for Cancelled Orders (Service Orders & Marketplace Orders)
      * POST /api/v1/customer/refunds/request
+     * POST /api/v1/marketplace/refunds/request
      * POST /api/v1/orders/{order_id}/refund
-     * POST /api/v1/refunds/request
      */
     public function requestRefund(Request $request, $order_id = null)
     {
@@ -27,31 +28,35 @@ class CustomerRefundController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $orderId = $order_id ?: $request->input('order_id');
+        $orderId = $order_id ?: ($request->input('order_id') ?: $request->input('marketplace_order_id'));
 
-        $validator = Validator::make(array_merge($request->all(), ['order_id' => $orderId]), [
-            'order_id' => 'required|exists:orders,id',
-            'bank_account_id' => 'nullable|exists:bank_accounts,id',
-            'reason' => 'nullable|string|max:1000',
+        $validator = Validator::make(['order_id' => $orderId], [
+            'order_id' => 'required|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed.',
+                'message' => 'Validation failed. Order ID is required.',
                 'errors' => $validator->errors()
             ], 422);
         }
 
         return DB::transaction(function () use ($request, $user, $orderId) {
-            $order = Orders::where('id', $orderId)->lockForUpdate()->first();
+            $serviceOrder = Orders::where('id', $orderId)->lockForUpdate()->first();
+            $marketplaceOrder = null;
 
-            if (!$order) {
-                return response()->json(['success' => false, 'message' => 'Order not found.'], 404);
+            if (!$serviceOrder) {
+                $marketplaceOrder = MarketplaceOrder::where('id', $orderId)->lockForUpdate()->first();
+            }
+
+            if (!$serviceOrder && !$marketplaceOrder) {
+                return response()->json(['success' => false, 'message' => 'Order record not found.'], 404);
             }
 
             // 1. Check Customer Authorization
-            if ((int) $order->user_id !== (int) $user->id && (int) $user->role !== 0) {
+            $orderUserId = $serviceOrder ? $serviceOrder->user_id : $marketplaceOrder->user_id;
+            if ((int) $orderUserId !== (int) $user->id && (int) $user->role !== 0) {
                 return response()->json([
                     'success' => false,
                     'message' => 'You are not authorized to request a refund for this order.'
@@ -59,11 +64,11 @@ class CustomerRefundController extends Controller
             }
 
             // 2. Validate Order Status is Cancelled
-            $status = strtolower($order->status);
-            if ($status !== 'cancelled') {
+            $orderStatus = strtolower($serviceOrder ? $serviceOrder->status : $marketplaceOrder->status);
+            if (!in_array($orderStatus, ['cancelled', 'returned', 'failed'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Refunds can only be requested for cancelled orders. Current order status: ' . $order->status
+                    'message' => 'Refunds can only be requested for cancelled or returned orders. Current order status: ' . ($serviceOrder ? $serviceOrder->status : $marketplaceOrder->status)
                 ], 422);
             }
 
@@ -71,25 +76,37 @@ class CustomerRefundController extends Controller
             $settings = SystemSettingModel::first();
             $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
 
-            $payment = Payment::where('job_id', $order->job_id)
-                ->orWhere('id', $order->id)
-                ->where('status', 'captured')
-                ->latest()
-                ->first();
+            if ($serviceOrder) {
+                $payment = Payment::where('job_id', $serviceOrder->job_id)
+                    ->orWhere('id', $serviceOrder->id)
+                    ->where('status', 'captured')
+                    ->latest()
+                    ->first();
 
-            $paidAmount = $payment ? (float) $payment->amount : ((float) ($order->price ?? 0));
-            $isPaid = $payment || (int) $order->paid_to_system === 1;
+                $paidAmount = $payment ? (float) $payment->amount : ((float) ($serviceOrder->price ?? 0));
+                $isPaid = $payment || (int) $serviceOrder->paid_to_system === 1;
+            } else {
+                $payment = Payment::where('marketplace_order_id', $marketplaceOrder->id)
+                    ->where('status', 'captured')
+                    ->latest()
+                    ->first();
+
+                $paidAmount = $payment ? (float) $payment->amount : ((float) ($marketplaceOrder->total_amount ?? 0));
+                $isPaid = (bool) $payment || strtolower($marketplaceOrder->payment_status ?? '') === 'captured';
+            }
 
             if (!$isPaid || $paidAmount <= 0) {
-                $order->refund_status = 'not_required';
-                $order->save();
+                if ($serviceOrder) {
+                    $serviceOrder->refund_status = 'not_required';
+                    $serviceOrder->save();
+                }
 
                 return response()->json([
                     'success' => true,
                     'message' => 'No captured payment found for this order. Refund is not required.',
                     'data' => [
-                        'order_id' => (int) $order->id,
-                        'order_no' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                        'order_id' => (int) $orderId,
+                        'order_no' => 'ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT),
                         'order_status' => 'cancelled',
                         'refund' => [
                             'status' => 'not_required',
@@ -101,7 +118,7 @@ class CustomerRefundController extends Controller
 
             $refundAmount = max(0, $paidAmount - $azhlFee);
 
-            // 4. Resolve Bank Account
+            // 4. Resolve Customer Bank Account
             $bankAccountId = $request->input('bank_account_id');
             if (!$bankAccountId) {
                 $customerBank = BankAccount::where('user_id', $user->id)
@@ -114,9 +131,12 @@ class CustomerRefundController extends Controller
 
             // 5. Create or Fetch Existing Refund Record (Idempotent)
             $refund = Refund::firstOrCreate(
-                ['order_id' => $order->id],
                 [
-                    'refund_no' => 'REF-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                    'order_id' => $serviceOrder ? $serviceOrder->id : null,
+                    'marketplace_order_id' => $marketplaceOrder ? $marketplaceOrder->id : null,
+                ],
+                [
+                    'refund_no' => 'REF-' . str_pad($orderId, 6, '0', STR_PAD_LEFT),
                     'payment_id' => optional($payment)->id,
                     'customer_id' => $user->id,
                     'bank_account_id' => $bankAccountId,
@@ -135,9 +155,11 @@ class CustomerRefundController extends Controller
                 $refund->save();
             }
 
-            $order->refund_status = $refund->status;
-            $order->refund_id = $refund->id;
-            $order->save();
+            if ($serviceOrder) {
+                $serviceOrder->refund_status = $refund->status;
+                $serviceOrder->refund_id = $refund->id;
+                $serviceOrder->save();
+            }
 
             return response()->json([
                 'success' => true,
@@ -145,8 +167,8 @@ class CustomerRefundController extends Controller
                 'data' => [
                     'refund_id' => (int) $refund->id,
                     'refund_no' => $refund->refund_no,
-                    'order_id' => (int) $order->id,
-                    'order_no' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                    'order_id' => (int) $orderId,
+                    'order_no' => 'ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT),
                     'paid_amount' => $paidAmount,
                     'azhl_fee' => $azhlFee,
                     'refund_amount' => (float) $refund->amount,
@@ -163,7 +185,7 @@ class CustomerRefundController extends Controller
     /**
      * Get Customer Refund Requests List API
      * GET /api/v1/customer/refunds
-     * GET /api/v1/refunds
+     * GET /api/v1/marketplace/refunds
      */
     public function getRefunds(Request $request)
     {
@@ -173,18 +195,24 @@ class CustomerRefundController extends Controller
         }
 
         $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
+        $customerMarketplaceOrderIds = MarketplaceOrder::where('user_id', $user->id)->pluck('id')->toArray();
 
-        $refunds = Refund::with(['order.job.category', 'bankAccount'])
-            ->where(function ($q) use ($user, $customerOrderIds) {
-                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
+        $refunds = Refund::with(['order.job.category', 'marketplaceOrder', 'bankAccount'])
+            ->where(function ($q) use ($user, $customerOrderIds, $customerMarketplaceOrderIds) {
+                $q->where('customer_id', $user->id)
+                    ->orWhereIn('order_id', $customerOrderIds)
+                    ->orWhereIn('marketplace_order_id', $customerMarketplaceOrderIds);
             })
             ->orderByDesc('id')
             ->get();
 
         $formatted = $refunds->map(function ($r) {
             $order = $r->order;
+            $mkOrder = $r->marketplaceOrder;
             $job = optional($order)->job;
-            $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: 'Cancelled Order Refund');
+            $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: ($mkOrder ? 'Marketplace Order Refund' : 'Cancelled Order Refund'));
+            $orderId = $r->order_id ?: ($r->marketplace_order_id ?: 0);
+            $orderNo = $mkOrder && $mkOrder->order_number ? $mkOrder->order_number : ($orderId ? ('ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT)) : 'N/A');
             $rawStatus = strtolower($r->status ?: 'requested');
 
             $status = $rawStatus;
@@ -201,8 +229,8 @@ class CustomerRefundController extends Controller
             return [
                 'refund_id' => (int) $r->id,
                 'refund_no' => $r->refund_no ?: ('REF-' . str_pad($r->id, 6, '0', STR_PAD_LEFT)),
-                'order_id' => (int) ($r->order_id ?: 0),
-                'order_no' => $r->order_id ? ('ORD-' . str_pad($r->order_id, 6, '0', STR_PAD_LEFT)) : 'N/A',
+                'order_id' => (int) $orderId,
+                'order_no' => $orderNo,
                 'order_title' => $orderTitle,
                 'amount' => round((float) ($r->amount ?? 0), 2),
                 'currency' => strtoupper($r->currency ?: 'SAR'),
@@ -239,11 +267,14 @@ class CustomerRefundController extends Controller
         }
 
         $customerOrderIds = Orders::where('user_id', $user->id)->pluck('id')->toArray();
+        $customerMarketplaceOrderIds = MarketplaceOrder::where('user_id', $user->id)->pluck('id')->toArray();
 
-        $refund = Refund::with(['order.job.category', 'bankAccount'])
+        $refund = Refund::with(['order.job.category', 'marketplaceOrder', 'bankAccount'])
             ->where('id', $id)
-            ->where(function ($q) use ($user, $customerOrderIds) {
-                $q->where('customer_id', $user->id)->orWhereIn('order_id', $customerOrderIds);
+            ->where(function ($q) use ($user, $customerOrderIds, $customerMarketplaceOrderIds) {
+                $q->where('customer_id', $user->id)
+                    ->orWhereIn('order_id', $customerOrderIds)
+                    ->orWhereIn('marketplace_order_id', $customerMarketplaceOrderIds);
             })
             ->first();
 
@@ -252,8 +283,11 @@ class CustomerRefundController extends Controller
         }
 
         $order = $refund->order;
+        $mkOrder = $refund->marketplaceOrder;
         $job = optional($order)->job;
-        $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: 'Cancelled Order Refund');
+        $orderTitle = optional($job)->title ?: (optional(optional($job)->category)->name ?: ($mkOrder ? 'Marketplace Order Refund' : 'Cancelled Order Refund'));
+        $orderId = $refund->order_id ?: ($refund->marketplace_order_id ?: 0);
+        $orderNo = $mkOrder && $mkOrder->order_number ? $mkOrder->order_number : ($orderId ? ('ORD-' . str_pad($orderId, 6, '0', STR_PAD_LEFT)) : 'N/A');
         $rawStatus = strtolower($refund->status ?: 'requested');
 
         $status = $rawStatus;
@@ -273,8 +307,8 @@ class CustomerRefundController extends Controller
             'data' => [
                 'refund_id' => (int) $refund->id,
                 'refund_no' => $refund->refund_no ?: ('REF-' . str_pad($refund->id, 6, '0', STR_PAD_LEFT)),
-                'order_id' => (int) ($refund->order_id ?: 0),
-                'order_no' => $refund->order_id ? ('ORD-' . str_pad($refund->order_id, 6, '0', STR_PAD_LEFT)) : 'N/A',
+                'order_id' => (int) $orderId,
+                'order_no' => $orderNo,
                 'order_title' => $orderTitle,
                 'amount' => round((float) ($refund->amount ?? 0), 2),
                 'currency' => strtoupper($refund->currency ?: 'SAR'),

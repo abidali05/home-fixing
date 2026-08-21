@@ -10,17 +10,26 @@ class RefundAdminController extends Controller
 {
     /**
      * Admin Refund Requests List API / View
-     * GET /admin/refunds
-     * GET /api/v1/admin/refunds?status=requested&page=1
      */
     public function index(Request $request)
     {
         $status = $request->input('status');
+        $type = $request->input('type');
 
-        $query = Refund::with(['customer', 'bankAccount', 'order', 'payment'])->orderByDesc('id');
+        $query = Refund::with(['customer', 'bankAccount', 'order', 'marketplaceOrder'])->orderByDesc('id');
+
+        $allCount = Refund::count();
+        $serviceCount = Refund::whereNotNull('order_id')->count();
+        $marketplaceCount = Refund::whereNotNull('marketplace_order_id')->count();
 
         if (!empty($status)) {
             $query->where('status', $status);
+        }
+
+        if ($type === 'service') {
+            $query->whereNotNull('order_id');
+        } elseif ($type === 'marketplace') {
+            $query->whereNotNull('marketplace_order_id');
         }
 
         if ($request->wantsJson() || $request->is('api/*')) {
@@ -33,6 +42,11 @@ class RefundAdminController extends Controller
                 'message' => 'Admin refund requests fetched successfully.',
                 'data' => [
                     'refunds' => $paginated->items(),
+                    'summary' => [
+                        'all_count' => $allCount,
+                        'service_count' => $serviceCount,
+                        'marketplace_count' => $marketplaceCount,
+                    ],
                     'pagination' => [
                         'current_page' => $paginated->currentPage(),
                         'per_page' => $paginated->perPage(),
@@ -44,13 +58,11 @@ class RefundAdminController extends Controller
         }
 
         $refunds = $query->get();
-        return view('admin.refunds.index', compact('refunds'));
+        return view('admin.refunds.index', compact('refunds', 'type', 'allCount', 'serviceCount', 'marketplaceCount'));
     }
 
     /**
      * Admin Accept Refund Request
-     * PATCH /admin/refunds/{id}/accept
-     * PATCH /api/v1/admin/refunds/{id}/accept
      */
     public function accept(Request $request, $id)
     {
@@ -92,8 +104,6 @@ class RefundAdminController extends Controller
 
     /**
      * Admin Complete Refund Request after Bank Transfer / Gateway Refund
-     * PATCH /admin/refunds/{id}/complete
-     * PATCH /api/v1/admin/refunds/{id}/complete
      */
     public function complete(Request $request, $id)
     {
@@ -141,8 +151,6 @@ class RefundAdminController extends Controller
 
     /**
      * Admin Reject Refund Request with Reason
-     * PATCH /admin/refunds/{id}/reject
-     * PATCH /api/v1/admin/refunds/{id}/reject
      */
     public function reject(Request $request, $id)
     {

@@ -23,10 +23,37 @@
         {{-- Header Card --}}
         <div class="row">
             <div class="col-12">
+                {{-- Category Filter Tabs --}}
+                <ul class="nav nav-pills mb-3" id="withdrawalTabs">
+                    <li class="nav-item me-2">
+                        <a class="nav-link {{ empty($accountType) || $accountType === 'all' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.withdrawals.index') }}">
+                            <i class="bi bi-grid-fill me-1"></i> All Withdrawals ({{ $allCount }})
+                        </a>
+                    </li>
+                    <li class="nav-item me-2">
+                        <a class="nav-link {{ $accountType === 'provider' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.withdrawals.index', ['account_type' => 'provider']) }}">
+                            <i class="bi bi-tools me-1"></i> Provider Withdrawals ({{ $providerCount }})
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ $accountType === 'marketplace' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.withdrawals.index', ['account_type' => 'marketplace']) }}">
+                            <i class="bi bi-shop me-1"></i> Marketplace Seller Withdrawals ({{ $marketplaceCount }})
+                        </a>
+                    </li>
+                </ul>
+
                 <div class="card shadow-sm border-0 mb-4">
                     <div class="card-header bg-white pb-0 d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0 font-weight-bold">Provider & Marketplace Withdrawal Requests</h6>
-                        <span class="badge bg-primary">Total Requests: {{ $withdrawals->count() }}</span>
+                        <h6 class="mb-0 font-weight-bold">
+                            @if ($accountType === 'provider')
+                                Provider Withdrawal Requests
+                            @elseif ($accountType === 'marketplace')
+                                Marketplace Seller Withdrawal Requests
+                            @else
+                                Provider & Marketplace Withdrawal Requests
+                            @endif
+                        </h6>
+                        <span class="badge bg-primary">Total Shown: {{ $withdrawals->count() }}</span>
                     </div>
                     <div class="card-body px-4 pt-3 pb-3">
                         <div class="table-responsive">

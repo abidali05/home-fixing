@@ -32,6 +32,7 @@ class AuthenticaService
 
         if (!empty($hash)) {
             $payload['app_hash'] = $hash;
+            $payload['hash'] = $hash;
         }
 
         Log::info("AuthenticaService: Sending OTP to {$phone} via {$method}", ['payload' => $payload]);

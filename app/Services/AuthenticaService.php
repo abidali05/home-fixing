@@ -26,10 +26,16 @@ class AuthenticaService
         $hash = $appHash ?: $this->appHash;
         $otpCode = $customOtp ?: (string) random_int(100000, 999999);
 
+        $messageText = "Your Azhl verification code is {$otpCode}\n{$hash}";
+
         $payload = [
             'phone' => $phone,
             'method' => $method ?: 'sms',
             'otp' => $otpCode,
+            'message' => $messageText,
+            'body' => $messageText,
+            'text' => $messageText,
+            'sms_text' => $messageText,
         ];
 
         if (!empty($hash)) {

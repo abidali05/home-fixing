@@ -310,10 +310,17 @@ class WithdrawalController extends Controller
                     $job = $ord->job;
                     $orderStatus = strtolower($ord->status ?: 'pending');
 
+                    $label = 'Pending Credit';
+                    if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
+                        $label = 'Cancelled Credit';
+                    } elseif ($orderStatus === 'completed') {
+                        $label = 'Credit';
+                    }
+
                     $transactions->push([
                         'id' => (int) $ord->id,
                         'type' => 'credit',
-                        'label' => $orderStatus === 'completed' ? 'Credit' : 'Pending Credit',
+                        'label' => $label,
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
                         'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($ord->updated_at ? $ord->updated_at->toIso8601String() : null),
@@ -376,10 +383,17 @@ class WithdrawalController extends Controller
                     $net = max(0, $gross - $azhlFee);
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
+                    $label = 'Pending Credit';
+                    if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
+                        $label = 'Cancelled Credit';
+                    } elseif ($orderStatus === 'completed') {
+                        $label = 'Credit';
+                    }
+
                     $transactions->push([
                         'id' => (int) $mktOrder->id,
                         'type' => 'credit',
-                        'label' => $orderStatus === 'completed' ? 'Credit' : 'Pending Credit',
+                        'label' => $label,
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,

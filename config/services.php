@@ -55,6 +55,7 @@ return [
         'api_key' => env('AUTHENTICA_API_KEY', '$2y$10$ypBhodlFFB3Rb.YhEBjJq.Jr0XcydJONFKYxBu.elHOzgRqgSunuG'),
         'app_hash' => env('AUTHENTICA_APP_HASH', 'Ii43T702uXm'),
         'template_id' => env('AUTHENTICA_TEMPLATE_ID'),
+        'sender_name' => env('AUTHENTICA_SENDER_NAME'),
     ],
 
     'ibanapi' => [

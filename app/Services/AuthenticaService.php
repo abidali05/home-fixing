@@ -28,6 +28,34 @@ class AuthenticaService
 
         $messageText = "Your Azhl verification code is {$otpCode}\n{$hash}";
         $templateId = config('services.authentica.template_id');
+        $senderName = config('services.authentica.sender_name');
+
+        if (!empty($senderName)) {
+            $smsPayload = [
+                'phone' => $phone,
+                'sender_name' => $senderName,
+                'message' => $messageText,
+            ];
+
+            Log::info("AuthenticaService: Sending custom SMS via /send-sms with sender {$senderName}", ['payload' => $smsPayload]);
+
+            $response = Http::withHeaders([
+                'X-Authorization' => $this->apiKey,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ])->post("{$this->baseUrl}/send-sms", $smsPayload);
+
+            $responseData = $response->json() ?? [];
+
+            Log::info("AuthenticaService: Custom send-sms response for {$phone}", [
+                'http_code' => $response->status(),
+                'response' => $responseData,
+            ]);
+
+            if ($response->successful()) {
+                return $responseData;
+            }
+        }
 
         $payload = [
             'phone' => $phone,

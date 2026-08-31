@@ -62,8 +62,14 @@ class AuthController extends Controller
                 return $this->success(null, 'OTP sent successfully');
             }
 
-            // Dispatch OTP via Authentica API (includes SMS App Hash)
-            $authenticaService->sendOtp($phone, $method, $appHash);
+            // Generate 6-digit random OTP code
+            $otp = (string) random_int(100000, 999999);
+
+            // Dispatch 6-digit OTP via Authentica API (includes SMS App Hash)
+            $authenticaService->sendOtp($phone, $method, $appHash, $otp);
+
+            // Cache for backup verification
+            Cache::put('otp_' . $phone, $otp, now()->addMinutes(10));
 
             return $this->success(null, 'OTP sent successfully');
 

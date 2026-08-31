@@ -21,13 +21,15 @@ class AuthenticaService
     /**
      * Send OTP via Authentica API (SMS / WhatsApp / Email)
      */
-    public function sendOtp(string $phone, string $method = 'sms', ?string $appHash = null): array
+    public function sendOtp(string $phone, string $method = 'sms', ?string $appHash = null, ?string $customOtp = null): array
     {
         $hash = $appHash ?: $this->appHash;
+        $otpCode = $customOtp ?: (string) random_int(100000, 999999);
 
         $payload = [
             'phone' => $phone,
             'method' => $method ?: 'sms',
+            'otp' => $otpCode,
         ];
 
         if (!empty($hash)) {
@@ -35,7 +37,7 @@ class AuthenticaService
             $payload['hash'] = $hash;
         }
 
-        Log::info("AuthenticaService: Sending OTP to {$phone} via {$method}", ['payload' => $payload]);
+        Log::info("AuthenticaService: Sending 6-digit OTP ({$otpCode}) to {$phone} via {$method}", ['payload' => $payload]);
 
         $response = Http::withHeaders([
             'X-Authorization' => $this->apiKey,

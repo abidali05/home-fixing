@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
+use App\Models\MarketplaceOrder;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
@@ -298,34 +299,34 @@ class WithdrawalController extends Controller
         // 1. Credit Transactions (Order Earnings & Referral Bonuses)
         if (in_array($filter, ['all', 'credit'])) {
             if ($accountType === 'provider') {
-                $completedOrders = Orders::with(['job.category'])
+                $providerOrders = Orders::with(['job.category'])
                     ->where('provider_id', $user->id)
-                    ->where('status', 'completed')
                     ->get();
 
-                foreach ($completedOrders as $ord) {
+                foreach ($providerOrders as $ord) {
                     $gross = (float) ($ord->price ?? 0);
                     $azhlFee = $azhlFeePerOrder;
                     $net = max(0, $gross - $azhlFee);
                     $job = $ord->job;
+                    $orderStatus = strtolower($ord->status ?: 'pending');
 
                     $transactions->push([
                         'id' => (int) $ord->id,
                         'type' => 'credit',
-                        'label' => 'Credit',
+                        'label' => $orderStatus === 'completed' ? 'Credit' : 'Pending Credit',
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
-                        'created_at' => $ord->updated_at ? $ord->updated_at->toIso8601String() : null,
+                        'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($ord->updated_at ? $ord->updated_at->toIso8601String() : null),
                         'credit' => [
                             'order_id' => (int) $ord->id,
                             'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
                             'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
-                            'order_status' => 'completed',
+                            'order_status' => $orderStatus,
                             'gross_amount' => round($gross, 2),
                             'azhl_fee' => round($azhlFee, 2),
                             'referral_fee' => 0.00,
                             'net_amount' => round($net, 2),
-                            'completed_at' => $ord->updated_at ? $ord->updated_at->toIso8601String() : null,
+                            'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
                         ],
                         'withdraw' => null,
                     ]);
@@ -361,39 +362,37 @@ class WithdrawalController extends Controller
                     ]);
                 }
             } else {
-                $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
-                    ->pluck('marketplace_order_id')
-                    ->unique()
-                    ->filter();
-
-                $payments = Payment::with(['marketplaceOrder'])
-                    ->whereIn('marketplace_order_id', $orderIds)
-                    ->where('status', 'captured')
+                $marketplaceOrders = MarketplaceOrder::with(['items.product', 'payment'])
+                    ->whereHas('items', function ($query) use ($user) {
+                        $query->where('shop_id', $user->id);
+                    })
                     ->get();
 
-                foreach ($payments as $p) {
-                    $gross = (float) ($p->amount ?? 0);
+                foreach ($marketplaceOrders as $mktOrder) {
+                    $item = $mktOrder->items->firstWhere('shop_id', $user->id);
+                    $product = $item?->product;
+                    $gross = (float) ($item?->total_price ?? ($mktOrder->total_amount ?? 0));
                     $azhlFee = $azhlFeePerOrder;
                     $net = max(0, $gross - $azhlFee);
-                    $order = $p->marketplaceOrder;
+                    $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
                     $transactions->push([
-                        'id' => (int) $p->id,
+                        'id' => (int) $mktOrder->id,
                         'type' => 'credit',
-                        'label' => 'Credit',
+                        'label' => $orderStatus === 'completed' ? 'Credit' : 'Pending Credit',
                         'amount' => round($net, 2),
-                        'currency' => strtoupper($p->currency ?: 'SAR'),
-                        'created_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                        'currency' => 'SAR',
+                        'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => [
-                            'order_id' => (int) ($order ? $order->id : $p->marketplace_order_id),
-                            'order_no' => optional($order)->order_number ?: ('ORD-' . $p->marketplace_order_id),
-                            'order_title' => 'Marketplace Product Order',
-                            'order_status' => 'completed',
+                            'order_id' => (int) $mktOrder->id,
+                            'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
+                            'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
+                            'order_status' => $orderStatus,
                             'gross_amount' => round($gross, 2),
                             'azhl_fee' => round($azhlFee, 2),
                             'referral_fee' => 0.00,
                             'net_amount' => round($net, 2),
-                            'completed_at' => $p->updated_at ? $p->updated_at->toIso8601String() : null,
+                            'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
                         ],
                         'withdraw' => null,
                     ]);

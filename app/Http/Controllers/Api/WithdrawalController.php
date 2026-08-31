@@ -310,16 +310,19 @@ class WithdrawalController extends Controller
                     $job = $ord->job;
                     $orderStatus = strtolower($ord->status ?: 'pending');
 
+                    $type = 'credit';
                     $label = 'Pending Credit';
                     if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
-                        $label = 'Cancelled Credit';
+                        $type = 'cancelled';
+                        $label = 'Cancelled Order';
                     } elseif ($orderStatus === 'completed') {
+                        $type = 'credit';
                         $label = 'Credit';
                     }
 
                     $transactions->push([
                         'id' => (int) $ord->id,
-                        'type' => 'credit',
+                        'type' => $type,
                         'label' => $label,
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
@@ -383,16 +386,19 @@ class WithdrawalController extends Controller
                     $net = max(0, $gross - $azhlFee);
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
+                    $type = 'credit';
                     $label = 'Pending Credit';
                     if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
-                        $label = 'Cancelled Credit';
+                        $type = 'cancelled';
+                        $label = 'Cancelled Order';
                     } elseif ($orderStatus === 'completed') {
+                        $type = 'credit';
                         $label = 'Credit';
                     }
 
                     $transactions->push([
                         'id' => (int) $mktOrder->id,
-                        'type' => 'credit',
+                        'type' => $type,
                         'label' => $label,
                         'amount' => round($net, 2),
                         'currency' => 'SAR',

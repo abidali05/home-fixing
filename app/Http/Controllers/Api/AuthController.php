@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Notifications\MarketplaceOrderReceivedNotification;
 use App\Notifications\MarketplaceOrderStatusUpdatedNotification;
 use App\Notifications\MarketplaceShopReviewSubmittedNotification;
+use App\Services\AuthenticaService;
 use App\Services\TwilioService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -30,141 +31,91 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Twilio\Exceptions\RestException;
 
 class AuthController extends Controller
 {
     public function send_otp(
-    Request $request,
-    TwilioService $twilioService
-) {
-    $validator = Validator::make($request->all(), [
-        'phone' => "string",
-    ]);
+        Request $request,
+        AuthenticaService $authenticaService
+    ) {
+        $validator = Validator::make($request->all(), [
+            'phone' => 'required|string',
+            'method' => 'nullable|string|in:sms,whatsapp,email',
+            'app_hash' => 'nullable|string',
+        ]);
 
-    if ($validator->fails()) {
-        return $this->validationError($validator->errors());
-    }
-
-    $phone = trim($request->phone);
-
-    try {
-        if (
-            in_array(
-                $phone,
-                ['+966561234567', '+966561234576','+966531301053', '+966502616534'],
-                true
-            )
-        ) {
-            Cache::put(
-                'otp_' . $phone,
-                '123456',
-                now()->addMinutes(10)
-            );
-
-            return $this->success(
-                null,
-                'OTP sent successfully'
-            );
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors());
         }
 
-        $otp = (string) random_int(100000, 999999);
+        $phone = trim($request->phone);
+        $method = strtolower($request->input('method', 'sms')) ?: 'sms';
+        $appHash = $request->input('app_hash', config('services.authentica.app_hash', 'Ii43T702uXm'));
 
-        $message = $twilioService->sendOtp(
-            $phone,
-            $otp
-        );
+        try {
+            // Bypass / Test Phone Numbers
+            if (in_array($phone, ['+966561234567', '+966561234576', '+966531301053', '+966502616534'], true)) {
+                Cache::put('otp_' . $phone, '123456', now()->addMinutes(10));
+                return $this->success(null, 'OTP sent successfully');
+            }
 
-        // Save only when Twilio accepts the API request.
-        Cache::put(
-            'otp_' . $phone,
-            $otp,
-            now()->addMinutes(10)
-        );
+            // Dispatch OTP via Authentica API (includes SMS App Hash)
+            $authenticaService->sendOtp($phone, $method, $appHash);
 
-        return $this->success(
-            null,
-            'OTP sent successfully'
-        );
+            return $this->success(null, 'OTP sent successfully');
 
-    } catch (RestException $e) {
-        Log::error('Twilio SMS error', [
-            'phone' => $phone,
-            'twilio_code' => $e->getCode(),
-            'message' => $e->getMessage(),
-        ]);
+        } catch (\Throwable $e) {
+            Log::error('Authentica OTP send error', [
+                'phone' => $phone,
+                'message' => $e->getMessage(),
+            ]);
 
-        return $this->error(
-            'Failed to send OTP: ' . $e->getMessage(),
-            500
-        );
-
-    } catch (\Throwable $e) {
-        Log::error('OTP send error', [
-            'phone' => $phone,
-            'message' => $e->getMessage(),
-        ]);
-
-        return $this->error(
-            'Failed to send OTP',
-            500
-        );
-    }
-}
-public function verify_otp(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'phone' => [
-            'required',
-            'string',
-            'regex:/^\+9665[0-9]{8}$/',
-        ],
-        'otp' => [
-            'required',
-            'digits:6',
-        ],
-    ]);
-
-    if ($validator->fails()) {
-        return $this->validationError($validator->errors());
+            return $this->error('Failed to send OTP: ' . $e->getMessage(), 422);
+        }
     }
 
-    $phone = trim($request->phone);
-    $enteredOtp = (string) $request->input('otp');
+    public function verify_otp(
+        Request $request,
+        AuthenticaService $authenticaService
+    ) {
+        $validator = Validator::make($request->all(), [
+            'phone' => ['required', 'string'],
+            'otp' => ['required', 'digits:6'],
+        ]);
 
-    try {
-        $cachedOtp = Cache::get('otp_' . $phone);
-
-        if (
-            $cachedOtp === null ||
-            !hash_equals((string) $cachedOtp, $enteredOtp)
-        ) {
-            return $this->error(
-                'Invalid or expired OTP',
-                422
-            );
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors());
         }
 
-        // OTP can only be used once.
-        Cache::forget('otp_' . $phone);
+        $phone = trim($request->phone);
+        $enteredOtp = (string) $request->input('otp');
 
-        return $this->success(
-            null,
-            'OTP verified successfully'
-        );
+        try {
+            // 1. Check Test Number / Cached OTP Bypass
+            $cachedOtp = Cache::get('otp_' . $phone);
+            if ($cachedOtp !== null && hash_equals((string) $cachedOtp, $enteredOtp)) {
+                Cache::forget('otp_' . $phone);
+                return $this->success(null, 'OTP verified successfully');
+            }
 
-    } catch (\Throwable $e) {
-        Log::error('OTP verification error', [
-            'phone' => $phone,
-            'message' => $e->getMessage(),
-        ]);
+            // 2. Verify via Authentica API
+            $isVerified = $authenticaService->verifyOtp($phone, $enteredOtp);
 
-        return $this->error(
-            'Failed to verify OTP',
-            500
-        );
+            if (!$isVerified) {
+                return $this->error('Invalid or expired OTP', 422);
+            }
+
+            return $this->success(null, 'OTP verified successfully');
+
+        } catch (\Throwable $e) {
+            Log::error('Authentica OTP verification error', [
+                'phone' => $phone,
+                'message' => $e->getMessage(),
+            ]);
+
+            return $this->error('Failed to verify OTP: ' . $e->getMessage(), 500);
+        }
     }
-}
     // public function send_otp(Request $request)
     // {
     //     $validator = Validator::make($request->all(), [

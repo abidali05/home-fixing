@@ -141,10 +141,14 @@ class User extends Authenticatable
     {
         return Orders::where('provider_id', $this->id)->where('status', 'completed')->sum('price') ?? 0;
     }
+
+    /**
+     * Deprecated: paid_to_system Commission Hold system is obsolete.
+     * All payments are collected online by AZHL and net earnings are credited to user wallets.
+     */
     public function getPaymentDueAttribute()
     {
-        $count = Orders::where('provider_id', $this->id)->where('status', 'completed')->where('paid_to_system', '0')->count();
-        return $count * 5;
+        return 0;
     }
 
     public function routeNotificationForFcm(): ?string

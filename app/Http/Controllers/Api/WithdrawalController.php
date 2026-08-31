@@ -320,6 +320,18 @@ class WithdrawalController extends Controller
                         $label = 'Credit';
                     }
 
+                    $orderPayload = [
+                        'order_id' => (int) $ord->id,
+                        'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
+                        'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
+                        'order_status' => $orderStatus,
+                        'gross_amount' => round($gross, 2),
+                        'azhl_fee' => round($azhlFee, 2),
+                        'referral_fee' => 0.00,
+                        'net_amount' => round($net, 2),
+                        'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
+                    ];
+
                     $transactions->push([
                         'id' => (int) $ord->id,
                         'type' => $type,
@@ -327,17 +339,8 @@ class WithdrawalController extends Controller
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
                         'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($ord->updated_at ? $ord->updated_at->toIso8601String() : null),
-                        'credit' => [
-                            'order_id' => (int) $ord->id,
-                            'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
-                            'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
-                            'order_status' => $orderStatus,
-                            'gross_amount' => round($gross, 2),
-                            'azhl_fee' => round($azhlFee, 2),
-                            'referral_fee' => 0.00,
-                            'net_amount' => round($net, 2),
-                            'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
-                        ],
+                        'credit' => $type === 'cancelled' ? null : $orderPayload,
+                        'cancelled' => $type === 'cancelled' ? $orderPayload : null,
                         'withdraw' => null,
                     ]);
                 }
@@ -368,6 +371,7 @@ class WithdrawalController extends Controller
                             'net_amount' => round((float) $refReward->reward_amount, 2),
                             'completed_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         ],
+                        'cancelled' => null,
                         'withdraw' => null,
                     ]);
                 }
@@ -396,6 +400,18 @@ class WithdrawalController extends Controller
                         $label = 'Credit';
                     }
 
+                    $orderPayload = [
+                        'order_id' => (int) $mktOrder->id,
+                        'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
+                        'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
+                        'order_status' => $orderStatus,
+                        'gross_amount' => round($gross, 2),
+                        'azhl_fee' => round($azhlFee, 2),
+                        'referral_fee' => 0.00,
+                        'net_amount' => round($net, 2),
+                        'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
+                    ];
+
                     $transactions->push([
                         'id' => (int) $mktOrder->id,
                         'type' => $type,
@@ -403,17 +419,8 @@ class WithdrawalController extends Controller
                         'amount' => round($net, 2),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
-                        'credit' => [
-                            'order_id' => (int) $mktOrder->id,
-                            'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
-                            'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
-                            'order_status' => $orderStatus,
-                            'gross_amount' => round($gross, 2),
-                            'azhl_fee' => round($azhlFee, 2),
-                            'referral_fee' => 0.00,
-                            'net_amount' => round($net, 2),
-                            'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
-                        ],
+                        'credit' => $type === 'cancelled' ? null : $orderPayload,
+                        'cancelled' => $type === 'cancelled' ? $orderPayload : null,
                         'withdraw' => null,
                     ]);
                 }

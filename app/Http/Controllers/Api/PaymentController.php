@@ -58,7 +58,11 @@ class PaymentController extends Controller
                 return $this->error('Bid not found for this job.', 404);
             }
 
-            // 3. Create or reuse pending payment record
+            // 3. Calculate total payable amount by customer (Bid Price + Customer App Fee)
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerTotal = (float) $bid->price + $customerAppFee;
+
             $payment = Payment::where('job_id', $job->id)
                 ->where('bid_id', $bid->id)
                 ->where('user_id', $user->id)
@@ -72,15 +76,15 @@ class PaymentController extends Controller
                     'job_id' => $job->id,
                     'bid_id' => $bid->id,
                     'provider_id' => $bid->provider_id,
-                    'amount' => (float) $bid->price,
+                    'amount' => $customerTotal,
                     'currency' => 'SAR',
                     'gateway' => 'tap',
                     'status' => 'pending',
                 ]);
             } else {
-                // Ensure amount matches latest bid price
+                // Ensure amount matches latest bid price + customer app fee
                 $payment->update([
-                    'amount' => (float) $bid->price,
+                    'amount' => $customerTotal,
                     'provider_id' => $bid->provider_id,
                 ]);
             }

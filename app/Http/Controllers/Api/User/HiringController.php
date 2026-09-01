@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
 use App\Models\Admin\ServiceCategoryModel;
+use App\Models\Admin\SystemSettingModel;
 use App\Models\BidModel;
 use App\Models\JobRequestImages;
 use App\Models\JobRequestModel;
@@ -298,7 +299,37 @@ class HiringController extends Controller
     public function view_bids_by_request($id)
     {
         try {
+            $settings = SystemSettingModel::first();
+
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
             $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
+
+            foreach ($bids as $bid) {
+                $repairPrice = (float) ($bid->price ?? 0);
+                $subtotal = $repairPrice + $customerAppFee;
+
+                $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+
+                $totalPayableByCustomer = $repairPrice + $customerAppFee + $totalGatewayFee;
+
+                $bid->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($subtotal, 2, '.', ''),
+                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                ];
+            }
+
             return $this->success($bids);
         } catch (\Throwable $e) {
             Log::error('Error in view_bids_by_request: ' . $e->getMessage());

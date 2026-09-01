@@ -32,6 +32,10 @@ class SystemSettingController extends Controller
             'payment_method' => 'required|string|max:50',
             'azhl_percentage' => 'nullable|numeric|min:0|max:100',
             'azhl_fee' => 'nullable|numeric|min:0',
+            'customer_app_fee' => 'nullable|numeric|min:0',
+            'payment_gateway_fee_percentage' => 'nullable|numeric|min:0|max:100',
+            'payment_gateway_fixed_fee' => 'nullable|numeric|min:0',
+            'payment_gateway_vat_percentage' => 'nullable|numeric|min:0|max:100',
             'referral_amount' => 'nullable|numeric|min:0',
         ]);
 
@@ -45,6 +49,10 @@ class SystemSettingController extends Controller
         $settings->payment_method = $request->payment_method;
         $settings->azhl_percentage = $request->input('azhl_percentage', 10.00);
         $settings->azhl_fee = $request->input('azhl_fee', 5.00);
+        $settings->customer_app_fee = $request->input('customer_app_fee', 3.00);
+        $settings->payment_gateway_fee_percentage = $request->input('payment_gateway_fee_percentage', 2.50);
+        $settings->payment_gateway_fixed_fee = $request->input('payment_gateway_fixed_fee', 1.00);
+        $settings->payment_gateway_vat_percentage = $request->input('payment_gateway_vat_percentage', 15.00);
         $settings->referral_amount = $request->input('referral_amount', 10.00);
 
         if ($request->hasFile('logo')) {

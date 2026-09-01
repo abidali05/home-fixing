@@ -85,7 +85,7 @@ class HireProviderService
 
             $order->user_id = $customer->id;
             $order->provider_id = $provider->id;
-            $order->price = $payment->amount;
+            $order->price = $payment->bid ? (float) $payment->bid->price : (float) $payment->amount;
             $order->status = 'pending';
             $order->paid_to_system = 1;
             $order->save();

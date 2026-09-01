@@ -10,6 +10,7 @@ use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
 use App\Models\ReferralReward;
+use App\Models\User;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -18,37 +19,105 @@ use Illuminate\Support\Facades\Validator;
 class WithdrawalController extends Controller
 {
     /**
+     * Helper to calculate dynamic fees & net provider earnings based on System Settings
+     */
+    private function calculateOrderFinancials(float $repairPrice): array
+    {
+        $settings = SystemSettingModel::first();
+
+        $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+        $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+        $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+        $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+        // 1. Subtotal for customer before gateway fee
+        $subtotal = $repairPrice + $customerAppFee;
+
+        // 2. Gateway Fee Subtotal + VAT
+        $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+        $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+        $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+
+        // 3. Total Amount paid by Customer at Checkout
+        $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
+
+        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Fee)
+        // Provider receives exact 95.00 SAR for a 100.00 SAR repair price!
+        $netProviderAmount = max(0, $repairPrice - $azhlFee);
+
+        return [
+            'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
+            'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
+            'subtotal' => (float) number_format($subtotal, 2, '.', ''),
+            'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
+            'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
+            'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
+            'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
+        ];
+    }
+
+    /**
+     * Extract base repair price from order or accepted bid
+     */
+    private function extractRepairPrice($ord): float
+    {
+        $rawPrice = (float) ($ord->price ?? 0);
+        if (!empty($ord->job_id)) {
+            $acceptedBid = \App\Models\BidModel::where('job_id', $ord->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
+            if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                return (float) $acceptedBid->price;
+            }
+        }
+
+        if ($rawPrice > 103) {
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $approxSubtotal = ($rawPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+            $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+
+            if (abs($estimatedRepair - round($estimatedRepair)) < 0.1) {
+                return (float) round($estimatedRepair);
+            }
+            return (float) round($estimatedRepair, 2);
+        }
+
+        return $rawPrice;
+    }
+
+    /**
      * Calculate wallet statistics for a given user and account_type
      * Single source of truth for walletSummary & requestWithdrawal
      */
     private function calculateWalletBalance($userId, string $accountType = 'provider'): array
     {
-        $settings = SystemSettingModel::first();
-        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
-
         if ($accountType === 'provider') {
-            // 1. Pending Amount: Net pending amount (gross price minus azhl fee per order)
+            // 1. Pending Amount: Net pending amount
             $pendingOrders = Orders::where('provider_id', $userId)
                 ->whereIn('status', ['open', 'pending', 'accepted', 'on_the_way', 'arrived', 'working', 'provider_completed', 'quoted'])
                 ->get();
 
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
-                $gross = (float) ($ord->price ?? 0);
-                $netPending = max(0, $gross - $azhlFeePerOrder);
-                $pendingAmount += $netPending;
+                $repairPrice = $this->extractRepairPrice($ord);
+                $financials = $this->calculateOrderFinancials($repairPrice);
+                $pendingAmount += $financials['net_amount'];
             }
 
-            // 2. Completed Orders Net Earnings (gross - fixed azhl_fee)
+            // 2. Completed Orders Net Earnings
             $completedOrders = Orders::where('provider_id', $userId)
                 ->where('status', 'completed')
                 ->get();
 
             $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
-                $gross = (float) ($ord->price ?? 0);
-                $net = max(0, $gross - $azhlFeePerOrder);
-                $orderEarnings += $net;
+                $repairPrice = $this->extractRepairPrice($ord);
+                $financials = $this->calculateOrderFinancials($repairPrice);
+                $orderEarnings += $financials['net_amount'];
             }
 
             // 3. Referral Bonus Credits earned by this user as a Referrer (paid by Azhl out of its pocket)
@@ -122,8 +191,26 @@ class WithdrawalController extends Controller
     }
 
     /**
+     * Resolve account_type dynamically based on request query param, route path, or user active role
+     */
+    private function resolveAccountType(Request $request, User $user): string
+    {
+        $typeParam = strtolower((string) $request->input('account_type', ''));
+
+        if (in_array($typeParam, ['provider', 'marketplace'], true)) {
+            return $typeParam;
+        }
+
+        if ($request->is('*marketplace*') || (int) $user->role === 2) {
+            return 'marketplace';
+        }
+
+        return 'provider';
+    }
+
+    /**
      * Provider / Marketplace Wallet Summary API
-     * Contract matching Page 6 of Specification Doc
+     * Contract matching Page 7 of Specification Doc
      */
     public function walletSummary(Request $request)
     {
@@ -132,17 +219,15 @@ class WithdrawalController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $accountType = $request->input('account_type', 'provider');
-        if (!in_array($accountType, ['provider', 'marketplace'])) {
-            $accountType = 'provider';
-        }
+        $accountType = $this->resolveAccountType($request, $user);
 
         $stats = $this->calculateWalletBalance($user->id, $accountType);
 
         return response()->json([
             'success' => true,
-            'message' => 'Provider wallet summary retrieved successfully.',
+            'message' => ucfirst($accountType) . ' wallet summary retrieved successfully.',
             'data' => [
+                'account_type' => $accountType,
                 'total_earnings' => $stats['total_earnings'],
                 'pending_amount' => $stats['pending_amount'],
                 'available_for_withdrawal' => $stats['available_for_withdrawal'],
@@ -168,11 +253,7 @@ class WithdrawalController extends Controller
                 ], 401);
             }
 
-            $accountType = $request->input('account_type', 'provider');
-
-            if (!in_array($accountType, ['provider', 'marketplace'])) {
-                $accountType = 'provider';
-            }
+            $accountType = $this->resolveAccountType($request, $user);
 
             $validator = Validator::make($request->all(), [
                 'amount' => 'required|numeric|gt:0',
@@ -194,7 +275,7 @@ class WithdrawalController extends Controller
             if (!$bankAccount) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Validation failed.',
+                    'message' => 'Invalid bank account.',
                     'errors' => [
                         'bank_account_id' => [
                             'Selected bank account does not belong to you.'
@@ -245,6 +326,7 @@ class WithdrawalController extends Controller
                     ),
                     'amount' => (float) $withdrawal->amount,
                     'currency' => $withdrawal->currency,
+                    'account_type' => $accountType,
                     'status' => $withdrawal->status,
                     'bank_account' => [
                         'id' => $bankAccount->id,
@@ -285,7 +367,7 @@ class WithdrawalController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $accountType = $request->input('account_type', 'provider');
+        $accountType = $this->resolveAccountType($request, $user);
         $filter = strtolower($request->input('filter', 'all'));
         if (empty($filter) || $filter === 'null') {
             $filter = 'all';
@@ -304,9 +386,12 @@ class WithdrawalController extends Controller
                     ->get();
 
                 foreach ($providerOrders as $ord) {
-                    $gross = (float) ($ord->price ?? 0);
-                    $azhlFee = $azhlFeePerOrder;
-                    $net = max(0, $gross - $azhlFee);
+                    $repairPrice = $this->extractRepairPrice($ord);
+                    $financials = $this->calculateOrderFinancials($repairPrice);
+                    $gross = $financials['repair_price'];
+                    $azhlFee = $financials['azhl_fee'];
+                    $gatewayFee = $financials['gateway_fee'];
+                    $net = $financials['net_amount'];
                     $job = $ord->job;
                     $orderStatus = strtolower($ord->status ?: 'pending');
 
@@ -325,10 +410,13 @@ class WithdrawalController extends Controller
                         'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
                         'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
                         'order_status' => $orderStatus,
-                        'gross_amount' => round($gross, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'referral_fee' => 0.00,
-                        'net_amount' => round($net, 2),
+                        'gross_amount' => number_format($gross, 2, '.', ''),
+                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
+                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'referral_fee' => '0.00',
+                        'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -336,7 +424,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $ord->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => round($net, 2),
+                        'amount' => number_format($net, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($ord->updated_at ? $ord->updated_at->toIso8601String() : null),
                         'credit' => $type === 'cancelled' ? null : $orderPayload,
@@ -357,7 +445,7 @@ class WithdrawalController extends Controller
                         'id' => (int) (800000 + $refReward->id),
                         'type' => 'credit',
                         'label' => 'Referral Bonus',
-                        'amount' => round((float) $refReward->reward_amount, 2),
+                        'amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         'credit' => [
@@ -365,10 +453,10 @@ class WithdrawalController extends Controller
                             'order_no' => $refReward->order_id ? ('ORD-' . str_pad($refReward->order_id, 6, '0', STR_PAD_LEFT)) : 'REF-BONUS',
                             'order_title' => 'Referral Reward for Provider ' . (optional($referredUser)->name ?: ('#' . $refReward->referred_user_id)),
                             'order_status' => 'completed',
-                            'gross_amount' => round((float) $refReward->reward_amount, 2),
-                            'azhl_fee' => 0.00,
-                            'referral_fee' => 0.00,
-                            'net_amount' => round((float) $refReward->reward_amount, 2),
+                            'gross_amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
+                            'azhl_fee' => '0.00',
+                            'referral_fee' => '0.00',
+                            'net_amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
                             'completed_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         ],
                         'cancelled' => null,
@@ -385,9 +473,13 @@ class WithdrawalController extends Controller
                 foreach ($marketplaceOrders as $mktOrder) {
                     $item = $mktOrder->items->firstWhere('shop_id', $user->id);
                     $product = $item?->product;
-                    $gross = (float) ($item?->total_price ?? ($mktOrder->total_amount ?? 0));
-                    $azhlFee = $azhlFeePerOrder;
-                    $net = max(0, $gross - $azhlFee);
+                    $grossPrice = (float) ($item?->total_price ?? ($mktOrder->total_amount ?? 0));
+                    $financials = $this->calculateOrderFinancials($grossPrice);
+
+                    $gross = $financials['repair_price'];
+                    $azhlFee = $financials['azhl_fee'];
+                    $gatewayFee = $financials['gateway_fee'];
+                    $net = $financials['net_amount'];
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
                     $type = 'credit';
@@ -405,10 +497,13 @@ class WithdrawalController extends Controller
                         'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
                         'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
                         'order_status' => $orderStatus,
-                        'gross_amount' => round($gross, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'referral_fee' => 0.00,
-                        'net_amount' => round($net, 2),
+                        'gross_amount' => number_format($gross, 2, '.', ''),
+                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
+                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'referral_fee' => '0.00',
+                        'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -416,7 +511,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $mktOrder->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => round($net, 2),
+                        'amount' => number_format($net, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => $type === 'cancelled' ? null : $orderPayload,

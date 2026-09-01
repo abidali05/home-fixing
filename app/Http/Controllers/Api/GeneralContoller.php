@@ -1105,10 +1105,97 @@ class GeneralContoller extends Controller
         }
     }
 
-    public function my_orders()
+    public function my_orders(Request $request)
     {
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $settings = SystemSettingModel::first();
+            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $formatOrder = function ($order) use ($settings, $azhlFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+                $category = $order->job->category ?? null;
+                if ($category) {
+                    $category->path = $category->path
+                        ? asset('uploads/service_category/' . $category->path)
+                        : asset('assets/img/default.jpg');
+                }
+
+                $repairPrice = (float) ($order->price ?? 0);
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+
+                if ($repairPrice > 103) {
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $netAmount = max(0, $repairPrice - $azhlFee);
+
+                $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->net_amount = number_format($netAmount, 2, '.', '');
+                $order->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'net_amount' => number_format($netAmount, 2, '.', ''),
+                ];
+
+                return $order;
+            };
+
+            $statusFilter = strtolower($request->input('filter', ''));
+            $page = (int) $request->input('page', 0);
+            $perPage = (int) $request->input('per_page', 15);
+
+            if ($statusFilter !== '' || $page > 0 || $request->has('paginate')) {
+                $query = Orders::with(['job.category', 'user'])
+                    ->where('provider_id', $user->id)
+                    ->orderBy('id', 'DESC');
+
+                if ($statusFilter === 'ongoing') {
+                    $query->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed']);
+                } elseif ($statusFilter === 'completed') {
+                    $query->whereIn('status', ['completed']);
+                } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
+                    $query->whereIn('status', ['pending', 'open', 'accepted']);
+                } elseif ($statusFilter === 'cancelled') {
+                    $query->whereIn('status', ['cancelled', 'cancel', 'r eject', 'rejected']);
+                } elseif ($statusFilter !== '' && $statusFilter !== 'all') {
+                    $query->where('status', $statusFilter);
+                }
+
+                $paginator = $query->paginate($perPage);
+
+                $orders = collect($paginator->items())->map(function ($order) use ($formatOrder) {
+                    return $formatOrder($order);
+                });
+
+                return $this->success([
+                    'orders' => $orders,
+                    'pagination' => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page' => $paginator->perPage(),
+                        'last_page' => $paginator->lastPage(),
+                        'total' => $paginator->total(),
+                        'from' => $paginator->firstItem() ?: 0,
+                        'to' => $paginator->lastItem() ?: 0,
+                        'has_more' => $paginator->hasMorePages(),
+                    ],
+                ], 'Provider orders loaded successfully.');
+            }
 
             $statuses = [
                 'ongoing_orders' => ['arrived', 'on_the_way', 'working', 'provider_completed'],
@@ -1119,20 +1206,15 @@ class GeneralContoller extends Controller
 
             $data = [];
 
-            foreach ($statuses as $key => $status) {
+            foreach ($statuses as $key => $statusList) {
                 $orders = Orders::with(['job.category', 'user'])
                     ->where('provider_id', $user->id)
-                    ->whereIn('status', (array) $status)
+                    ->whereIn('status', (array) $statusList)
                     ->orderBy('id', 'DESC')
                     ->get();
 
                 foreach ($orders as $order) {
-                    $category = $order->job->category ?? null;
-                    if ($category) {
-                        $category->path = $category->path
-                            ? asset('uploads/service_category/' . $category->path)
-                            : asset('assets/img/default.jpg');
-                    }
+                    $formatOrder($order);
                 }
 
                 $data[$key] = $orders;

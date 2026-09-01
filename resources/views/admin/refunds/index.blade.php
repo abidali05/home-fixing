@@ -23,10 +23,37 @@
         {{-- Header Card --}}
         <div class="row">
             <div class="col-12">
+                {{-- Category Filter Tabs --}}
+                <ul class="nav nav-pills mb-3" id="refundTabs">
+                    <li class="nav-item me-2">
+                        <a class="nav-link {{ empty($type) || $type === 'all' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.refunds.index') }}">
+                            <i class="bi bi-grid-fill me-1"></i> All Refunds ({{ $allCount }})
+                        </a>
+                    </li>
+                    <li class="nav-item me-2">
+                        <a class="nav-link {{ $type === 'service' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.refunds.index', ['type' => 'service']) }}">
+                            <i class="bi bi-wrench-adjustable me-1"></i> Service Order Refunds ({{ $serviceCount }})
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ $type === 'marketplace' ? 'active bg-primary text-white fw-bold' : 'bg-white text-dark border' }}" href="{{ route('admin.refunds.index', ['type' => 'marketplace']) }}">
+                            <i class="bi bi-cart-check me-1"></i> Marketplace Order Refunds ({{ $marketplaceCount }})
+                        </a>
+                    </li>
+                </ul>
+
                 <div class="card shadow-sm border-0 mb-4">
                     <div class="card-header bg-white pb-0 d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0 font-weight-bold">Customer Order Refund Requests</h6>
-                        <span class="badge bg-primary">Total Refunds: {{ $refunds->count() }}</span>
+                        <h6 class="mb-0 font-weight-bold">
+                            @if ($type === 'service')
+                                Service Order Refund Requests
+                            @elseif ($type === 'marketplace')
+                                Marketplace Order Refund Requests
+                            @else
+                                Customer Order Refund Requests (All)
+                            @endif
+                        </h6>
+                        <span class="badge bg-primary">Total Shown: {{ $refunds->count() }}</span>
                     </div>
                     <div class="card-body px-4 pt-3 pb-3">
                         <div class="table-responsive">
@@ -57,12 +84,19 @@
                                                 <small class="text-muted" title="Saudi Arabia Time (Asia/Riyadh)">{{ $saudiDate }}</small>
                                             </td>
                                             <td>
-                                                <span class="badge bg-outline-info text-info">Order #{{ $refund->order_id }}</span>
+                                                @if ($refund->marketplace_order_id)
+                                                    <span class="badge bg-purple text-white">Marketplace Order #{{ $refund->marketplace_order_id }}</span>
+                                                @else
+                                                    <span class="badge bg-outline-info text-info">Service Order #{{ $refund->order_id }}</span>
+                                                @endif
                                                 @if ($order && $order->cancelled_by_type)
                                                     <small class="d-block text-muted">By: <strong>{{ ucfirst($order->cancelled_by_type) }}</strong></small>
                                                 @endif
                                                 @if ($order && $order->cancellation_reason)
                                                     <small class="d-block text-muted" style="max-width: 180px; word-wrap: break-word;"><em>"{{ $order->cancellation_reason }}"</em></small>
+                                                @endif
+                                                @if ($refund->admin_notes)
+                                                    <small class="d-block text-muted" style="max-width: 180px; word-wrap: break-word;"><em>"{{ $refund->admin_notes }}"</em></small>
                                                 @endif
                                             </td>
                                             <td>

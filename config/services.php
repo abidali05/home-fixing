@@ -50,6 +50,14 @@ return [
         'redirect_url' => env('TAP_REDIRECT_URL', 'https://admin.azhlksa.com/tap/redirect'),
     ],
 
+    'authentica' => [
+        'base_url' => env('AUTHENTICA_BASE_URL', 'https://api.authentica.sa/api/v2'),
+        'api_key' => env('AUTHENTICA_API_KEY', '$2y$10$ypBhodlFFB3Rb.YhEBjJq.Jr0XcydJONFKYxBu.elHOzgRqgSunuG'),
+        'app_hash' => env('AUTHENTICA_APP_HASH', 'Ii43T702uXm'),
+        'template_id' => env('AUTHENTICA_TEMPLATE_ID'),
+        'sender_name' => env('AUTHENTICA_SENDER_NAME'),
+    ],
+
     'ibanapi' => [
         'base_url' => env('IBANAPI_BASE_URL', 'https://api.ibanapi.com/v1'),
         'key' => env('IBANAPI_KEY', ''),

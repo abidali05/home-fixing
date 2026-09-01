@@ -2,19 +2,21 @@
 
 namespace App\Http\Controllers\Api\User;
 
+use App\Http\Controllers\Controller;
+use App\Models\Admin\ServiceCategoryModel;
+use App\Models\Admin\SystemSettingModel;
+use App\Models\JobRequestModel;
+use App\Models\MarketplaceOrder;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\Refund;
-use Illuminate\Http\Request;
-use App\Models\JobRequestModel;
-use Illuminate\Support\Facades\Log;
-use App\Http\Controllers\Controller;
-use Illuminate\Support\Facades\Validator;
-use App\Models\Admin\ServiceCategoryModel;
 use App\Models\Reviews;
 use App\Models\User;
 use App\Notifications\ProviderFeedbackReceivedNotification;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class OrdersController extends Controller
 {
@@ -144,6 +146,155 @@ class OrdersController extends Controller
         } catch (\Throwable $e) {
             Log::error('Error in my_orders: ' . $e->getMessage());
             return $this->error('Failed to load my orders.', 500);
+        }
+    }
+
+    /**
+     * Service Order Receipt API
+     * GET /api/v1/orders/{id}/receipt
+     */
+    public function getReceipt($id)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+            }
+
+            $order = Orders::with(['job.category', 'provider', 'user'])->find($id);
+
+            if (!$order) {
+                return response()->json(['success' => false, 'message' => 'Order not found.'], 404);
+            }
+
+            // Authorization check (Customer or Provider or Admin)
+            if ((int) $order->user_id !== (int) $user->id && (int) $order->provider_id !== (int) $user->id && (int) $user->role !== 0) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access to this order receipt.'], 403);
+            }
+
+            $payment = Payment::where('job_id', $order->job_id)
+                ->orWhere('id', $order->id)
+                ->where('status', 'captured')
+                ->latest()
+                ->first();
+
+            $settings = SystemSettingModel::first();
+            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+
+            $job = $order->job;
+            $categoryName = optional(optional($job)->category)->name ?: 'General Service';
+            $orderTitle = optional($job)->title ?: $categoryName;
+            $paidAmount = $payment ? (float) $payment->amount : (float) ($order->price ?? 0);
+
+            $receiptData = [
+                'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'order_id' => (int) $order->id,
+                'order_no' => 'ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'service_title' => $orderTitle,
+                'category_name' => $categoryName,
+                'customer' => [
+                    'id' => (int) $order->user_id,
+                    'name' => optional($order->user)->name ?? 'Customer',
+                    'email' => optional($order->user)->email ?? '',
+                    'phone' => optional($order->user)->phone ?? '',
+                ],
+                'provider' => [
+                    'id' => (int) ($order->provider_id ?: 0),
+                    'name' => optional($order->provider)->name ?? 'Provider',
+                    'phone' => optional($order->provider)->phone ?? '',
+                ],
+                'amount' => $paidAmount,
+                'azhl_system_fee' => $azhlFee,
+                'currency' => strtoupper($payment ? ($payment->currency ?: 'SAR') : 'SAR'),
+                'order_status' => strtolower($order->status ?: 'completed'),
+                'payment_status' => $payment ? $payment->status : ((int) $order->paid_to_system === 1 ? 'captured' : 'pending'),
+                'payment_gateway' => $payment ? ($payment->gateway ?: 'tap') : 'tap',
+                'tap_charge_id' => $payment ? $payment->tap_charge_id : null,
+                'paid_at' => $payment && $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Service order receipt retrieved successfully.',
+                'data' => $receiptData
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('Error in getReceipt: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to load order receipt: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Marketplace Product Order Receipt API
+     * GET /api/v1/marketplace/orders/{id}/receipt
+     */
+    public function getMarketplaceReceipt($id)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+            }
+
+            $order = MarketplaceOrder::with(['items.product', 'customer'])->find($id);
+
+            if (!$order) {
+                return response()->json(['success' => false, 'message' => 'Marketplace Order not found.'], 404);
+            }
+
+            // Authorization check
+            if ((int) $order->user_id !== (int) $user->id && (int) $user->role !== 0) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized access to this marketplace order receipt.'], 403);
+            }
+
+            $payment = Payment::where('marketplace_order_id', $order->id)
+                ->where('status', 'captured')
+                ->latest()
+                ->first();
+
+            $receiptData = [
+                'receipt_no' => 'MKT-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
+                'order_id' => (int) $order->id,
+                'order_number' => $order->order_number ?: ('ORD-' . str_pad($order->id, 6, '0', STR_PAD_LEFT)),
+                'customer' => [
+                    'id' => (int) $order->user_id,
+                    'name' => optional($order->customer)->name ?? $user->name,
+                    'email' => optional($order->customer)->email ?? $user->email,
+                    'phone' => optional($order->customer)->phone ?? $user->phone,
+                ],
+                'shipping_address' => $order->shipping_address ?: $user->address,
+                'subtotal' => round((float) ($order->subtotal ?? 0), 2),
+                'shipping_cost' => round((float) ($order->shipping_cost ?? 0), 2),
+                'tax_amount' => round((float) ($order->tax_amount ?? 0), 2),
+                'discount_price' => round((float) ($order->discount_price ?? 0), 2),
+                'total_amount' => round((float) ($order->total_amount ?? 0), 2),
+                'currency' => 'SAR',
+                'payment_method' => $order->payment_method ?: 'tap',
+                'payment_status' => $payment ? $payment->status : 'captured',
+                'tap_charge_id' => optional($payment)->tap_charge_id,
+                'items' => $order->items->map(function ($item) {
+                    return [
+                        'item_id' => (int) $item->id,
+                        'product_id' => (int) $item->product_id,
+                        'product_name' => $item->product_name ?: optional($item->product)->product_name,
+                        'quantity' => (int) $item->quantity,
+                        'base_price' => round((float) $item->base_price, 2),
+                        'total_price' => round((float) $item->total_price, 2),
+                    ];
+                }),
+                'paid_at' => $payment && $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null),
+            ];
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Marketplace order receipt retrieved successfully.',
+                'data' => $receiptData
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('Error in getMarketplaceReceipt: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to load marketplace receipt: ' . $e->getMessage()], 500);
         }
     }
 

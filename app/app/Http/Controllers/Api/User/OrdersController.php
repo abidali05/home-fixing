@@ -148,12 +148,44 @@ class OrdersController extends Controller
                 return $this->error('Order not found or unauthorized.', 404);
             }
 
-            $setting = \App\Models\Admin\SystemSettingModel::first();
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $payment = \App\Models\Payment::where('job_id', $order->job_id)
+                ->orWhere('id', $order->id)
+                ->where('status', 'captured')
+                ->latest()
+                ->first();
+
+            $repairPrice = (float) ($order->price ?? 0);
+            if (!empty($order->job_id)) {
+                $acceptedBid = \App\Models\BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+                if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                    $repairPrice = (float) $acceptedBid->price;
+                }
+            }
+
+            if ($repairPrice > 103) {
+                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+            }
+
+            $subtotal = $repairPrice + $customerAppFee;
+            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+            $totalPayableByCustomer = $payment ? (float) $payment->amount : ($repairPrice + $customerAppFee + $totalGatewayFee);
+            $netProviderEarning = max(0, $repairPrice - $azhlFee);
 
             $receiptData = [
                 'receipt_id' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
                 'order_id' => $order->id,
-                'system_name' => optional($setting)->system_name ?? 'Home Fixing',
+                'system_name' => optional($settings)->system_name ?? 'Azhl',
                 'order_date' => $order->created_at ? $order->created_at->toIso8601String() : null,
                 'customer' => [
                     'id' => optional($order->user)->id,
@@ -169,7 +201,24 @@ class OrdersController extends Controller
                     'category' => optional($order->job->category)->name ?? 'Service',
                     'description' => optional($order->job)->description,
                 ],
-                'amount' => (float) $order->price,
+                'financial_breakdown' => [
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($subtotal, 2, '.', ''),
+                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'total_paid_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                    'azhl_provider_commission' => number_format($azhlFee, 2, '.', ''),
+                    'net_provider_earning' => number_format($netProviderEarning, 2, '.', ''),
+                ],
+                'amount' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'repair_price' => number_format($repairPrice, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                'azhl_system_fee' => number_format($azhlFee, 2, '.', ''),
+                'provider_earning' => number_format($netProviderEarning, 2, '.', ''),
                 'currency' => 'SAR',
                 'status' => $order->status,
                 'source' => $order->source,

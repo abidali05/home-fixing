@@ -12,6 +12,51 @@ use Illuminate\Support\Facades\Log;
 class CustomerTransactionController extends Controller
 {
     /**
+     * Helper to calculate itemized customer refund breakdown
+     */
+    private function calculateCustomerRefundBreakdown($order): array
+    {
+        $settings = \App\Models\Admin\SystemSettingModel::first();
+        $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+        $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+        $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+        $repairPrice = (float) ($order->price ?? 0);
+        if ($order && !empty($order->job_id)) {
+            $acceptedBid = \App\Models\BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+            if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                $repairPrice = (float) $acceptedBid->price;
+            }
+        }
+
+        if ($repairPrice > 103) {
+            $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+            $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+            $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+        }
+
+        $subtotal = $repairPrice + $customerAppFee;
+        $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+        $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+        $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+        $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
+
+        $totalDeducted = $customerAppFee + $totalGatewayFee;
+        $netRefund = $repairPrice;
+
+        return [
+            'paid_amount' => number_format($customerTotal, 2, '.', ''),
+            'bid_price' => number_format($repairPrice, 2, '.', ''),
+            'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+            'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+            'total_deducted' => number_format($totalDeducted, 2, '.', ''),
+            'net_refund_amount' => number_format($netRefund, 2, '.', ''),
+            'amount' => number_format($netRefund, 2, '.', ''),
+        ];
+    }
+
+    /**
      * Customer Combined Paginated Transaction History API (Debit Spends & Credit Refunds)
      * GET /api/v1/customer/transactions?page=1&per_page=20&filter=all
      */
@@ -93,14 +138,30 @@ class CustomerTransactionController extends Controller
                             $status = 'requested';
                         }
 
+                        $breakdown = $this->calculateCustomerRefundBreakdown($order);
+
                         $refundData = [
                             'refund_id' => (int) $associatedRefund->id,
                             'refund_no' => $associatedRefund->refund_no ?: ('REF-' . str_pad($associatedRefund->id, 6, '0', STR_PAD_LEFT)),
                             'order_id' => (int) ($order ? $order->id : 0),
                             'order_no' => $orderNo,
-                            'amount' => round((float) ($associatedRefund->amount ?? 0), 2),
+                            'paid_amount' => $breakdown['paid_amount'],
+                            'bid_price' => $breakdown['bid_price'],
+                            'customer_app_fee' => $breakdown['customer_app_fee'],
+                            'gateway_fee' => $breakdown['gateway_fee'],
+                            'total_deducted' => $breakdown['total_deducted'],
+                            'net_refund_amount' => $breakdown['net_refund_amount'],
+                            'amount' => $breakdown['amount'],
                             'currency' => strtoupper($associatedRefund->currency ?: 'SAR'),
                             'status' => $status,
+                            'breakdown' => [
+                                'paid_amount' => $breakdown['paid_amount'],
+                                'bid_price' => $breakdown['bid_price'],
+                                'customer_app_fee' => $breakdown['customer_app_fee'],
+                                'gateway_fee' => $breakdown['gateway_fee'],
+                                'total_deducted' => $breakdown['total_deducted'],
+                                'net_refund_amount' => $breakdown['net_refund_amount'],
+                            ],
                             'refund_reference' => $associatedRefund->bank_reference ?: $associatedRefund->gateway_refund_id,
                             'requested_at' => $associatedRefund->created_at ? $associatedRefund->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                             'accepted_at' => in_array($status, ['accepted', 'completed']) && $associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
@@ -114,7 +175,7 @@ class CustomerTransactionController extends Controller
                         'id' => (int) $p->id,
                         'type' => 'debit',
                         'label' => 'Order Payment',
-                        'amount' => round((float) ($p->amount ?? 0), 2),
+                        'amount' => number_format((float) ($p->amount ?? 0), 2, '.', ''),
                         'currency' => strtoupper($p->currency ?: 'SAR'),
                         'created_at' => $p->created_at ? $p->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'payment' => [
@@ -157,14 +218,30 @@ class CustomerTransactionController extends Controller
                             $status = 'requested';
                         }
 
+                        $breakdown = $this->calculateCustomerRefundBreakdown($ord);
+
                         $refundData = [
                             'refund_id' => (int) $associatedRefund->id,
                             'refund_no' => $associatedRefund->refund_no ?: ('REF-' . str_pad($associatedRefund->id, 6, '0', STR_PAD_LEFT)),
                             'order_id' => (int) $ord->id,
                             'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
-                            'amount' => round((float) ($associatedRefund->amount ?? 0), 2),
+                            'paid_amount' => $breakdown['paid_amount'],
+                            'bid_price' => $breakdown['bid_price'],
+                            'customer_app_fee' => $breakdown['customer_app_fee'],
+                            'gateway_fee' => $breakdown['gateway_fee'],
+                            'total_deducted' => $breakdown['total_deducted'],
+                            'net_refund_amount' => $breakdown['net_refund_amount'],
+                            'amount' => $breakdown['amount'],
                             'currency' => strtoupper($associatedRefund->currency ?: 'SAR'),
                             'status' => $status,
+                            'breakdown' => [
+                                'paid_amount' => $breakdown['paid_amount'],
+                                'bid_price' => $breakdown['bid_price'],
+                                'customer_app_fee' => $breakdown['customer_app_fee'],
+                                'gateway_fee' => $breakdown['gateway_fee'],
+                                'total_deducted' => $breakdown['total_deducted'],
+                                'net_refund_amount' => $breakdown['net_refund_amount'],
+                            ],
                             'refund_reference' => $associatedRefund->bank_reference ?: $associatedRefund->gateway_refund_id,
                             'requested_at' => $associatedRefund->created_at ? $associatedRefund->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                             'accepted_at' => in_array($status, ['accepted', 'completed']) && $associatedRefund->updated_at ? $associatedRefund->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
@@ -178,7 +255,7 @@ class CustomerTransactionController extends Controller
                         'id' => (int) (700000 + $ord->id),
                         'type' => 'debit',
                         'label' => 'Order Payment',
-                        'amount' => round((float) ($ord->price ?? 0), 2),
+                        'amount' => number_format((float) ($ord->price ?? 0), 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'payment' => [
@@ -214,11 +291,13 @@ class CustomerTransactionController extends Controller
                         $status = 'requested';
                     }
 
+                    $breakdown = $this->calculateCustomerRefundBreakdown($order);
+
                     $transactions->push([
                         'id' => (int) (500000 + $refundItem->id),
                         'type' => 'credit',
                         'label' => 'Refund Credit',
-                        'amount' => round((float) ($refundItem->amount ?? 0), 2),
+                        'amount' => $breakdown['amount'],
                         'currency' => strtoupper($refundItem->currency ?: 'SAR'),
                         'created_at' => $refundItem->created_at ? $refundItem->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'payment' => null,
@@ -229,6 +308,22 @@ class CustomerTransactionController extends Controller
                             'order_no' => $refundItem->order_id ? ('ORD-' . str_pad($refundItem->order_id, 6, '0', STR_PAD_LEFT)) : 'N/A',
                             'order_title' => $orderTitle,
                             'status' => $status,
+                            'paid_amount' => $breakdown['paid_amount'],
+                            'bid_price' => $breakdown['bid_price'],
+                            'customer_app_fee' => $breakdown['customer_app_fee'],
+                            'gateway_fee' => $breakdown['gateway_fee'],
+                            'total_deducted' => $breakdown['total_deducted'],
+                            'net_refund_amount' => $breakdown['net_refund_amount'],
+                            'amount' => $breakdown['amount'],
+                            'currency' => strtoupper($refundItem->currency ?: 'SAR'),
+                            'breakdown' => [
+                                'paid_amount' => $breakdown['paid_amount'],
+                                'bid_price' => $breakdown['bid_price'],
+                                'customer_app_fee' => $breakdown['customer_app_fee'],
+                                'gateway_fee' => $breakdown['gateway_fee'],
+                                'total_deducted' => $breakdown['total_deducted'],
+                                'net_refund_amount' => $breakdown['net_refund_amount'],
+                            ],
                             'refund_reference' => $refundItem->bank_reference ?: $refundItem->gateway_refund_id,
                             'requested_at' => $refundItem->created_at ? $refundItem->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                             'accepted_at' => in_array($status, ['accepted', 'completed']) && $refundItem->updated_at ? $refundItem->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,

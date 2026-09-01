@@ -113,6 +113,13 @@ class User extends Authenticatable
 
     public function getTotalOrdersAttribute()
     {
+        if ((string) $this->role === '2') {
+            return \App\Models\MarketplaceOrderItem::where('shop_id', $this->id)
+                ->whereHas('order', function ($q) {
+                    $q->where('status', 'completed');
+                })->count();
+        }
+
         return Orders::where('provider_id', $this->id)->where('status', 'completed')->count();
     }
 
@@ -139,7 +146,54 @@ class User extends Authenticatable
 
     public function getTotalEarningsAttribute()
     {
-        return Orders::where('provider_id', $this->id)->where('status', 'completed')->sum('price') ?? 0;
+        $settings = Admin\SystemSettingModel::first();
+        $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+        $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+        $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+        $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+        if ((string) $this->role === '2') {
+            $items = \App\Models\MarketplaceOrderItem::where('shop_id', $this->id)
+                ->whereHas('order', function ($q) {
+                    $q->where('status', 'completed');
+                })->get();
+
+            $total = 0.0;
+            foreach ($items as $item) {
+                $itemPrice = (float) ($item->total_price ?? 0);
+                $net = max(0, $itemPrice - $azhlFee);
+                $total += $net;
+            }
+            return (float) number_format($total, 2, '.', '');
+        }
+
+        $completedOrders = Orders::where('provider_id', $this->id)->where('status', 'completed')->get();
+        $orderEarnings = 0.0;
+
+        foreach ($completedOrders as $ord) {
+            $repairPrice = (float) ($ord->price ?? 0);
+            if (!empty($ord->job_id)) {
+                $bid = BidModel::where('job_id', $ord->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
+                if ($bid && (float) $bid->price > 0) {
+                    $repairPrice = (float) $bid->price;
+                }
+            }
+
+            if ($repairPrice > 103) {
+                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+            }
+
+            $net = max(0, $repairPrice - $azhlFee);
+            $orderEarnings += $net;
+        }
+
+        $referralEarnings = (float) ReferralReward::where('referrer_id', $this->id)->sum('reward_amount');
+        $totalEarnings = $orderEarnings + $referralEarnings;
+
+        return (float) number_format($totalEarnings, 2, '.', '');
     }
 
     /**

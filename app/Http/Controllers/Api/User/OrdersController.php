@@ -179,12 +179,36 @@ class OrdersController extends Controller
                 ->first();
 
             $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
             $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $job = $order->job;
             $categoryName = optional(optional($job)->category)->name ?: 'General Service';
             $orderTitle = optional($job)->title ?: $categoryName;
-            $paidAmount = $payment ? (float) $payment->amount : (float) ($order->price ?? 0);
+
+            $repairPrice = (float) ($order->price ?? 0);
+            if (!empty($order->job_id)) {
+                $acceptedBid = \App\Models\BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+                if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                    $repairPrice = (float) $acceptedBid->price;
+                }
+            }
+
+            if ($repairPrice > 103) {
+                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+            }
+
+            $subtotal = $repairPrice + $customerAppFee;
+            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+            $totalPayableByCustomer = $payment ? (float) $payment->amount : ($repairPrice + $customerAppFee + $totalGatewayFee);
+            $netProviderEarning = max(0, $repairPrice - $azhlFee);
 
             $receiptData = [
                 'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
@@ -203,8 +227,24 @@ class OrdersController extends Controller
                     'name' => optional($order->provider)->name ?? 'Provider',
                     'phone' => optional($order->provider)->phone ?? '',
                 ],
-                'amount' => $paidAmount,
-                'azhl_system_fee' => $azhlFee,
+                'financial_breakdown' => [
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($subtotal, 2, '.', ''),
+                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'total_paid_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                    'azhl_provider_commission' => number_format($azhlFee, 2, '.', ''),
+                    'net_provider_earning' => number_format($netProviderEarning, 2, '.', ''),
+                ],
+                'amount' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'repair_price' => number_format($repairPrice, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                'azhl_system_fee' => number_format($azhlFee, 2, '.', ''),
+                'provider_earning' => number_format($netProviderEarning, 2, '.', ''),
                 'currency' => strtoupper($payment ? ($payment->currency ?: 'SAR') : 'SAR'),
                 'order_status' => strtolower($order->status ?: 'completed'),
                 'payment_status' => $payment ? $payment->status : ((int) $order->paid_to_system === 1 ? 'captured' : 'pending'),

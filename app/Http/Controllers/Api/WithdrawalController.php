@@ -31,29 +31,62 @@ class WithdrawalController extends Controller
         $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
         $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-        // 1. Total Customer Payment at Checkout
-        $customerTotal = $repairPrice + $customerAppFee;
+        // 1. Subtotal for customer before gateway fee
+        $subtotal = $repairPrice + $customerAppFee;
 
-        // 2. Gateway Fee Subtotal (percentage of customer total + fixed fee)
-        $gatewaySubtotal = ($customerTotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-
-        // 3. VAT on Gateway Fee
+        // 2. Gateway Fee Subtotal + VAT
+        $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
         $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-
-        // 4. Total Gateway Fee including VAT
         $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
 
-        // 5. Net Amount for Technician / Provider (Repair Price minus Provider Fee minus Total Gateway Fee)
-        $netProviderAmount = max(0, $repairPrice - $azhlFee - $totalGatewayFee);
+        // 3. Total Amount paid by Customer at Checkout
+        $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
+
+        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Fee)
+        // Provider receives exact 95.00 SAR for a 100.00 SAR repair price!
+        $netProviderAmount = max(0, $repairPrice - $azhlFee);
 
         return [
-            'repair_price' => round($repairPrice, 2),
-            'customer_app_fee' => round($customerAppFee, 2),
-            'customer_total' => round($customerTotal, 2),
-            'azhl_fee' => round($azhlFee, 2),
-            'gateway_fee' => round($totalGatewayFee, 3),
-            'net_amount' => round($netProviderAmount, 2),
+            'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
+            'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
+            'subtotal' => (float) number_format($subtotal, 2, '.', ''),
+            'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
+            'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
+            'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
+            'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
         ];
+    }
+
+    /**
+     * Extract base repair price from order or accepted bid
+     */
+    private function extractRepairPrice($ord): float
+    {
+        $rawPrice = (float) ($ord->price ?? 0);
+        if (!empty($ord->job_id)) {
+            $acceptedBid = \App\Models\BidModel::where('job_id', $ord->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
+            if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                return (float) $acceptedBid->price;
+            }
+        }
+
+        if ($rawPrice > 103) {
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $approxSubtotal = ($rawPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+            $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+
+            if (abs($estimatedRepair - round($estimatedRepair)) < 0.1) {
+                return (float) round($estimatedRepair);
+            }
+            return (float) round($estimatedRepair, 2);
+        }
+
+        return $rawPrice;
     }
 
     /**
@@ -70,7 +103,8 @@ class WithdrawalController extends Controller
 
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
-                $financials = $this->calculateOrderFinancials((float) ($ord->price ?? 0));
+                $repairPrice = $this->extractRepairPrice($ord);
+                $financials = $this->calculateOrderFinancials($repairPrice);
                 $pendingAmount += $financials['net_amount'];
             }
 
@@ -81,7 +115,8 @@ class WithdrawalController extends Controller
 
             $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
-                $financials = $this->calculateOrderFinancials((float) ($ord->price ?? 0));
+                $repairPrice = $this->extractRepairPrice($ord);
+                $financials = $this->calculateOrderFinancials($repairPrice);
                 $orderEarnings += $financials['net_amount'];
             }
 
@@ -351,7 +386,8 @@ class WithdrawalController extends Controller
                     ->get();
 
                 foreach ($providerOrders as $ord) {
-                    $financials = $this->calculateOrderFinancials((float) ($ord->price ?? 0));
+                    $repairPrice = $this->extractRepairPrice($ord);
+                    $financials = $this->calculateOrderFinancials($repairPrice);
                     $gross = $financials['repair_price'];
                     $azhlFee = $financials['azhl_fee'];
                     $gatewayFee = $financials['gateway_fee'];
@@ -374,13 +410,13 @@ class WithdrawalController extends Controller
                         'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
                         'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
                         'order_status' => $orderStatus,
-                        'gross_amount' => round($gross, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'gateway_fee' => round($gatewayFee, 2),
-                        'customer_app_fee' => round($financials['customer_app_fee'], 2),
-                        'customer_total' => round($financials['customer_total'], 2),
-                        'referral_fee' => 0.00,
-                        'net_amount' => round($net, 2),
+                        'gross_amount' => number_format($gross, 2, '.', ''),
+                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
+                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'referral_fee' => '0.00',
+                        'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -388,7 +424,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $ord->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => round($net, 2),
+                        'amount' => number_format($net, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $ord->created_at ? $ord->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($ord->updated_at ? $ord->updated_at->toIso8601String() : null),
                         'credit' => $type === 'cancelled' ? null : $orderPayload,
@@ -409,7 +445,7 @@ class WithdrawalController extends Controller
                         'id' => (int) (800000 + $refReward->id),
                         'type' => 'credit',
                         'label' => 'Referral Bonus',
-                        'amount' => round((float) $refReward->reward_amount, 2),
+                        'amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         'credit' => [
@@ -417,10 +453,10 @@ class WithdrawalController extends Controller
                             'order_no' => $refReward->order_id ? ('ORD-' . str_pad($refReward->order_id, 6, '0', STR_PAD_LEFT)) : 'REF-BONUS',
                             'order_title' => 'Referral Reward for Provider ' . (optional($referredUser)->name ?: ('#' . $refReward->referred_user_id)),
                             'order_status' => 'completed',
-                            'gross_amount' => round((float) $refReward->reward_amount, 2),
-                            'azhl_fee' => 0.00,
-                            'referral_fee' => 0.00,
-                            'net_amount' => round((float) $refReward->reward_amount, 2),
+                            'gross_amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
+                            'azhl_fee' => '0.00',
+                            'referral_fee' => '0.00',
+                            'net_amount' => number_format((float) $refReward->reward_amount, 2, '.', ''),
                             'completed_at' => $refReward->created_at ? $refReward->created_at->toIso8601String() : null,
                         ],
                         'cancelled' => null,
@@ -461,13 +497,13 @@ class WithdrawalController extends Controller
                         'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
                         'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
                         'order_status' => $orderStatus,
-                        'gross_amount' => round($gross, 2),
-                        'azhl_fee' => round($azhlFee, 2),
-                        'gateway_fee' => round($gatewayFee, 2),
-                        'customer_app_fee' => round($financials['customer_app_fee'], 2),
-                        'customer_total' => round($financials['customer_total'], 2),
-                        'referral_fee' => 0.00,
-                        'net_amount' => round($net, 2),
+                        'gross_amount' => number_format($gross, 2, '.', ''),
+                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
+                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'referral_fee' => '0.00',
+                        'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -475,7 +511,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $mktOrder->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => round($net, 2),
+                        'amount' => number_format($net, 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => $type === 'cancelled' ? null : $orderPayload,

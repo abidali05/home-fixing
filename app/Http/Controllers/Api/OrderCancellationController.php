@@ -116,8 +116,27 @@ class OrderCancellationController extends Controller
             $refundData = null;
 
             if ($isPaid && $paidAmount > 0) {
-                // Customer Net Refund Amount = Paid Amount minus Azhl System Fee (e.g. 50 - 5 = 45 SAR)
-                $refundAmount = max(0, $paidAmount - $azhlFee);
+                // Customer Net Refund Amount = Repair Price (100.00 SAR)
+                // Customer App Fee and Gateway Fee are retained as non-refundable system fees
+                $refundRepairPrice = (float) ($order->price ?? 0);
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $refundRepairPrice = (float) $acceptedBid->price;
+                    }
+                }
+                if ($refundRepairPrice > 103) {
+                    $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                    $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+                    $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+                    $approxSubtotal = ($refundRepairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                    $refundRepairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $refundAmount = $refundRepairPrice;
 
                 // Customer Bank Account for Refund
                 $bankAccountId = $request->input('bank_account_id');

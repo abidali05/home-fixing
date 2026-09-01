@@ -58,10 +58,21 @@ class PaymentController extends Controller
                 return $this->error('Bid not found for this job.', 404);
             }
 
-            // 3. Calculate total payable amount by customer (Bid Price + Customer App Fee)
+            // 3. Calculate total payable amount by customer (Bid Price + App Fee + Gateway Fee + VAT)
             $settings = \App\Models\Admin\SystemSettingModel::first();
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $customerTotal = (float) $bid->price + $customerAppFee;
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $repairPrice = (float) ($bid->price ?? 0);
+            $subtotal = $repairPrice + $customerAppFee;
+
+            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+
+            $totalPayableByCustomer = $repairPrice + $customerAppFee + $totalGatewayFee;
 
             $payment = Payment::where('job_id', $job->id)
                 ->where('bid_id', $bid->id)
@@ -76,15 +87,14 @@ class PaymentController extends Controller
                     'job_id' => $job->id,
                     'bid_id' => $bid->id,
                     'provider_id' => $bid->provider_id,
-                    'amount' => $customerTotal,
+                    'amount' => round($totalPayableByCustomer, 2),
                     'currency' => 'SAR',
                     'gateway' => 'tap',
                     'status' => 'pending',
                 ]);
             } else {
-                // Ensure amount matches latest bid price + customer app fee
                 $payment->update([
-                    'amount' => $customerTotal,
+                    'amount' => round($totalPayableByCustomer, 2),
                     'provider_id' => $bid->provider_id,
                 ]);
             }
@@ -93,8 +103,18 @@ class PaymentController extends Controller
 
             return $this->success([
                 'payment_id' => $payment->id,
-                'amount' => (float) $payment->amount,
+                'amount' => (float) number_format($payment->amount, 2, '.', ''),
                 'currency' => $payment->currency,
+                'payment_breakdown' => [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($subtotal, 2, '.', ''),
+                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                ]
             ], 'Payment initiated successfully.');
 
         } catch (\Throwable $e) {

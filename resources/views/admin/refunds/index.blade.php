@@ -104,7 +104,42 @@
                                                 <small class="text-muted">{{ optional($customer)->phone }}</small>
                                             </td>
                                             <td>
-                                                <strong class="text-dark">{{ number_format($refund->amount, 2) }} {{ strtoupper($refund->currency ?: 'SAR') }}</strong>
+                                                @php
+                                                    $repairPrice = (float) ($refund->amount ?? 0);
+                                                    $paidAmount = 0.0;
+                                                    if ($refund->order) {
+                                                        $ord = $refund->order;
+                                                        $repairPrice = (float) ($ord->price ?? 0);
+                                                        if (!empty($ord->job_id)) {
+                                                            $acceptedBid = \App\Models\BidModel::where('job_id', $ord->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+                                                            if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                                                                $repairPrice = (float) $acceptedBid->price;
+                                                            }
+                                                        }
+                                                        if ($repairPrice > 103) {
+                                                            $settings = \App\Models\Admin\SystemSettingModel::first();
+                                                            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+                                                            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+                                                            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                                                            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+                                                            $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                                                            $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                                                            $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                                                        }
+                                                        $pmt = \App\Models\Payment::where('job_id', $ord->job_id)->orWhere('id', $ord->id)->where('status', 'captured')->latest()->first();
+                                                        $paidAmount = $pmt ? (float) $pmt->amount : ($repairPrice + 3.00 + 4.11);
+                                                    } else {
+                                                        $repairPrice = (float) ($refund->amount ?? 0);
+                                                        $paidAmount = $repairPrice;
+                                                    }
+                                                    $deductedFees = max(0, $paidAmount - $repairPrice);
+                                                @endphp
+                                                <div class="fw-bold text-success" style="font-size: 0.95rem;">Net Refund: {{ number_format($repairPrice, 2) }} {{ strtoupper($refund->currency ?: 'SAR') }}</div>
+                                                @if ($paidAmount > $repairPrice)
+                                                    <small class="d-block text-muted">Paid: {{ number_format($paidAmount, 2) }} SAR</small>
+                                                    <small class="d-block text-danger">Fees Retained: {{ number_format($deductedFees, 2) }} SAR</small>
+                                                @endif
                                             </td>
                                             <td>
                                                 @if ($bank)

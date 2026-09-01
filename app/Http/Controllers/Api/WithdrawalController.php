@@ -10,6 +10,7 @@ use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
 use App\Models\ReferralReward;
+use App\Models\User;
 use App\Models\Withdrawal;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -122,8 +123,26 @@ class WithdrawalController extends Controller
     }
 
     /**
+     * Resolve account_type dynamically based on request query param, route path, or user active role
+     */
+    private function resolveAccountType(Request $request, User $user): string
+    {
+        $typeParam = strtolower((string) $request->input('account_type', ''));
+
+        if (in_array($typeParam, ['provider', 'marketplace'], true)) {
+            return $typeParam;
+        }
+
+        if ($request->is('*marketplace*') || (int) $user->role === 2) {
+            return 'marketplace';
+        }
+
+        return 'provider';
+    }
+
+    /**
      * Provider / Marketplace Wallet Summary API
-     * Contract matching Page 6 of Specification Doc
+     * Contract matching Page 7 of Specification Doc
      */
     public function walletSummary(Request $request)
     {
@@ -132,17 +151,15 @@ class WithdrawalController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $accountType = $request->input('account_type', 'provider');
-        if (!in_array($accountType, ['provider', 'marketplace'])) {
-            $accountType = 'provider';
-        }
+        $accountType = $this->resolveAccountType($request, $user);
 
         $stats = $this->calculateWalletBalance($user->id, $accountType);
 
         return response()->json([
             'success' => true,
-            'message' => 'Provider wallet summary retrieved successfully.',
+            'message' => ucfirst($accountType) . ' wallet summary retrieved successfully.',
             'data' => [
+                'account_type' => $accountType,
                 'total_earnings' => $stats['total_earnings'],
                 'pending_amount' => $stats['pending_amount'],
                 'available_for_withdrawal' => $stats['available_for_withdrawal'],
@@ -168,11 +185,7 @@ class WithdrawalController extends Controller
                 ], 401);
             }
 
-            $accountType = $request->input('account_type', 'provider');
-
-            if (!in_array($accountType, ['provider', 'marketplace'])) {
-                $accountType = 'provider';
-            }
+            $accountType = $this->resolveAccountType($request, $user);
 
             $validator = Validator::make($request->all(), [
                 'amount' => 'required|numeric|gt:0',
@@ -194,7 +207,7 @@ class WithdrawalController extends Controller
             if (!$bankAccount) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Validation failed.',
+                    'message' => 'Invalid bank account.',
                     'errors' => [
                         'bank_account_id' => [
                             'Selected bank account does not belong to you.'
@@ -245,6 +258,7 @@ class WithdrawalController extends Controller
                     ),
                     'amount' => (float) $withdrawal->amount,
                     'currency' => $withdrawal->currency,
+                    'account_type' => $accountType,
                     'status' => $withdrawal->status,
                     'bank_account' => [
                         'id' => $bankAccount->id,
@@ -285,7 +299,7 @@ class WithdrawalController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $accountType = $request->input('account_type', 'provider');
+        $accountType = $this->resolveAccountType($request, $user);
         $filter = strtolower($request->input('filter', 'all'));
         if (empty($filter) || $filter === 'null') {
             $filter = 'all';

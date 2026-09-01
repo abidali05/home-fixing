@@ -107,37 +107,98 @@
                                             @enderror
                                         </div>
 
-                                        <div class="mb-4">
-                                            <label for="azhl_fee" class="form-label fw-semibold">Azhl Fixed Platform Fee (SAR per order)</label>
-                                            <div class="input-group input-group-alternative">
-                                                <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('azhl_fee') is-invalid @enderror"
-                                                    name="azhl_fee" id="azhl_fee"
-                                                    value="{{ old('azhl_fee', $settings->azhl_fee ?? 5.00) }}" placeholder="e.g. 5.00" required>
-                                                <span class="input-group-text font-weight-bold">SAR</span>
-                                            </div>
-                                            <small class="text-muted d-block mt-1">Fixed Rial amount deducted by Azhl from provider/seller earnings per completed order (e.g. 5 SAR).</small>
-                                            @error('azhl_fee')
-                                                <div class="invalid-feedback">{{ $message }}</div>
-                                            @enderror
-                                        </div>
+                                         <hr class="my-4">
+                                         <h6 class="text-uppercase text-body text-xs font-weight-bolder mb-3">Order Financials & Payment Gateway Configuration</h6>
 
-                                        <div class="mb-4">
-                                            <label for="referral_amount" class="form-label fw-semibold">Referral Bonus Amount (SAR)</label>
-                                            <div class="input-group input-group-alternative">
-                                                <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('referral_amount') is-invalid @enderror"
-                                                    name="referral_amount" id="referral_amount"
-                                                    value="{{ old('referral_amount', $settings->referral_amount ?? 10.00) }}" placeholder="e.g. 10.00" required>
-                                                <span class="input-group-text font-weight-bold">SAR</span>
-                                            </div>
-                                            <small class="text-muted d-block mt-1">Fixed Rial reward amount credited to users/providers upon successful referral.</small>
-                                            @error('referral_amount')
-                                                <div class="invalid-feedback">{{ $message }}</div>
-                                            @enderror
-                                        </div>
+                                         <div class="mb-4">
+                                             <label for="customer_app_fee" class="form-label fw-semibold">Customer App Service Fee (SAR per order)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('customer_app_fee') is-invalid @enderror"
+                                                     name="customer_app_fee" id="customer_app_fee"
+                                                     value="{{ old('customer_app_fee', $settings->customer_app_fee ?? 3.00) }}" placeholder="e.g. 3.00" required>
+                                                 <span class="input-group-text font-weight-bold">SAR</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">App platform fee added to customer repair total at checkout (e.g. 3 SAR paid by customer).</small>
+                                             @error('customer_app_fee')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
 
-                                        <div class="d-grid col-4 mx-auto">
-                                            <button type="submit" class="btn btn-primary btn-lg">Update Settings</button>
-                                        </div>
+                                         <div class="mb-4">
+                                             <label for="azhl_fee" class="form-label fw-semibold">Service Provider Commission Fee (SAR per order)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('azhl_fee') is-invalid @enderror"
+                                                     name="azhl_fee" id="azhl_fee"
+                                                     value="{{ old('azhl_fee', $settings->azhl_fee ?? 5.00) }}" placeholder="e.g. 5.00" required>
+                                                 <span class="input-group-text font-weight-bold">SAR</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">Fixed commission fee deducted by AZHL App from service provider earnings per completed order (e.g. 5 SAR).</small>
+                                             @error('azhl_fee')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
+
+                                         <div class="mb-4">
+                                             <label for="payment_gateway_fee_percentage" class="form-label fw-semibold">Payment Gateway Fee Percentage (%)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" max="100" class="form-control form-control-lg @error('payment_gateway_fee_percentage') is-invalid @enderror"
+                                                     name="payment_gateway_fee_percentage" id="payment_gateway_fee_percentage"
+                                                     value="{{ old('payment_gateway_fee_percentage', $settings->payment_gateway_fee_percentage ?? 2.50) }}" placeholder="e.g. 2.50" required>
+                                                 <span class="input-group-text font-weight-bold">%</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">Card processing percentage fee charged by payment gateway (e.g. 2.5%).</small>
+                                             @error('payment_gateway_fee_percentage')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
+
+                                         <div class="mb-4">
+                                             <label for="payment_gateway_fixed_fee" class="form-label fw-semibold">Payment Gateway Fixed Fee (SAR per order)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('payment_gateway_fixed_fee') is-invalid @enderror"
+                                                     name="payment_gateway_fixed_fee" id="payment_gateway_fixed_fee"
+                                                     value="{{ old('payment_gateway_fixed_fee', $settings->payment_gateway_fixed_fee ?? 1.00) }}" placeholder="e.g. 1.00" required>
+                                                 <span class="input-group-text font-weight-bold">SAR</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">Fixed transaction fee charged by payment gateway per order (e.g. 1.00 SAR).</small>
+                                             @error('payment_gateway_fixed_fee')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
+
+                                         <div class="mb-4">
+                                             <label for="payment_gateway_vat_percentage" class="form-label fw-semibold">Payment Gateway VAT Percentage (%)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" max="100" class="form-control form-control-lg @error('payment_gateway_vat_percentage') is-invalid @enderror"
+                                                     name="payment_gateway_vat_percentage" id="payment_gateway_vat_percentage"
+                                                     value="{{ old('payment_gateway_vat_percentage', $settings->payment_gateway_vat_percentage ?? 15.00) }}" placeholder="e.g. 15.00" required>
+                                                 <span class="input-group-text font-weight-bold">%</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">VAT percentage applied on the total gateway fee (e.g. 15%).</small>
+                                             @error('payment_gateway_vat_percentage')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
+
+                                         <hr class="my-4">
+
+                                         <div class="mb-4">
+                                             <label for="referral_amount" class="form-label fw-semibold">Referral Bonus Amount (SAR)</label>
+                                             <div class="input-group input-group-alternative">
+                                                 <input type="number" step="0.01" min="0" class="form-control form-control-lg @error('referral_amount') is-invalid @enderror"
+                                                     name="referral_amount" id="referral_amount"
+                                                     value="{{ old('referral_amount', $settings->referral_amount ?? 10.00) }}" placeholder="e.g. 10.00" required>
+                                                 <span class="input-group-text font-weight-bold">SAR</span>
+                                             </div>
+                                             <small class="text-muted d-block mt-1">Fixed Rial reward amount credited to users/providers upon successful referral.</small>
+                                             @error('referral_amount')
+                                                 <div class="invalid-feedback">{{ $message }}</div>
+                                             @enderror
+                                         </div>
+
+                                         <div class="d-grid col-4 mx-auto">
+                                             <button type="submit" class="btn btn-primary btn-lg">Update Settings</button>
+                                         </div></div>
                                     </form>
                                 </div>
 

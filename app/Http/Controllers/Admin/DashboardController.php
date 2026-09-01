@@ -42,10 +42,34 @@ class DashboardController extends Controller
             $totalProducts = 0;
             $totalCampaigns = 0;
 
-            $totalOrdersPrice = (float) DB::table('orders')
+            $companyCompletedOrders = DB::table('orders')
                 ->whereIn('provider_id', $assignedProviderIds)
                 ->whereIn('status', ['completed', 'delivered'])
-                ->sum('price');
+                ->get();
+
+            $settings = DB::table('system_settings')->first();
+            $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
+            $azhlFeeSetting = (float) ($settings->azhl_fee ?? 5.00);
+            $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $totalOrdersPrice = 0.0;
+            foreach ($companyCompletedOrders as $ord) {
+                $repairPrice = (float) ($ord->price ?? 0);
+                if (!empty($ord->job_id)) {
+                    $acceptedBid = DB::table('bids')->where('job_id', $ord->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+                if ($repairPrice > 103) {
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFeeSetting * (1 + $gatewayVatPctSetting / 100)) / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFeeSetting);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+                $totalOrdersPrice += max(0, $repairPrice - $azhlFeeSetting);
+            }
 
             $totalMarketplaceRevenue = 0.0;
             $pendingMarketplaceOrders = 0;
@@ -110,9 +134,57 @@ class DashboardController extends Controller
             $totalProducts = DB::table('products')->count();
             $totalCampaigns = DB::table('campaigns')->count();
 
-            $totalOrdersPrice = (float) DB::table('orders')
+            $settings = DB::table('system_settings')->first();
+            $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
+            $azhlFeeSetting = (float) ($settings->azhl_fee ?? 5.00);
+            $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $completedOrders = DB::table('orders')
                 ->whereIn('status', ['completed', 'delivered'])
-                ->sum('price');
+                ->get();
+
+            $totalCustomerPaidVolume = 0.0;
+            $totalNetRepairVolume = 0.0;
+            $totalProviderNetEarnings = 0.0;
+            $totalNetAzhlAppProfit = 0.0;
+            $totalGatewayFeesWithVat = 0.0;
+
+            foreach ($completedOrders as $ord) {
+                $repairPrice = (float) ($ord->price ?? 0);
+                if (!empty($ord->job_id)) {
+                    $acceptedBid = DB::table('bids')
+                        ->where('job_id', $ord->job_id)
+                        ->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])
+                        ->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+
+                if ($repairPrice > 103) {
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFeeSetting * (1 + $gatewayVatPctSetting / 100)) / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFeeSetting);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $subtotal = $repairPrice + $customerAppFeeSetting;
+                $gatewaySubtotal = ($subtotal * ($gatewayFeePctSetting / 100)) + $gatewayFixedFeeSetting;
+                $gatewayVat = $gatewaySubtotal * ($gatewayVatPctSetting / 100);
+                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+                $totalCustomerPaid = $repairPrice + $customerAppFeeSetting + $totalGatewayFee;
+
+                $providerNet = max(0, $repairPrice - $azhlFeeSetting);
+
+                $totalCustomerPaidVolume += $totalCustomerPaid;
+                $totalNetRepairVolume += $repairPrice;
+                $totalProviderNetEarnings += $providerNet;
+                $totalNetAzhlAppProfit += ($customerAppFeeSetting + $azhlFeeSetting);
+                $totalGatewayFeesWithVat += $totalGatewayFee;
+            }
+
+            $totalOrdersPrice = $totalProviderNetEarnings;
 
             $totalMarketplaceRevenue = (float) DB::table('marketplace_orders')
                 ->whereNotIn('status', ['reject', 'cancelled'])

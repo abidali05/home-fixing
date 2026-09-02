@@ -1,0 +1,297 @@
+--- PAGE 1 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+AZHL
+Order Cancellation & Customer Refund
+Backend API & Business Logic Specification
+Customer  |  Provider  |  Marketplace  |  Admin Monitoring
+CORE RULE
+If a paid order is cancelled before financial completion by the Customer, Provider, or Marketplace, the full paid order 
+value must be refunded to the Customer. No Azhl platform fee is deducted on a cancelled order.
+Example: Customer paid 50 SAR -> Order cancelled -> Customer refund = 50 SAR
+1. Business Rule
+ Cancellation can be initiated by the Customer, Provider, or Marketplace.
+ Cancellation is allowed only while the order is still eligible for cancellation and has not been financially settled 
+as completed.
+ If payment was successfully collected, the full captured order amount must be refunded to the same Customer 
+payment source whenever the payment gateway supports it.
+ Azhl fee is not charged on a cancelled order because the service/order was not completed.
+ Any provider/marketplace pending amount related to the cancelled order must be removed immediately from 
+pending earnings.
+ A completed/refunded order must not be processed twice.
+2. 50 SAR Example
+CUSTOMER PAYS
+50 SAR
+AZHL HOLDS
+50 SAR
+ORDER
+CANCELLED
+REFUND
+50 SAR
+Platform Fee = 0 SAR  |  Provider/Marketplace Earning = 0 SAR  |  Customer Refund = 50 SAR
+3. Cancellation Actors
+Actor Allowed Action Refund Recipient Required Data
+Customer Cancel eligible order Customer Cancellation reason
+Provider Cancel eligible assigned order Customer Cancellation reason
+Marketplace Cancel eligible marketplace 
+order
+Customer Cancellation reason
+
+--- PAGE 2 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+Important
+Backend should infer cancelled_by from the authenticated account/role. The client should not be trusted to submit a 
+different actor ID.
+4. Order & Refund Statuses
+Order Status
+active / accepted / in_progress -> cancelled
+completed -> cancellation not allowed
+cancelled -> cannot cancel again
+Refund Status
+not_required   Payment was never captured
+requested      Refund record created
+processing     Refund sent to payment gateway
+refunded       Customer refund completed
+failed         Gateway/manual refund failed and needs retry/review
+5. Cancellation API
+POST /api/v1/orders/{order_id}/cancel
+Authorization: Bearer {token}
+Content-Type: application/json
+Request
+{
+  "reason": "Provider is unavailable and cannot complete this order."
+}
+ reason: required, string, recommended max 1000 characters.
+ Backend validates that the authenticated Customer/Provider/Marketplace is actually related to the order.
+ Backend validates that the order status is cancellable.
+ Backend checks the payment status before deciding whether a refund is required.
+
+--- PAGE 3 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+6. Successful Cancellation - Refund Processing
+{
+  "success": true,
+  "message": "Order cancelled successfully. Refund is being processed.",
+  "data": {
+    "order_id": 812,
+    "order_no": "ORD-000812",
+    "order_status": "cancelled",
+    "cancelled_by": "provider",
+    "cancellation_reason": "Provider is unavailable.",
+    "cancelled_at": "2026-08-19T11:45:00+05:00",
+    "payment": {
+      "paid_amount": 50.00,
+      "currency": "SAR"
+    },
+    "refund": {
+      "amount": 50.00,
+      "currency": "SAR",
+      "status": "processing",
+      "refund_reference": null
+    }
+  }
+}
+7. Successful Refund Response
+{
+  "success": true,
+  "message": "Order cancelled and customer refunded successfully.",
+  "data": {
+    "order_id": 812,
+    "order_status": "cancelled",
+    "refund": {
+      "amount": 50.00,
+      "currency": "SAR",
+      "status": "refunded",
+      "refund_reference": "REF_9X81AB23",
+      "refunded_at": "2026-08-19T11:46:12+05:00"
+    }
+  }
+}
+8. No Captured Payment Case
+Scenario
+If an order is cancelled before a successful payment/capture exists, cancellation still succeeds but no gateway refund 
+is required.
+
+--- PAGE 4 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+{
+  "order_status": "cancelled",
+  "refund": {
+    "status": "not_required",
+    "amount": 0.00
+  }
+}
+9. Wallet / Pending Balance Adjustment
+Provider Order
+Before cancellation:
+Order Amount = 50 SAR
+Provider Pending Amount includes 50 SAR
+After cancellation:
+Provider Pending Amount -= 50 SAR
+Provider Available Balance += 0 SAR
+Azhl Fee += 0 SAR
+Customer Refund = 50 SAR
+Marketplace Order
+Before cancellation:
+Marketplace pending amount includes the paid order amount
+After cancellation:
+Remove cancelled order amount from Marketplace pending
+Do not create marketplace earning
+Refund the full paid amount to Customer
+No Credit Transaction
+A cancelled order must not create a Provider/Marketplace CREDIT wallet transaction because no earning was 
+finalized. The cancellation/refund should remain visible in order/payment/refund history.
+10. Refund Record
+ Create one refund record per refund attempt / logical refund according to the payment integration design.
+ Store the original payment reference/charge ID.
+ Store the payment gateway refund reference once returned.
+ Store refund amount and currency.
+ Store requested_at, processed_at/refunded_at, failed_at and failure_reason as applicable.
+ Store who caused the cancellation through cancelled_by on the order/cancellation record.
+
+--- PAGE 5 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+Recommended refunds Table
+id
+refund_no
+order_id
+payment_id
+customer_id
+amount
+currency
+status
+gateway
+gateway_refund_id
+failure_reason
+requested_at
+refunded_at
+failed_at
+created_at
+updated_at
+11. Recommended Order Cancellation Fields
+order_status
+cancelled_by_type       customer | provider | marketplace
+cancelled_by_id
+cancellation_reason
+cancelled_at
+refund_status
+refund_id
+12. Payment Gateway Refund Logic
+LOCK ORDER VALIDATE
+CANCELLATION
+CREATE
+REFUND
+CALL PAYMENT
+GATEWAY
+UPDATE
+REFUND STATUS
+ Use the original successful payment/charge reference for the refund.
+ Refund amount must equal the amount actually captured for the order when the business rule is full refund.
+ Do not mark refund as refunded before the gateway confirms success.
+ Persist gateway response/reference needed for reconciliation.
+ If gateway call fails, keep the order cancelled but mark refund as failed/processing according to the failure type 
+and expose it for retry/admin review.
+
+--- PAGE 6 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+13. Failed Refund Handling
+{
+  "success": true,
+  "message": "Order cancelled, but refund requires review.",
+  "data": {
+    "order_status": "cancelled",
+    "refund": {
+      "amount": 50.00,
+      "status": "failed",
+      "failure_reason": "Payment gateway refund request failed."
+    }
+  }
+}
+Critical
+Do not reactivate the order just because the refund API fails. Cancellation and refund settlement are separate states. 
+Failed refunds should be retried or handled by Admin without creating duplicate refunds.
+14. Admin Refund Monitoring
+GET /api/v1/admin/refunds?status=failed&page=1
+GET /api/v1/admin/refunds?status=processing&page=1
+GET /api/v1/admin/refunds?status=refunded&page=1
+ Admin should see Order No., Customer, Cancelled By, Cancel Reason, Paid Amount, Refund Amount, Refund 
+Status, Gateway Reference and timestamps.
+ Admin should be able to retry failed refunds only through a protected/idempotent backend action.
+ Manual completion should require a reference/note if the refund is settled outside the automatic payment 
+gateway flow.
+15. Business Validation Errors
+Completed Order Cannot Be Cancelled
+HTTP 422
+{
+  "success": false,
+  "message": "Completed orders cannot be cancelled.",
+  "data": null
+}
+
+--- PAGE 7 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+Unauthorized Actor
+HTTP 403
+{
+  "success": false,
+  "message": "You are not authorized to cancel this order."
+}
+Already Cancelled
+HTTP 422
+{
+  "success": false,
+  "message": "This order has already been cancelled."
+}
+16. Database Transaction / Locking
+BEGIN TRANSACTION
+1. Lock order row
+2. Validate actor + order state
+3. Mark order cancelled once
+4. Remove order amount from Provider/Marketplace pending balance
+5. Create cancellation/refund record
+6. Commit cancellation state
+Refund gateway processing executes with idempotency protection
+and updates refund status without creating a duplicate refund.
+17. Idempotency Rules
+ The same order cannot be cancelled twice.
+ The same captured payment cannot be fully refunded twice.
+ A retry must reuse/recognize the existing refund record instead of creating another 50 SAR refund.
+ Wallet pending balance must be reduced only once.
+ Gateway webhooks and API responses must be safe if delivered more than once.
+
+--- PAGE 8 ---
+AZHL  |  BACKEND HANDOFF
+Order Cancellation & Customer Refund Specification
+18. Final End-to-End Flow
+Customer / Provider / Marketplace cancels order
+Backend validates actor and cancellable order status
+Order status -> CANCELLED
+Remove order amount from Provider / Marketplace pending
+Check successful captured payment
+Create full refund for Customer
+Refund amount = original paid order value
+Azhl fee = 0 | Provider/Marketplace earning = 0
+Gateway confirms refund -> REFUNDED
+19. Backend Acceptance Checklist
+ ✓ Customer can cancel own eligible order.
+ ✓ Assigned Provider can cancel eligible order.
+ ✓ Related Marketplace can cancel eligible order.
+ ✓ Full captured amount is refunded to Customer.
+ ✓ No Azhl fee is deducted on cancelled order.
+ ✓ Provider/Marketplace pending amount is removed once.
+ ✓ No credit earning is created for cancelled order.
+ ✓ Refund has requested/processing/refunded/failed state.
+ ✓ Completed order cannot be cancelled through normal cancellation flow.
+ ✓ Duplicate cancellation/refund is prevented.
+ ✓ Admin can monitor failed/processing refunds.
+ ✓ All timestamps and gateway references are stored for audit.
+Final Rule
+PAID + CANCELLED BEFORE COMPLETION = FULL CUSTOMER REFUND. For a 50 SAR paid order: Customer gets 50 
+SAR back, Azhl fee is 0 SAR, and Provider/Marketplace earning is 0 SAR.
+

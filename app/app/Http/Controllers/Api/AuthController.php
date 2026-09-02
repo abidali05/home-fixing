@@ -2167,33 +2167,110 @@ public function verify_otp(Request $request)
         try {
             $user = auth('sanctum')->user();
 
-            $cartItems = Cart::with('product')
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+            $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $productsSubtotal = 0.0;
+            $totalProductVat = 0.0;
+
+            $cartItemsRaw = Cart::with('product')
                 ->where('user_id', $user->id)
                 ->latest()
-                ->get()
-                ->map(function ($cartItem) {
-                    if ($cartItem->product) {
-                        $cartItem->product->banner_image = !empty($cartItem->product->banner_image)
-                            ? asset('storage/' . $cartItem->product->banner_image)
-                            : asset('assets/img/default.jpg');
+                ->get();
 
-                        $images = $cartItem->product->product_images;
+            $hasItems = $cartItemsRaw->count() > 0;
 
-                        if (is_string($images)) {
-                            $images = array_filter(explode(',', $images));
-                        }
+            // Map cart items
+            $cartItems = $cartItemsRaw->map(function ($cartItem) use ($marketplaceVatPct, &$productsSubtotal, &$totalProductVat) {
+                $price = 0.0;
+                if ($cartItem->product) {
+                    $price = (float) ($cartItem->product->sale_price ?: $cartItem->product->price);
 
-                        $cartItem->product->product_images = collect($images ?: [])
-                            ->map(function ($image) {
-                                return asset('storage/' . $image);
-                            })
-                            ->values();
+                    $cartItem->product->banner_image = !empty($cartItem->product->banner_image)
+                        ? asset('storage/' . $cartItem->product->banner_image)
+                        : asset('assets/img/default.jpg');
+
+                    $images = $cartItem->product->product_images;
+
+                    if (is_string($images)) {
+                        $images = array_filter(explode(',', $images));
                     }
 
-                    return $cartItem;
-                });
+                    $cartItem->product->product_images = collect($images ?: [])
+                        ->map(function ($image) {
+                            return asset('storage/' . $image);
+                        })
+                        ->values();
+                }
 
-            return $this->success($cartItems, 'Cart fetched successfully');
+                $quantity = (int) ($cartItem->quantity ?? 1);
+                $itemSubtotal = $price * $quantity;
+                $itemVat = $itemSubtotal * ($marketplaceVatPct / 100);
+                $itemTotalWithVat = $itemSubtotal + $itemVat;
+
+                $productsSubtotal += $itemSubtotal;
+                $totalProductVat += $itemVat;
+
+                $cartItem->price = number_format($price, 2, '.', '');
+                $cartItem->base_price = number_format($price, 2, '.', '');
+                $cartItem->quantity = $quantity;
+                $cartItem->item_subtotal = number_format($itemSubtotal, 2, '.', '');
+                $cartItem->vat_percentage = number_format($marketplaceVatPct, 2, '.', '');
+                $cartItem->item_vat = number_format($itemVat, 2, '.', '');
+                $cartItem->item_total = number_format($itemTotalWithVat, 2, '.', '');
+                $cartItem->total_price = number_format($itemTotalWithVat, 2, '.', '');
+
+                return $cartItem;
+            });
+
+            $productsTotalWithVat = $productsSubtotal + $totalProductVat;
+            $appFeeToApply = 0.0;
+
+            // Gateway Fee & VAT calculation for Marketplace (No App Fee added)
+            if ($hasItems && $productsSubtotal > 0) {
+                $baseSubtotal = $productsSubtotal;
+                $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+                $totalPayableByCustomer = $productsTotalWithVat + $totalGatewayFee;
+            } else {
+                $baseSubtotal = 0.0;
+                $gatewaySubtotal = 0.0;
+                $gatewayVat = 0.0;
+                $totalGatewayFee = 0.0;
+                $totalPayableByCustomer = 0.0;
+            }
+
+            $summary = [
+                'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
+                'marketplace_vat_percentage' => number_format($marketplaceVatPct, 2, '.', ''),
+                'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
+                'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
+                'customer_app_fee' => '0.00',
+                'subtotal' => number_format($baseSubtotal, 2, '.', ''),
+                'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'fixed_transaction_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'gateway_fee_subtotal' => number_format($gatewaySubtotal, 2, '.', ''),
+                'gateway_vat_percentage' => number_format($gatewayVatPct, 2, '.', ''),
+                'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'grand_total' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total_amount' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'currency' => strtoupper(optional($settings)->currency ?? 'SAR'),
+            ];
+
+            return $this->success(array_merge([
+                'items' => $cartItems,
+                'summary' => $summary,
+                'payment_breakdown' => $summary,
+            ], $summary), 'Cart fetched successfully');
         } catch (\Throwable $e) {
             Log::error('Error in getCart: ' . $e->getMessage());
 

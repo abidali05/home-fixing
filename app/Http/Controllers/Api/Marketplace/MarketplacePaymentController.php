@@ -60,19 +60,69 @@ class MarketplacePaymentController extends Controller
                 return response()->json(['success' => false, 'message' => 'Some cart items were invalid and have been removed. Please review your cart.'], 422);
             }
 
-            $subtotal = (float) $cartItems->sum('total_price');
-            $shippingCost = (float) ($request->input('shipping_cost') ?? 0);
-            $taxAmount = (float) ($request->input('tax_amount') ?? 0);
-            $totalAmount = max(0.1, round($subtotal + $shippingCost + $taxAmount, 2));
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+            $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $checkoutMetadata = [
+            $productsSubtotal = 0.0;
+            $totalProductVat = 0.0;
+
+            foreach ($cartItems as $ci) {
+                $price = 0.0;
+                if ($ci->product) {
+                    $price = (float) ($ci->product->sale_price ?: $ci->product->price);
+                }
+                $qty = (int) ($ci->quantity ?? 1);
+                $sub = $price * $qty;
+                $vat = $sub * ($marketplaceVatPct / 100);
+                $productsSubtotal += $sub;
+                $totalProductVat += $vat;
+            }
+
+            $productsTotalWithVat = $productsSubtotal + $totalProductVat;
+            $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
+            $appFeeToApply = 0.0;
+
+            $baseSubtotal = $productsSubtotal;
+            $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+
+            $totalAmount = max(0.1, round($productsTotalWithVat + $shippingCost + $totalGatewayFee, 2));
+
+            $breakdown = [
+                'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
+                'marketplace_vat_percentage' => number_format($marketplaceVatPct, 2, '.', ''),
+                'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
+                'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
+                'customer_app_fee' => '0.00',
+                'subtotal' => number_format($baseSubtotal, 2, '.', ''),
+                'shipping_cost' => number_format($shippingCost, 2, '.', ''),
+                'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
+                'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'fixed_transaction_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
+                'gateway_fee_subtotal' => number_format($gatewaySubtotal, 2, '.', ''),
+                'gateway_vat_percentage' => number_format($gatewayVatPct, 2, '.', ''),
+                'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
+                'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                'total_payable_by_customer' => number_format($totalAmount, 2, '.', ''),
+                'grand_total' => number_format($totalAmount, 2, '.', ''),
+                'total_amount' => number_format($totalAmount, 2, '.', ''),
+                'currency' => strtoupper(optional($settings)->currency ?? 'SAR'),
+            ];
+
+            $checkoutMetadata = array_merge([
                 'shipping_address' => $request->input('shipping_address') ?: $user->address,
                 'shipping_cost' => $shippingCost,
-                'tax_amount' => $taxAmount,
-                'subtotal' => $subtotal,
+                'tax_amount' => $totalProductVat,
+                'subtotal' => $productsSubtotal,
                 'notes' => $request->input('notes'),
                 'cart_items_count' => $cartItems->count(),
-            ];
+            ], $breakdown);
 
             // Create Payment session for Cart Checkout
             $payment = Payment::create([
@@ -93,16 +143,16 @@ class MarketplacePaymentController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Marketplace Cart payment session initiated successfully.',
-                'data' => [
+                'data' => array_merge([
                     'payment_id' => (int) $payment->id,
-                    'amount' => (float) $payment->amount,
+                    'amount' => number_format((float) $payment->amount, 2, '.', ''),
                     'currency' => $payment->currency,
-                    'subtotal' => $subtotal,
-                    'shipping_cost' => $shippingCost,
-                    'tax_amount' => $taxAmount,
                     'status' => $payment->status,
                     'cart_items_count' => $cartItems->count(),
-                ]
+                    'breakdown' => $breakdown,
+                    'payment_breakdown' => $breakdown,
+                    'summary' => $breakdown,
+                ], $breakdown)
             ], 200);
 
         } catch (\Throwable $e) {

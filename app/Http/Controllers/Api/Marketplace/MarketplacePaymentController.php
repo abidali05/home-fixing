@@ -7,7 +7,6 @@ use App\Http\Requests\ProcessChargeRequest;
 use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\Payment;
-use App\Models\Product;
 use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;

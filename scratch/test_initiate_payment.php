@@ -5,29 +5,37 @@ $app = require_once __DIR__ . '/../bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
-use App\Http\Controllers\Api\PaymentController;
-use App\Models\BidModel;
-use App\Models\JobRequestModel;
+use App\Http\Controllers\Api\Marketplace\MarketplacePaymentController;
+use App\Models\Cart;
+use App\Models\Product;
 use App\Models\User;
 use Illuminate\Http\Request;
 
-$bid = BidModel::first();
-if (!$bid) {
-    echo "No bid found.\n";
-    exit;
+$user = User::find(141) ?? User::first();
+auth('sanctum')->setUser($user);
+
+// Clear cart and add a 20 SAR product
+Cart::where('user_id', $user->id)->delete();
+$product = Product::first();
+if ($product) {
+    $product->sale_price = 20.00;
+    $product->save();
+
+    Cart::create([
+        'user_id' => $user->id,
+        'product_id' => $product->id,
+        'quantity' => 1,
+        'base_price' => 20.00,
+        'total_price' => 20.00
+    ]);
 }
 
-$job = JobRequestModel::find($bid->job_id);
-$customer = User::find($job->user_id);
-auth('sanctum')->setUser($customer);
+$controller = app(MarketplacePaymentController::class);
+$request = Request::create('/api/v1/marketplace/cart/initiate-payment', 'POST', [
+    'shipping_address' => 'Riyadh, Saudi Arabia',
+    'shipping_cost' => 0.00
+]);
 
-// Set job status to pending for testing initiate
-$job->status = 'pending';
-$job->save();
+$response = $controller->initiateCartPayment($request);
 
-$controller = app(PaymentController::class);
-
-$req = Request::create("/api/jobs/{$job->id}/bids/{$bid->id}/initiate-payment", 'POST');
-$res = $controller->initiatePayment($req, $job->id, $bid->id);
-
-echo "Output for POST jobs/{$job->id}/bids/{$bid->id}/initiate-payment:\n" . json_encode($res->getData(), JSON_PRETTY_PRINT) . "\n";
+echo "POST /marketplace/cart/initiate-payment Response:\n" . json_encode($response->getData(), JSON_PRETTY_PRINT) . "\n";

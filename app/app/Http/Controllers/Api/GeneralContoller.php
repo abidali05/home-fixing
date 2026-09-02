@@ -35,15 +35,34 @@ class GeneralContoller extends Controller
     public function system_settings()
     {
         try {
-            $data = SystemSettingModel::select('system_name', 'logo', 'currency', 'payment_method')->first();
+            $data = SystemSettingModel::first();
 
             if (!$data) {
                 return $this->notFound('System settings not found');
             }
 
-            $data->logo = asset('uploads/system_settings/' . $data->logo);
+            $logoUrl = !empty($data->logo) ? asset('uploads/system_settings/' . $data->logo) : asset('assets/img/logo.png');
 
-            return $this->success($data, 'System settings fetched successfully');
+            $formattedData = [
+                'id' => (int) $data->id,
+                'system_name' => (string) ($data->system_name ?? 'Azhl'),
+                'logo' => $logoUrl,
+                'currency' => (string) ($data->currency ?? 'SAR'),
+                'payment_method' => (string) ($data->payment_method ?? 'applepay'),
+                'azhl_percentage' => number_format((float) ($data->azhl_percentage ?? 10.00), 2, '.', ''),
+                'azhl_fee' => number_format((float) ($data->azhl_fee ?? 5.00), 2, '.', ''),
+                'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
+                'marketplace_vat_percentage' => number_format((float) ($data->marketplace_vat_percentage ?? 15.00), 2, '.', ''),
+                'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
+                'fixed_transaction_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
+                'payment_gateway_vat_percentage' => number_format((float) ($data->payment_gateway_vat_percentage ?? 15.00), 2, '.', ''),
+                'referral_amount' => number_format((float) ($data->referral_amount ?? 10.00), 2, '.', ''),
+                'created_at' => $data->created_at,
+                'updated_at' => $data->updated_at,
+            ];
+
+            return $this->success($formattedData, 'System settings fetched successfully');
         } catch (Exception $e) {
             return $this->error('An error occurred while fetching system settings', 500, [
                 'exception' => $e->getMessage()

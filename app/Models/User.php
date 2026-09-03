@@ -162,9 +162,10 @@ class User extends Authenticatable
             $total = 0.0;
             foreach ($items as $item) {
                 $itemPrice = (float) ($item->total_price ?? 0);
-                $commission = $itemPrice * ($azhlPercentage / 100);
-                $net = max(0, $itemPrice - $commission);
-                $total += $net;
+                if ($itemPrice <= 0) {
+                    $itemPrice = (float) ($item->base_price ?? 0) * (int) ($item->quantity ?? 1);
+                }
+                $total += $itemPrice;
             }
             return (float) number_format($total, 2, '.', '');
         }

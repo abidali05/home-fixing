@@ -66,14 +66,14 @@ class WithdrawalController extends Controller
     {
         $settings = SystemSettingModel::first();
         $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
         $vatAmount = round($productSubtotal * ($marketplaceVatPct / 100), 2);
         $totalWithVat = round($productSubtotal + $vatAmount, 2);
 
-        // Platform commission is azhl_percentage of product subtotal (e.g. 10% of 100 SAR = 10 SAR)
-        $azhlFee = round($productSubtotal * ($azhlPercentage / 100), 2);
-        $netAmount = max(0, round($productSubtotal - $azhlFee, 2));
+        // In marketplace, 15% VAT is taken by Azhl.
+        // The seller gets the full product subtotal (e.g. 160 SAR) without provider commission deductions.
+        $azhlFee = 0.0;
+        $netAmount = (float) $productSubtotal;
 
         return [
             'products_subtotal' => $productSubtotal,
@@ -84,13 +84,12 @@ class WithdrawalController extends Controller
             'tax_amount' => $vatAmount,
             'products_total_with_vat' => $totalWithVat,
             'customer_paid_with_tax' => $totalWithVat,
-            // For seller transactions, gross_amount & customer_total are shown as product amount (e.g. 100 SAR) since 15% VAT is taken by Azhl
             'gross_amount' => $productSubtotal,
             'customer_total' => $productSubtotal,
             'total_amount' => $productSubtotal,
             'customer_app_fee' => 0.0,
             'gateway_fee' => 0.0,
-            'azhl_percentage' => $azhlPercentage,
+            'azhl_percentage' => 0.0,
             'azhl_fee' => $azhlFee,
             'net_amount' => $netAmount,
             'currency' => 'SAR',

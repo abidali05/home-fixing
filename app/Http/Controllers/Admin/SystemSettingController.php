@@ -13,8 +13,13 @@ class SystemSettingController extends Controller
     public function index(Request $request)
     {
         $settings = SystemSettingModel::first();
-        $images = MobileBanners::all();
-        return view('admin.system_setting.index', compact('settings', 'images'));
+        $images = MobileBanners::with('marketplace.marketplaceProfile')->get();
+        $marketplaces = \App\Models\User::query()
+            ->with('marketplaceProfile')
+            ->whereHas('marketplaceProfile')
+            ->orderBy('name')
+            ->get();
+        return view('admin.system_setting.index', compact('settings', 'images', 'marketplaces'));
     }
 
 
@@ -25,6 +30,14 @@ class SystemSettingController extends Controller
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,svg|max:2048',
             'currency' => 'required|string|max:10',
             'payment_method' => 'required|string|max:50',
+            'azhl_percentage' => 'nullable|numeric|min:0|max:100',
+            'azhl_fee' => 'nullable|numeric|min:0',
+            'customer_app_fee' => 'nullable|numeric|min:0',
+            'marketplace_vat_percentage' => 'nullable|numeric|min:0|max:100',
+            'payment_gateway_fee_percentage' => 'nullable|numeric|min:0|max:100',
+            'payment_gateway_fixed_fee' => 'nullable|numeric|min:0',
+            'payment_gateway_vat_percentage' => 'nullable|numeric|min:0|max:100',
+            'referral_amount' => 'nullable|numeric|min:0',
         ]);
 
         $settings = SystemSettingModel::first();
@@ -35,6 +48,16 @@ class SystemSettingController extends Controller
         $settings->system_name = $request->system_name;
         $settings->currency = $request->currency;
         $settings->payment_method = $request->payment_method;
+        $settings->azhl_percentage = $request->input('azhl_percentage', $settings->azhl_percentage ?? 10.00);
+        if ($request->has('azhl_fee')) {
+            $settings->azhl_fee = $request->input('azhl_fee');
+        }
+        $settings->customer_app_fee = $request->input('customer_app_fee', 3.00);
+        $settings->marketplace_vat_percentage = $request->input('marketplace_vat_percentage', 15.00);
+        $settings->payment_gateway_fee_percentage = $request->input('payment_gateway_fee_percentage', 2.50);
+        $settings->payment_gateway_fixed_fee = $request->input('payment_gateway_fixed_fee', 1.00);
+        $settings->payment_gateway_vat_percentage = $request->input('payment_gateway_vat_percentage', 15.00);
+        $settings->referral_amount = $request->input('referral_amount', 10.00);
 
         if ($request->hasFile('logo')) {
             if ($settings->logo && file_exists(public_path('uploads/system_settings/' . $settings->logo))) {
@@ -58,7 +81,12 @@ class SystemSettingController extends Controller
         $request->validate([
             'banners' => 'required|array',
             'banners.*' => 'image|max:8192',
+            'showMarketplace' => 'nullable|in:0,1,on,true',
+            'marketplace_id' => 'required_if:showMarketplace,1,on,true|nullable|exists:users,id',
         ]);
+
+        $showMarketplace = $request->boolean('showMarketplace');
+        $marketplaceId = $showMarketplace ? $request->input('marketplace_id') : null;
 
         if ($request->hasFile('banners')) {
             foreach ($request->file('banners') as $banner) {
@@ -67,6 +95,8 @@ class SystemSettingController extends Controller
                 $banner->move(public_path('uploads/mobile_banners/'), $filename);
                 MobileBanners::create([
                     'path' => $filename,
+                    'showMarketplace' => $showMarketplace,
+                    'marketplace_id' => $marketplaceId,
                 ]);
             }
         }

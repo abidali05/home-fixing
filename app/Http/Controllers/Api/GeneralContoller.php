@@ -6,11 +6,13 @@ use Exception;
 use App\Models\AppVersion;
 use App\Models\User;
 use App\Models\Orders;
+use App\Models\Reviews;
 use App\Models\BidModel;
 use App\Models\CityModel;
 use App\Models\FaqModel;
 use App\Models\Cart;
 use Illuminate\Http\Request;
+use App\Models\MarketplaceOrder;
 use App\Models\OrderTracking;
 use App\Models\JobRequestModel;
 use App\Models\ProviderGallery;
@@ -33,15 +35,34 @@ class GeneralContoller extends Controller
     public function system_settings()
     {
         try {
-            $data = SystemSettingModel::select('system_name', 'logo', 'currency', 'payment_method')->first();
+            $data = SystemSettingModel::first();
 
             if (!$data) {
                 return $this->notFound('System settings not found');
             }
 
-            $data->logo = asset('uploads/system_settings/' . $data->logo);
+            $logoUrl = !empty($data->logo) ? asset('uploads/system_settings/' . $data->logo) : asset('assets/img/logo.png');
 
-            return $this->success($data, 'System settings fetched successfully');
+            $formattedData = [
+                'id' => (int) $data->id,
+                'system_name' => (string) ($data->system_name ?? 'Azhl'),
+                'logo' => $logoUrl,
+                'currency' => (string) ($data->currency ?? 'SAR'),
+                'payment_method' => (string) ($data->payment_method ?? 'applepay'),
+                'azhl_percentage' => number_format((float) ($data->azhl_percentage ?? 10.00), 2, '.', ''),
+                'azhl_fee' => number_format((float) ($data->azhl_fee ?? 5.00), 2, '.', ''),
+                'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
+                'marketplace_vat_percentage' => number_format((float) ($data->marketplace_vat_percentage ?? 15.00), 2, '.', ''),
+                'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
+                'fixed_transaction_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
+                'payment_gateway_vat_percentage' => number_format((float) ($data->payment_gateway_vat_percentage ?? 15.00), 2, '.', ''),
+                'referral_amount' => number_format((float) ($data->referral_amount ?? 10.00), 2, '.', ''),
+                'created_at' => $data->created_at,
+                'updated_at' => $data->updated_at,
+            ];
+
+            return $this->success($formattedData, 'System settings fetched successfully');
         } catch (Exception $e) {
             return $this->error('An error occurred while fetching system settings', 500, [
                 'exception' => $e->getMessage()
@@ -70,12 +91,27 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
-            $banners = MobileBanners::select('path')->orderBy('id', 'desc')->get()->map(function ($banner) {
-                $banner->path = ($banner->path && $banner->path != '' && $banner->path != null) ? asset('uploads/mobile_banners/' . $banner->path) : asset('assets/img/default.jpg');
-                return $banner;
-            });
+            $banners = MobileBanners::select('id', 'path', 'showMarketplace', 'marketplace_id')
+                ->orderBy('id', 'desc')
+                ->get()
+                ->map(function ($banner) {
+                    $bannerPath = ($banner->path && $banner->path != '' && $banner->path != null)
+                        ? asset('uploads/mobile_banners/' . $banner->path)
+                        : asset('assets/img/default.jpg');
 
+                    $data = [
+                        'path' => $bannerPath,
+                    ];
+
+                    if ($banner->showMarketplace) {
+                        $data['marketplace_id'] = $banner->marketplace_id;
+                    }
+
+                    return $data;
+                });
 
             $topCategoryIds = JobRequestModel::where('status', '!=', 'cancelled')
                 ->select('category_id', DB::raw('COUNT(*) as total'))
@@ -103,9 +139,16 @@ class GeneralContoller extends Controller
                     return $service;
                 });
 
-
             $providers = User::with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
                 ->latest()
@@ -114,67 +157,67 @@ class GeneralContoller extends Controller
                 ->map(function ($provider) {
                     $provider = $this->decorateProvider($provider);
                     $serviceCategories = $this->getProviderServiceCategories($provider);
-
                     $provider->categories = ServiceCategoryModel::whereIn('id', $serviceCategories)->get()
                         ->map(function ($cat) {
                             $cat->path = $cat->path && !str_starts_with($cat->path, 'http')
                                 ? asset('uploads/service_category/' . $cat->path)
                                 : $cat->path;
                             return $cat;
-                        })
-                        ->values();
-
+                        })->values();
                     return $provider;
-                })
-                ->values();
+                })->values();
 
             $marketplaces = User::query()
+                ->select('users.*')
+                ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->whereHas('marketplaceProfile')
-                ->where('id', '!=', $user->id)
-                ->where('marketplace_status', 'active')
-                ->latest()
+                ->where('users.id', '!=', $user->id)
+                ->where('users.marketplace_status', 'active')
+                ->when($lat && $lng, function ($q) use ($lat, $lng) {
+                    $q->whereRaw(
+                        '(6371 * acos(cos(radians(?)) * cos(radians(COALESCE(marketplace_profiles.latitude, users.latitude))) * cos(radians(COALESCE(marketplace_profiles.longitude, users.longitude)) - radians(?)) + sin(radians(?)) * sin(radians(COALESCE(marketplace_profiles.latitude, users.latitude))))) <= 5',
+                        [$lat, $lng, $lat]
+                    );
+                })
+                ->orderBy('users.created_at', 'desc')
                 ->limit(4)
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplace($marketplace);
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
-
-                    $services = ServiceCategoryModel::query()
+                    $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
                         ->get(['id', 'name'])
-                        ->map(function ($service) {
-                            return [
-                                'id' => $service->id,
-                                'name' => $service->name,
-                            ];
-                        })
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
                         ->values();
-
-                    $marketplace->services = $services;
-
                     return $marketplace;
                 });
 
             $active_orders = Orders::with(['job.category', 'provider'])
                 ->where('user_id', $user->id)
-                ->whereIn('status', ['on_the_way', 'arrived', 'working'])
+                ->whereIn('status', ['open','pending','on_the_way', 'arrived', 'working','provider_completed'])
+                ->latest()
+                ->limit(4)
+                ->get();
+
+            $active_marketplace_orders = MarketplaceOrder::with('items')
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['pending', 'accept', 'processing', 'mark_as_shipped', 'mark_as_delivered'])
                 ->latest()
                 ->limit(4)
                 ->get();
 
             $cart_count = Cart::where('user_id', $user->id)->count();
 
-            $data = [
-                'banners' => $banners,
+            return $this->success([
+                'banners'        => $banners,
                 'popular_services' => $popular_services,
-                'providers' => $providers,
-                'marketplaces' => $marketplaces,
-                'active_orders' => $active_orders,
-                'cart_count' => $cart_count,
-            ];
-
-            return $this->success($data, 'Home page fetched successfully');
+                'providers'      => $providers,
+                'marketplaces'   => $marketplaces,
+                'active_orders'  => $active_orders,
+                'active_marketplace_orders' => $active_marketplace_orders,
+                'cart_count'     => $cart_count,
+            ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
                 'exception' => $e->getMessage()
@@ -278,50 +321,48 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
             $users = User::select('id', 'name', 'profile_image')
                 ->with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
-                ->get();
+                ->get()
+                ->map(function ($provider) {
+                    $provider->loadMissing('providerProfile');
+                    $providerProfile = $provider->providerProfile;
 
-            $users = $users->map(function ($provider) {
-                $provider->loadMissing('providerProfile');
-                $providerProfile = $provider->providerProfile;
+                    if ($providerProfile) {
+                        $serviceIds = $this->getProviderServiceCategories($provider);
+                        $providerProfile->services = ServiceCategoryModel::query()
+                            ->whereIn('id', $serviceIds)
+                            ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                            ->map(function ($category) {
+                                $category->path = $category->path && !str_starts_with($category->path, 'http')
+                                    ? asset('uploads/service_category/' . $category->path)
+                                    : $category->path;
+                                return $category;
+                            })->values();
+                    }
 
-                if ($providerProfile) {
-                    $serviceIds = $this->getProviderServiceCategories($provider);
+                    return $provider;
+                });
 
-                    $providerProfile->services = ServiceCategoryModel::query()
-                        ->whereIn('id', $serviceIds)
-                        ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
-                        ->map(function ($category) {
-                            $category->path = $category->path && !str_starts_with($category->path, 'http')
-                                ? asset('uploads/service_category/' . $category->path)
-                                : $category->path;
-
-                            return $category;
-                        })
-                        ->values();
-                }
-
-                return $provider;
-            });
-
-            return response()->json([
-                'status' => true,
-                'message' => 'All services fetched successfully',
-                'data' => $users
-            ]);
+            return $this->success($users, 'All providers fetched successfully');
         } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'message' => 'An error occurred while fetching all services',
-                'data' => [
-                    'exception' => $e->getMessage()
-                ]
-            ], 500);
+            return $this->error('An error occurred while fetching all providers', 500, [
+                'exception' => $e->getMessage()
+            ]);
         }
     }
 
@@ -594,6 +635,140 @@ class GeneralContoller extends Controller
         }
     }
 
+    public function toggle_favorite_marketplace(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'marketplace_id' => 'nullable|integer',
+            'marketplace_store_id' => 'nullable|integer',
+            'seller_id' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors(), 'Validation failed.');
+        }
+
+        $marketplaceId = $request->input('marketplace_id')
+            ?? $request->input('marketplace_store_id')
+            ?? $request->input('seller_id');
+
+        if (!$marketplaceId) {
+            return $this->error('marketplace_id is required.', 422);
+        }
+
+        try {
+            $user = auth('sanctum')->user();
+            $marketplace = User::where('id', $marketplaceId)->whereHas('marketplaceProfile')->first();
+
+            if (!$marketplace) {
+                return $this->notFound('Marketplace shop not found');
+            }
+
+            $existing = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->where('marketplace_id', $marketplace->id)
+                ->first();
+
+            if ($existing) {
+                DB::table('favorite_marketplaces')
+                    ->where('user_id', $user->id)
+                    ->where('marketplace_id', $marketplace->id)
+                    ->delete();
+
+                return $this->success([
+                    'marketplace_id' => (int) $marketplace->id,
+                    'is_favorite' => false,
+                ], 'Marketplace removed from favorites');
+            }
+
+            DB::table('favorite_marketplaces')->insert([
+                'user_id' => $user->id,
+                'marketplace_id' => $marketplace->id,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return $this->success([
+                'marketplace_id' => (int) $marketplace->id,
+                'is_favorite' => true,
+            ], 'Marketplace added to favorites');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while updating favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace_ids()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            return $this->success($ids, 'Favorite marketplace IDs fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            if ($ids->isEmpty()) {
+                return $this->success(collect(), 'Favorite marketplaces fetched successfully');
+            }
+
+            $marketplaces = User::with(['marketplaceProfile'])
+                ->whereHas('marketplaceProfile')
+                ->where('marketplace_status', 'active')
+                ->whereIn('id', $ids->toArray())
+                ->get()
+                ->map(function ($marketplace) {
+                    $marketplace = $this->decorateMarketplace($marketplace);
+                    $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
+
+                    $marketplace->services = ServiceCategoryModel::query()
+                        ->whereIn('id', $serviceIds ?: [])
+                        ->get(['id', 'name'])
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
+                        ->values();
+
+                    return $marketplace;
+                })
+                ->keyBy('id');
+
+            $orderedMarketplaces = $ids->map(function ($id) use ($marketplaces) {
+                return $marketplaces->get($id);
+            })->filter()->values();
+
+            return $this->success($orderedMarketplaces, 'Favorite marketplaces fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
     // ===================== FAQs =====================
     public function faqs_list()
     {
@@ -634,71 +809,6 @@ class GeneralContoller extends Controller
             ]);
         }
     }
-
-    // public function provider_home()
-    // {
-    //     try {
-    //         $serviceCategories = is_string(auth()->user()->service_category)
-    //             ? json_decode(auth()->user()->service_category, true) ?? []
-    //             : (auth()->user()->service_category ?? []);
-
-
-    //         $post_requests = JobRequestModel::with('images', 'category', 'user')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', null)
-    //             ->whereIn('category_id', $serviceCategories)
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($post_requests as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($post_requests as $post) {
-    //             if ($post->category->path && !str_starts_with($post->category->path, 'http')) {
-    //                 $post->category->path = asset('uploads/service_category/' . $post->category->path);
-    //             }
-    //         }
-
-    //         $direct_hires = JobRequestModel::with('images', 'user', 'category')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', auth()->id())
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($direct_hires as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($direct_hires as $hire) {
-    //             if ($hire->category->path && !str_starts_with($hire->category->path, 'http')) {
-    //                 $hire->category->path = asset('uploads/service_category/' . $hire->category->path);
-    //             }
-    //         }
-
-
-    //         $data = [
-    //             'post_requests' => $post_requests,
-    //             'direct_hires' => $direct_hires,
-    //         ];
-
-    //         return $this->success($data, 'Home page fetched successfully');
-    //     } catch (\Exception $e) {
-    //         return $this->error('An error occurred while fetching home page', 500, [
-    //             'exception' => $e->getMessage()
-    //         ]);
-    //     }
-    // }
 
     public function provider_home()
     {
@@ -764,9 +874,29 @@ class GeneralContoller extends Controller
                 }
             }
 
+            $orders = Orders::with(['job.category', 'user'])
+                ->where('provider_id', auth()->id())
+                ->whereNotIn('status', ['open', 'completed','cancelled'])
+                ->latest()
+                ->limit(4)
+                ->get();
+
+            foreach ($orders as $order) {
+                if ($order->job) {
+                    foreach ($order->job->images ?? [] as $image) {
+                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                    }
+                    $category = $order->job->category ?? null;
+                    if ($category && $category->path && !str_starts_with($category->path, 'http')) {
+                        $category->path = asset('uploads/service_category/' . $category->path);
+                    }
+                }
+            }
+
             return $this->success([
                 'post_requests' => $post_requests,
                 'direct_hires'  => $direct_hires,
+                'orders'        => $orders,
             ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
@@ -994,10 +1124,100 @@ class GeneralContoller extends Controller
         }
     }
 
-    public function my_orders()
+    public function my_orders(Request $request)
     {
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $settings = SystemSettingModel::first();
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $formatOrder = function ($order) use ($settings, $azhlPercentage, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+                $category = $order->job->category ?? null;
+                if ($category) {
+                    $category->path = $category->path
+                        ? asset('uploads/service_category/' . $category->path)
+                        : asset('assets/img/default.jpg');
+                }
+
+                $repairPrice = (float) ($order->price ?? 0);
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+
+                if ($repairPrice > 103) {
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $azhlFee = $repairPrice * ($azhlPercentage / 100);
+                $netAmount = max(0, $repairPrice - $azhlFee);
+
+                $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->azhl_percentage = number_format($azhlPercentage, 2, '.', '');
+                $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->net_amount = number_format($netAmount, 2, '.', '');
+                $order->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'azhl_percentage' => number_format($azhlPercentage, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'net_amount' => number_format($netAmount, 2, '.', ''),
+                ];
+
+                return $order;
+            };
+
+            $statusFilter = strtolower($request->input('filter', ''));
+            $page = (int) $request->input('page', 0);
+            $perPage = (int) $request->input('per_page', 15);
+
+            if ($statusFilter !== '' || $page > 0 || $request->has('paginate')) {
+                $query = Orders::with(['job.category', 'user'])
+                    ->where('provider_id', $user->id)
+                    ->orderBy('id', 'DESC');
+
+                if ($statusFilter === 'ongoing') {
+                    $query->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed']);
+                } elseif ($statusFilter === 'completed') {
+                    $query->whereIn('status', ['completed']);
+                } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
+                    $query->whereIn('status', ['pending', 'open', 'accepted']);
+                } elseif ($statusFilter === 'cancelled') {
+                    $query->whereIn('status', ['cancelled', 'cancel', 'r eject', 'rejected']);
+                } elseif ($statusFilter !== '' && $statusFilter !== 'all') {
+                    $query->where('status', $statusFilter);
+                }
+
+                $paginator = $query->paginate($perPage);
+
+                $orders = collect($paginator->items())->map(function ($order) use ($formatOrder) {
+                    return $formatOrder($order);
+                });
+
+                return $this->success([
+                    'orders' => $orders,
+                    'pagination' => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page' => $paginator->perPage(),
+                        'last_page' => $paginator->lastPage(),
+                        'total' => $paginator->total(),
+                        'from' => $paginator->firstItem() ?: 0,
+                        'to' => $paginator->lastItem() ?: 0,
+                        'has_more' => $paginator->hasMorePages(),
+                    ],
+                ], 'Provider orders loaded successfully.');
+            }
 
             $statuses = [
                 'ongoing_orders' => ['arrived', 'on_the_way', 'working', 'provider_completed'],
@@ -1008,20 +1228,15 @@ class GeneralContoller extends Controller
 
             $data = [];
 
-            foreach ($statuses as $key => $status) {
+            foreach ($statuses as $key => $statusList) {
                 $orders = Orders::with(['job.category', 'user'])
                     ->where('provider_id', $user->id)
-                    ->whereIn('status', (array) $status)
+                    ->whereIn('status', (array) $statusList)
                     ->orderBy('id', 'DESC')
                     ->get();
 
                 foreach ($orders as $order) {
-                    $category = $order->job->category ?? null;
-                    if ($category) {
-                        $category->path = $category->path
-                            ? asset('uploads/service_category/' . $category->path)
-                            : asset('assets/img/default.jpg');
-                    }
+                    $formatOrder($order);
                 }
 
                 $data[$key] = $orders;
@@ -1096,15 +1311,73 @@ class GeneralContoller extends Controller
 
             $order = $tracking->first()->order;
 
-            $order->user->profile_image = $order->user->profile_image
-                ? asset('uploads/profile/' . $order->user->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->user) {
+                $order->user->profile_image = $order->user->profile_image
+                    ? asset('uploads/profile_images/' . $order->user->profile_image)
+                    : asset('assets/img/default.jpg');
+            }
 
-            $order->provider->profile_image = $order->provider->profile_image
-                ? asset('uploads/profile/' . $order->provider->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->provider) {
+                $order->provider->profile_image = $order->provider->profile_image
+                    ? asset('uploads/profile_images/' . $order->provider->profile_image)
+                    : asset('assets/img/default.jpg');
+            }
 
-            $isCompleted = $order->status === 'completed';
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+            if ($order) {
+                $repairPrice = (float) ($order->price ?? 0);
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->whereIn('status', ['accepted', 'completed', 'hired'])
+                        ->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+
+                if ($repairPrice > 103) {
+                    $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                    $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $total = $repairPrice + $customerAppFee;
+
+                $paymentBreakdown = [
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'system_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($total, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($total, 2, '.', ''),
+                    'total_amount' => number_format($total, 2, '.', ''),
+                    'total' => number_format($total, 2, '.', ''),
+                ];
+
+                foreach ($tracking as $track) {
+                    if ($track->order) {
+                        $track->order->repair_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->base_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->bid_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->total_price = number_format($total, 2, '.', '');
+                        $track->order->total_amount = number_format($total, 2, '.', '');
+                        $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
+                        $track->order->total = number_format($total, 2, '.', '');
+                        $track->order->price = number_format($total, 2, '.', '');
+                        $track->order->payment_breakdown = $paymentBreakdown;
+                    }
+                }
+            }
+
+            $isCompleted = $order ? $order->status === 'completed' : false;
 
             return $this->success(
                 $tracking,
@@ -1126,8 +1399,8 @@ class GeneralContoller extends Controller
                 'nullable',
                 'in:on_the_way,arrived,working,provider_completed,completed',
             ],
-            'latitude' => 'required_if:status,on_the_way|nullable',
-            'longitude' => 'required_if:status,on_the_way|nullable',
+            'latitude' => 'nullable',
+            'longitude' => 'nullable',
         ]);
 
         try {
@@ -1158,6 +1431,10 @@ class GeneralContoller extends Controller
                 $order->status = $request->status;
             }
             $order->save();
+
+            if ($order->status === 'completed') {
+                \App\Services\Referral\ReferralRewardService::checkAndRewardReferrer($order);
+            }
 
 
             if ($request->filled('type')) {
@@ -1326,28 +1603,34 @@ class GeneralContoller extends Controller
     }
 
     public function my_bids(Request $request)
-    {
-        try {
-            $user = auth()->user();
-            $bids = BidModel::with(['job.category', 'job.user', 'order'])
-                ->where('provider_id', $user->id)->get();
+{
+    try {
+        $user = auth()->user();
 
-            if ($bids->isEmpty()) {
-                return $this->notFound('No bids found for this provider.');
-            }
+        $bids = BidModel::with(['job.category', 'job.user', 'order'])
+            ->where('provider_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
 
-            foreach ($bids as $bid) {
-                if ($bid->job->category) {
-                    $bid->job->category->path = $bid->job->category->path ? asset('uploads/service_category/' . $bid->job->category->path) : asset('assets/img/default.jpg');
-                }
-            }
-
-            return $this->success($bids, 'My bids fetched successfully.');
-        } catch (\Exception $e) {
-            Log::error('Error in my_bids: ' . $e->getMessage());
-            return $this->error('Failed to load my bids.', 500);
+        if ($bids->isEmpty()) {
+            return $this->notFound('No bids found for this provider.');
         }
+
+        foreach ($bids as $bid) {
+            if ($bid->job && $bid->job->category) {
+                $bid->job->category->path = $bid->job->category->path
+                    ? asset('uploads/service_category/' . $bid->job->category->path)
+                    : asset('assets/img/default.jpg');
+            }
+        }
+
+        return $this->success($bids, 'My bids fetched successfully.');
+
+    } catch (\Exception $e) {
+        Log::error('Error in my_bids: ' . $e->getMessage());
+        return $this->error('Failed to load my bids.', 500);
     }
+}
 
     private function resolveCategoryIds($raw): array
     {
@@ -1393,6 +1676,27 @@ class GeneralContoller extends Controller
             : $provider->name;
 
         return $provider;
+    }
+
+    public function provider_reviews(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if ((int) $user->role !== 1) {
+                return $this->error('Only providers can view their reviews.', 403);
+            }
+
+            $perPage = $request->input('per_page', 10);
+
+            $reviews = Reviews::where('provider_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->paginate($perPage);
+
+            return $this->success($reviews, 'Provider reviews loaded successfully.');
+        } catch (\Throwable $e) {
+            Log::error('Error in provider_reviews: ' . $e->getMessage());
+            return $this->error('Failed to load reviews.', 500);
+        }
     }
 
     private function decorateMarketplace(User $marketplace): User

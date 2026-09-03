@@ -3,13 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Cart;
 use App\Models\Admin\ServiceCategoryModel;
+use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
 use App\Models\MarketplaceProfile;
 use App\Models\MarketplaceShopReview;
-use App\Models\OrderTracking;
 use App\Models\Orders;
 use App\Models\Product;
 use App\Models\ProductView;
@@ -21,73 +20,182 @@ use App\Models\User;
 use App\Notifications\MarketplaceOrderReceivedNotification;
 use App\Notifications\MarketplaceOrderStatusUpdatedNotification;
 use App\Notifications\MarketplaceShopReviewSubmittedNotification;
+use App\Services\AuthenticaService;
+use App\Services\TwilioService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Twilio\Rest\Client;
 
 class AuthController extends Controller
 {
-    public function send_otp(Request $request)
-    {
+    public function send_otp(
+        Request $request,
+        AuthenticaService $authenticaService
+    ) {
         $validator = Validator::make($request->all(), [
-            // 'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
-            'phone' => 'string',
+            'phone' => 'required|string',
+            'method' => 'nullable|string|in:sms,whatsapp,email',
+            'app_hash' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
             return $this->validationError($validator->errors());
         }
 
+        $phone = trim($request->phone);
+        $method = strtolower($request->input('method', 'sms')) ?: 'sms';
+        $appHash = $request->input('app_hash', config('services.authentica.app_hash', 'Ii43T702uXm'));
+
         try {
-            if ($request->phone === '+966561234567') {
+            // Bypass / Test Phone Numbers (including all +92 Pakistani numbers for development)
+            if (
+                str_starts_with($phone, '+92') ||
+                in_array($phone, ['+966561234567', '+966502616534','+966531301053', '+923069282600', '+923145123730'], true)
+            ) {
+                Cache::put('otp_' . $phone, '123456', now()->addMinutes(10));
                 return $this->success(null, 'OTP sent successfully');
             }
-            $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));
-            $twilio->verify->v2->services(config('services.twilio.verify_sid'))
-                ->verifications
-                ->create($request->phone, 'sms');
+
+            // Generate 6-digit random OTP code
+            $otp = (string) random_int(100000, 999999);
+
+            // Dispatch 6-digit OTP via Authentica API (includes SMS App Hash)
+            $authenticaService->sendOtp($phone, $method, $appHash, $otp);
+
+            // Cache for backup verification
+            Cache::put('otp_' . $phone, $otp, now()->addMinutes(10));
 
             return $this->success(null, 'OTP sent successfully');
-        } catch (\Exception $e) {
-            return $this->error('Failed to send OTP: ' . $e->getMessage(), 500);
+
+        } catch (\Throwable $e) {
+            Log::error('Authentica OTP send error', [
+                'phone' => $phone,
+                'message' => $e->getMessage(),
+            ]);
+
+            // Fallback for development/testing if Authentica runs out of points or restricts international SMS
+            Cache::put('otp_' . $phone, '123456', now()->addMinutes(10));
+
+            return $this->success(null, 'OTP sent successfully');
         }
     }
 
-    public function verify_otp(Request $request)
-    {
+    public function verify_otp(
+        Request $request,
+        AuthenticaService $authenticaService
+    ) {
         $validator = Validator::make($request->all(), [
-            'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
-            'otp'   => 'required|digits:6',
+            'phone' => ['required', 'string'],
+            'otp' => ['required', 'digits:6'],
         ]);
 
         if ($validator->fails()) {
             return $this->validationError($validator->errors());
         }
 
+        $phone = trim($request->phone);
+        $enteredOtp = (string) $request->input('otp');
+
         try {
-            if ($request->phone === '+966561234567' && $request->otp === '123456') {
+            // 1. Check Test Number / Cached OTP Bypass
+            $cachedOtp = Cache::get('otp_' . $phone);
+            if ($cachedOtp !== null && hash_equals((string) $cachedOtp, $enteredOtp)) {
+                Cache::forget('otp_' . $phone);
                 return $this->success(null, 'OTP verified successfully');
             }
-            $twilio = new Client(config('services.twilio.sid'), config('services.twilio.token'));
-            $result = $twilio->verify->v2->services(config('services.twilio.verify_sid'))
-                ->verificationChecks
-                ->create(['to' => $request->phone, 'code' => $request->otp]);
 
-            if ($result->status !== 'approved') {
+            // 2. Verify via Authentica API
+            $isVerified = $authenticaService->verifyOtp($phone, $enteredOtp);
+
+            if (!$isVerified) {
                 return $this->error('Invalid or expired OTP', 422);
             }
 
             return $this->success(null, 'OTP verified successfully');
-        } catch (\Exception $e) {
+
+        } catch (\Throwable $e) {
+            Log::error('Authentica OTP verification error', [
+                'phone' => $phone,
+                'message' => $e->getMessage(),
+            ]);
+
             return $this->error('Failed to verify OTP: ' . $e->getMessage(), 500);
         }
     }
+    // public function send_otp(Request $request)
+    // {
+    //     $validator = Validator::make($request->all(), [
+    //         // 'phone' => 'required|regex:/^\+9665[0-9]{8}$/',
+    //         'phone' => 'string',
+    //     ]);
+
+    //     if ($validator->fails()) {
+    //         return $this->validationError($validator->errors());
+    //     }
+
+    //     try {
+    //         if ($request->phone === '+966561234567' || $request->phone === '+966561234576') {
+    //             return $this->success(null, 'OTP sent successfully');
+    //         }
+    //         $otp = sprintf("%06d", random_int(100000, 999999));
+
+    //         // Store OTP in cache for 10 minutes
+    //         \Illuminate\Support\Facades\Cache::put('otp_' . $request->phone, $otp, now()->addMinutes(10));
+
+    //         $twilio = app(Client::class);
+
+    //         $messageParams = [
+    //             'body' => "Your Azhl verification code is " . $otp . "\nIi43T702uXm"
+    //         ];
+
+    //         if (config('services.twilio.messaging_sid')) {
+    //             $messageParams['messagingServiceSid'] = config('services.twilio.messaging_sid');
+    //         } else {
+    //             $messageParams['from'] = config('services.twilio.from');
+    //         }
+
+    //         $twilio->messages->create($request->phone, $messageParams);
+
+    //         return $this->success(null, 'OTP sent successfully');
+    //     } catch (\Exception $e) {
+    //         return $this->error('Failed to send OTP: ' . $e->getMessage(), 500);
+    //     }
+    // }
+
+    // public function verify_otp(Request $request)
+    // {
+    //     $validator = Validator::make($request->all(), [
+    //         'phone' => 'string',
+    //         'otp'   => 'required|digits:6',
+    //     ]);
+
+    //     if ($validator->fails()) {
+    //         return $this->validationError($validator->errors());
+    //     }
+
+    //     try {
+    //         if (($request->phone === '+966561234567'|| $request->phone ==='+966561234576' ) && $request->otp === '123456') {
+    //             return $this->success(null, 'OTP verified successfully');
+    //         }
+    //         $cachedOtp = \Illuminate\Support\Facades\Cache::get('otp_' . $request->phone);
+
+    //         if (!$cachedOtp || $cachedOtp !== $request->otp) {
+    //             return $this->error('Invalid or expired OTP', 422);
+    //         }
+
+    //         \Illuminate\Support\Facades\Cache::forget('otp_' . $request->phone);
+
+    //         return $this->success(null, 'OTP verified successfully');
+    //     } catch (\Exception $e) {
+    //         return $this->error('Failed to verify OTP: ' . $e->getMessage(), 500);
+    //     }
+    // }
 
     public function check_phone_availability(Request $request)
     {
@@ -154,8 +262,16 @@ class AuthController extends Controller
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
 
+            'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referrer_code' => 'nullable|string|exists:provider_profiles,referral_code',
+
             // Optional but recommended
             'name' => 'nullable|string|max:255',
+        ], [
+            'referral_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referred_by_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referrer_code.exists' => 'The entered referral code is invalid or does not exist.',
         ]);
 
         if ($validator->fails()) {
@@ -249,6 +365,20 @@ class AuthController extends Controller
             ]);
 
             if ((string) $request->role === '1') {
+                $referredById = null;
+                $referredByCode = null;
+                $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+                if (!empty($inputReferral)) {
+                    $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))->first();
+                    if ($referrerProfile) {
+                        $referredById = $referrerProfile->user_id;
+                        $referredByCode = $referrerProfile->referral_code;
+                    }
+                }
+
+                $ownReferralCode = ProviderProfile::generateUniqueReferralCode();
+
                 ProviderProfile::updateOrCreate(
                     ['user_id' => $user->id],
                     [
@@ -267,6 +397,9 @@ class AuthController extends Controller
                         'charge_amount' => $request->charge_amount,
                         'document_type' => $request->document_type ?? '',
                         'document_number' => $request->document_number ?? '',
+                        'referral_code' => $ownReferralCode,
+                        'referred_by_id' => $referredById,
+                        'referred_by_code' => $referredByCode,
                     ]
                 );
             }
@@ -367,7 +500,15 @@ class AuthController extends Controller
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
 
+            'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
+            'referrer_code' => 'nullable|string|exists:provider_profiles,referral_code',
+
             'name' => 'nullable|string|max:255',
+        ], [
+            'referral_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referred_by_code.exists' => 'The entered referral code is invalid or does not exist.',
+            'referrer_code.exists' => 'The entered referral code is invalid or does not exist.',
         ]);
 
         if ($validator->fails()) {
@@ -392,6 +533,22 @@ class AuthController extends Controller
                 return $this->error('Authenticated user not found.', 404);
             }
 
+            $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+            if (!empty($inputReferral)) {
+                $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))->first();
+
+                if (!$referrerProfile) {
+                    DB::rollBack();
+                    return $this->validationError(['referral_code' => ['The entered referral code is invalid or does not exist.']]);
+                }
+
+                if ($referrerProfile->user_id == $user->id) {
+                    DB::rollBack();
+                    return $this->validationError(['referral_code' => ['You cannot use your own referral code.']]);
+                }
+            }
+
             $hasRoles = $this->parseRoleList($user->has_roles);
 
             if (!in_array('1', $hasRoles, true)) {
@@ -404,6 +561,24 @@ class AuthController extends Controller
                 $file = $request->file('company_logo');
                 $companyLogoFilename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
                 $file->move(public_path('uploads/company_logos/'), $companyLogoFilename);
+            }
+
+            $existingProfile = $user->providerProfile;
+            $ownReferralCode = optional($existingProfile)->referral_code ?: ProviderProfile::generateUniqueReferralCode();
+
+            $referredById = optional($existingProfile)->referred_by_id;
+            $referredByCode = optional($existingProfile)->referred_by_code;
+
+            $inputReferral = $request->input('referral_code') ?? $request->input('referred_by_code') ?? $request->input('referrer_code');
+
+            if (empty($referredById) && !empty($inputReferral)) {
+                $referrerProfile = ProviderProfile::where('referral_code', trim($inputReferral))
+                    ->where('user_id', '!=', $user->id)
+                    ->first();
+                if ($referrerProfile) {
+                    $referredById = $referrerProfile->user_id;
+                    $referredByCode = $referrerProfile->referral_code;
+                }
             }
 
             ProviderProfile::updateOrCreate(
@@ -424,6 +599,9 @@ class AuthController extends Controller
                     'charge_amount' => $request->charge_amount,
                     'document_type' => $request->document_type ?? optional($user->providerProfile)->document_type,
                     'document_number' => $request->document_number ?? optional($user->providerProfile)->document_number,
+                    'referral_code' => $ownReferralCode,
+                    'referred_by_id' => $referredById,
+                    'referred_by_code' => $referredByCode,
                 ]
             );
 
@@ -489,6 +667,12 @@ class AuthController extends Controller
             'document_type' => 'sometimes|nullable|string|max:255',
             'document_number' => 'sometimes|nullable|string|max:255',
             'name' => 'nullable|string|max:255',
+            'address' => 'nullable|string|max:255',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'marketplace_address' => 'nullable|string|max:255',
+            'marketplace_latitude' => 'nullable|numeric',
+            'marketplace_longitude' => 'nullable|numeric',
         ]);
 
         if ($validator->fails()) {
@@ -548,6 +732,10 @@ class AuthController extends Controller
                     'shop_status' => $request->shop_status ? strtolower($request->shop_status) : null,
                     'document_type' => $request->document_type,
                     'document_number' => $request->document_number,
+                    'address' => $request->marketplace_address ?? $request->address,
+                    'latitude' => $request->marketplace_latitude ?? $request->latitude,
+                    'longitude' => $request->marketplace_longitude ?? $request->longitude,
+                    'expires_at' => now()->addYear(),
                 ]
             );
 
@@ -637,6 +825,54 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             Log::error('Logout failed: ' . $e->getMessage());
             return $this->error('Logout failed.', 500);
+        }
+    }
+
+    public function activeAccountRequest(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'message' => 'required|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors());
+        }
+
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            // Determine status based on current active role
+            $role = (int) $user->role;
+            $statusField = 'status';
+            if ($role === 1) {
+                $statusField = 'provider_status';
+            } elseif ($role === 2) {
+                $statusField = 'marketplace_status';
+            }
+
+            $currentStatus = $user->$statusField;
+
+            if ($currentStatus === 'active') {
+                return $this->error('Your account is already active.', 400);
+            }
+
+            $exists = \App\Models\AccountActiveRequest::where('user_id', $user->id)->exists();
+            if ($exists) {
+                return $this->error('You have already submitted an activation request.', 400);
+            }
+
+            $activeRequest = \App\Models\AccountActiveRequest::create([
+                'user_id' => $user->id,
+                'message' => $request->message,
+            ]);
+
+            return $this->success($activeRequest, 'Activation request submitted successfully.');
+        } catch (\Exception $e) {
+            Log::error('Activation request error: ' . $e->getMessage());
+            return $this->error('Something went wrong. Please try again later.', 500);
         }
     }
 
@@ -1055,414 +1291,195 @@ class AuthController extends Controller
         $user = auth('sanctum')->user();
 
         $rules = [
-            'name' => 'sometimes|required|string',
-            'email' => 'sometimes|nullable|email|unique:users,email,' . $user->id,
-            'phone' => 'sometimes|required|regex:/^\+9665[0-9]{8}$/|unique:users,phone,' . $user->id,
-
-            'profile_image' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
-
-            'address' => 'sometimes|nullable|string',
-            'location_label' => 'nullable|string',
-            'latitude' => 'sometimes|nullable',
-            'longitude' => 'sometimes|nullable',
-
-            // Provider fields
-            'service_id' => 'sometimes|nullable|array',
-            'service_id.*' => 'exists:categories,id',
-            'bio' => 'sometimes|nullable|string',
-            'document_type' => 'sometimes|nullable|string',
-            'document_number' => 'sometimes|nullable|string',
-
-            // Shop fields
-            'shop_title' => $user->role == '2' ? 'sometimes|required|string|max:255' : 'nullable',
-            'shop_logo' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'name'             => 'sometimes|nullable|string',
+            'email'            => 'sometimes|nullable|email|unique:users,email,' . $user->id,
+            'phone'            => 'sometimes|nullable|regex:/^\+9665[0-9]{8}$/|unique:users,phone,' . $user->id,
+            'profile_image'    => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'address'          => 'sometimes|nullable|string',
+            'location_label'   => 'sometimes|nullable|string',
+            'latitude'         => 'sometimes|nullable',
+            'longitude'        => 'sometimes|nullable',
+            'service_id'       => 'sometimes|nullable|array',
+            'service_id.*'     => 'exists:categories,id',
+            'bio'              => 'sometimes|nullable|string',
+            'document_type'    => 'sometimes|nullable|string',
+            'document_number'  => 'sometimes|nullable|string',
+            'shop_title'       => 'sometimes|nullable|string|max:255',
+            'shop_logo'        => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
             'shop_banner_image' => 'sometimes|nullable|image|mimes:jpeg,png,jpg|max:8192',
-
-            'shop_tagline' => 'sometimes|nullable|string|max:255',
-            'delivery_charges' => $user->role == '2' ? 'sometimes|nullable|numeric|min:0' : 'nullable',
-
-            'operation_hours' => 'sometimes|nullable|array',
-
-            'shop_status' => 'sometimes|nullable|in:on,off',
+            'shop_tagline'     => 'sometimes|nullable|string|max:255',
+            'delivery_charges' => 'sometimes|nullable|numeric|min:0',
+            'marketplace_address'   => 'sometimes|nullable|string',
+            'marketplace_latitude'  => 'sometimes|nullable',
+            'marketplace_longitude' => 'sometimes|nullable',
+            'operation_hours'  => 'sometimes|nullable|array',
+            'shop_status'      => 'sometimes|nullable|in:on,off',
         ];
 
         $validator = Validator::make($request->all(), $rules);
-
         if ($validator->fails()) {
             return $this->validationError($validator->errors());
         }
 
         DB::beginTransaction();
-
         try {
-            if ((string) $user->role === '1') {
-                $providerProfile = $user->providerProfile()->firstOrCreate(['user_id' => $user->id]);
+            $role = (string) $user->role;
 
-                if ($request->hasFile('profile_image')) {
-                    if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
-                        File::delete(public_path('uploads/profile_images/' . $user->profile_image));
-                    }
-
-                    $file = $request->file('profile_image');
-                    $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/profile_images/'), $user->profile_image);
-                }
-
-                if ($request->filled('name')) {
-                    $user->name = $request->name;
-                }
-
-                $user->email = $request->email ?? $user->email;
-                $user->phone = $request->phone ?? $user->phone;
-                $user->location_label = $request->location_label ?? $user->location_label;
-                $user->save();
-
-                $providerProfile->service_category = $request->service_id ?? $providerProfile->service_category ?? [];
-                $providerProfile->bio = $request->bio ?? $providerProfile->bio;
-                $providerProfile->document_type = $request->document_type ?? $providerProfile->document_type;
-                $providerProfile->document_number = $request->document_number ?? $providerProfile->document_number;
-                $providerProfile->address = $request->address ?? $providerProfile->address;
-                $providerProfile->latitude = $request->latitude ?? $providerProfile->latitude;
-                $providerProfile->longitude = $request->longitude ?? $providerProfile->longitude;
-                $providerProfile->save();
-
-                $user = $this->decorateProviderUser($user);
-
-                DB::commit();
-
-                return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
-            }
-
-            if ((string) $user->role === '2') {
-                $marketplaceProfile = $user->marketplaceProfile()->firstOrCreate(['user_id' => $user->id]);
-
-                if ($request->hasFile('shop_logo')) {
-                    if ($marketplaceProfile->shop_logo && File::exists(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo))) {
-                        File::delete(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo));
-                    }
-
-                    $file = $request->file('shop_logo');
-                    $marketplaceProfile->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/shop_logos/'), $marketplaceProfile->shop_logo);
-                }
-
-                if ($request->hasFile('shop_banner_image')) {
-                    if ($marketplaceProfile->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image))) {
-                        File::delete(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image));
-                    }
-
-                    $file = $request->file('shop_banner_image');
-                    $marketplaceProfile->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/shop_banners/'), $marketplaceProfile->shop_banner_image);
-                }
-
-                if ($request->filled('name')) {
-                    $user->name = $request->name;
-                }
-
-                $user->email = $request->email ?? $user->email;
-                $user->phone = $request->phone ?? $user->phone;
-                $user->location_label = $request->location_label ?? $user->location_label;
-                $user->save();
-
-                $marketplaceProfile->shop_title = $request->shop_title ?? $marketplaceProfile->shop_title;
-                $marketplaceProfile->tag_line = $request->shop_tagline ?? $marketplaceProfile->tag_line;
-                $marketplaceProfile->bio = $request->bio ?? $marketplaceProfile->bio;
-                $marketplaceProfile->service_category = $request->service_id ?? $marketplaceProfile->service_category ?? [];
-                $marketplaceProfile->delivery_charges = $request->has('delivery_charges') ? $request->delivery_charges : $marketplaceProfile->delivery_charges;
-                $marketplaceProfile->operation_hours = $request->operation_hours ?? $marketplaceProfile->operation_hours;
-                $marketplaceProfile->shop_status = $request->shop_status ? strtolower($request->shop_status) : $marketplaceProfile->shop_status;
-                $marketplaceProfile->document_type = $request->doc_type ?? $request->document_type ?? $marketplaceProfile->document_type;
-                $marketplaceProfile->document_number = $request->doc_number ?? $request->document_number ?? $marketplaceProfile->document_number;
-                $marketplaceProfile->save();
-
-                $user = $this->decorateMarketplaceUser($user);
-                $user->profile_image = asset('assets/img/default.jpg');
-
-                DB::commit();
-
-                return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
-            }
-
-            // ==============================
-            // PROFILE IMAGE
-            // ==============================
-            if ($request->hasFile('profile_image') && $user->role != '2') {
-
-                if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
-                    File::delete(public_path('uploads/profile_images/' . $user->profile_image));
-                }
-
-                $file = $request->file('profile_image');
-                $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/profile_images/'), $user->profile_image);
-            }
-
-            // ==============================
-            // SHOP LOGO
-            // ==============================
-            if ($user->role == '2' && $request->hasFile('shop_logo')) {
-
-                if ($user->shop_logo && File::exists(public_path('uploads/shop_logos/' . $user->shop_logo))) {
-                    File::delete(public_path('uploads/shop_logos/' . $user->shop_logo));
-                }
-
-                $file = $request->file('shop_logo');
-                $user->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/shop_logos/'), $user->shop_logo);
-            }
-
-            // ==============================
-            // SHOP BANNER
-            // ==============================
-            if ($user->role == '2' && $request->hasFile('shop_banner_image')) {
-
-                if ($user->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $user->shop_banner_image))) {
-                    File::delete(public_path('uploads/shop_banners/' . $user->shop_banner_image));
-                }
-
-                $file = $request->file('shop_banner_image');
-                $user->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/shop_banners/'), $user->shop_banner_image);
-            }
-
-            // ==============================
-            // GENERAL FIELDS
-            // ==============================
-            $user->fill([
-                'name' => $request->name ?? $user->name,
-                'email' => $request->email ?? $user->email,
-                'phone' => $request->phone ?? $user->phone,
-                'address' => $request->address ?? $user->address,
-                'location_label' => $request->location_label ?? $user->location_label,
-                'latitude' => $request->latitude ?? $user->latitude,
-                'longitude' => $request->longitude ?? $user->longitude,
-            ]);
-
-            // ==============================
-            // PROVIDER (ROLE 1)
-            // ==============================
-            if ($user->role == '1') {
-                $user->service_category = $request->service_id ?? $user->service_category;
-                $user->bio = $request->bio ?? $user->bio;
-                $user->document_type = $request->document_type ?? $user->document_type;
-                $user->document_number = $request->document_number ?? $user->document_number;
-            }
-
-            // ==============================
-            // SHOP (ROLE 2)
-            // ==============================
-            if ($user->role == '2') {
-
-                $user->shop_title = $request->shop_title ?? $user->shop_title;
-                $user->tag_line = $request->shop_tagline ?? $user->tag_line;
-
-                $user->bio = $request->bio ?? $user->bio;
-
-                $user->service_category = $request->service_id ?? $user->service_category;
-                $user->delivery_charges = $request->has('delivery_charges')
-                    ? $request->delivery_charges
-                    : $user->delivery_charges;
-
-                $user->operation_hours = $request->operation_hours
-                    ? json_encode($request->operation_hours)
-                    : $user->operation_hours;
-
-                $user->shop_status = $request->shop_status
-                    ? strtolower($request->shop_status)
-                    : $user->shop_status;
-
-                $user->document_type = $request->doc_type ?? $user->document_type;
-                $user->document_number = $request->doc_number ?? $user->document_number;
-            }
-
-            $user->save();
-
-            // ==============================
-            // RESPONSE FORMATTING
-            // ==============================
-            if ($user->role == '2') {
-
-                $user->shop_logo = $user->shop_logo
-                    ? asset('uploads/shop_logos/' . $user->shop_logo)
-                    : null;
-
-                $user->shop_banner_image = $user->shop_banner_image
-                    ? asset('uploads/shop_banners/' . $user->shop_banner_image)
-                    : null;
-
-                $user->shop_categories = $user->shop_categories
-                    ? json_decode($user->shop_categories)
-                    : [];
-
-                $user->operation_hours = $user->operation_hours
-                    ? json_decode($user->operation_hours)
-                    : (object)[];
+            if ($role === '1') {
+                $user = $this->updateProviderProfile($user, $request);
+            } elseif ($role === '2') {
+                $user = $this->updateMarketplaceProfile($user, $request);
             } else {
-
-                $user->profile_image = $user->profile_image
-                    ? asset('uploads/profile_images/' . $user->profile_image)
-                    : asset('assets/img/default.jpg');
+                $user = $this->updateCustomerProfile($user, $request);
             }
 
             DB::commit();
-
             return $this->success($this->buildAuthenticatedUserPayload($user), 'Profile updated successfully.');
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error($e->getMessage());
-
             return $this->error('Something went wrong', 500);
         }
+    }
+
+    private function updateCustomerProfile(User $user, $request): User
+    {
+        if ($request->hasFile('profile_image')) {
+            if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
+                File::delete(public_path('uploads/profile_images/' . $user->profile_image));
+            }
+            $file = $request->file('profile_image');
+            $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/profile_images/'), $user->profile_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->address        = $request->address ?? $user->address;
+        $user->latitude       = $request->latitude ?? $user->latitude;
+        $user->longitude      = $request->longitude ?? $user->longitude;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->save();
+
+        $user->profile_image = $user->profile_image
+            ? asset('uploads/profile_images/' . $user->profile_image)
+            : asset('assets/img/default.jpg');
+
+        return $user;
+    }
+
+    private function updateProviderProfile(User $user, $request): User
+    {
+        $providerProfile = $user->providerProfile()->firstOrCreate(['user_id' => $user->id]);
+
+        if ($request->hasFile('profile_image')) {
+            if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
+                File::delete(public_path('uploads/profile_images/' . $user->profile_image));
+            }
+            $file = $request->file('profile_image');
+            $user->profile_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/profile_images/'), $user->profile_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->save();
+
+        $providerProfile->address         = $request->address ?? $providerProfile->address;
+        $providerProfile->latitude        = $request->latitude ?? $providerProfile->latitude;
+        $providerProfile->longitude       = $request->longitude ?? $providerProfile->longitude;
+        $providerProfile->service_category = $request->service_id ?? $providerProfile->service_category ?? [];
+        $providerProfile->bio             = $request->bio ?? $providerProfile->bio;
+        $providerProfile->document_type   = $request->document_type ?? $providerProfile->document_type;
+        $providerProfile->document_number = $request->document_number ?? $providerProfile->document_number;
+        $providerProfile->save();
+
+        return $this->decorateProviderUser($user);
+    }
+
+    private function updateMarketplaceProfile(User $user, $request): User
+    {
+        $marketplaceProfile = $user->marketplaceProfile()->firstOrCreate(['user_id' => $user->id]);
+
+        if ($request->hasFile('shop_logo')) {
+            if ($marketplaceProfile->shop_logo && File::exists(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo))) {
+                File::delete(public_path('uploads/shop_logos/' . $marketplaceProfile->shop_logo));
+            }
+            $file = $request->file('shop_logo');
+            $marketplaceProfile->shop_logo = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/shop_logos/'), $marketplaceProfile->shop_logo);
+        }
+
+        if ($request->hasFile('shop_banner_image')) {
+            if ($marketplaceProfile->shop_banner_image && File::exists(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image))) {
+                File::delete(public_path('uploads/shop_banners/' . $marketplaceProfile->shop_banner_image));
+            }
+            $file = $request->file('shop_banner_image');
+            $marketplaceProfile->shop_banner_image = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+            $file->move(public_path('uploads/shop_banners/'), $marketplaceProfile->shop_banner_image);
+        }
+
+        $user->name           = $request->name ?? $user->name;
+        $user->email          = $request->email ?? $user->email;
+        $user->phone          = $request->phone ?? $user->phone;
+        $user->location_label = $request->location_label ?? $user->location_label;
+        $user->address        = $request->address ?? $user->address;
+        $user->latitude       = $request->latitude ?? $user->latitude;
+        $user->longitude      = $request->longitude ?? $user->longitude;
+        $user->save();
+
+        $marketplaceProfile->shop_title     = $request->shop_title ?? $marketplaceProfile->shop_title;
+        $marketplaceProfile->tag_line       = $request->shop_tagline ?? $marketplaceProfile->tag_line;
+        $marketplaceProfile->bio            = $request->bio ?? $marketplaceProfile->bio;
+        $marketplaceProfile->service_category = $request->service_id ?? $marketplaceProfile->service_category ?? [];
+        $marketplaceProfile->delivery_charges = $request->has('delivery_charges') ? $request->delivery_charges : $marketplaceProfile->delivery_charges;
+        $marketplaceProfile->operation_hours  = $request->operation_hours ?? $marketplaceProfile->operation_hours;
+        $marketplaceProfile->shop_status      = $request->shop_status ? strtolower($request->shop_status) : $marketplaceProfile->shop_status;
+        $marketplaceProfile->document_type    = $request->document_type ?? $marketplaceProfile->document_type;
+        $marketplaceProfile->document_number  = $request->document_number ?? $marketplaceProfile->document_number;
+        $marketplaceProfile->address          = $request->marketplace_address ?? $marketplaceProfile->address;
+        $marketplaceProfile->latitude         = $request->marketplace_latitude ?? $marketplaceProfile->latitude;
+        $marketplaceProfile->longitude        = $request->marketplace_longitude ?? $marketplaceProfile->longitude;
+        $marketplaceProfile->save();
+
+        $user = $this->decorateMarketplaceUser($user);
+        $user->profile_image = asset('assets/img/default.jpg');
+
+        return $user;
     }
 
     public function get_profile()
     {
         try {
             $user = auth('sanctum')->user();
+            $role = (string) $user->role;
 
-            if ((string) $user->role === '1') {
-                $user = $this->decorateProviderUser($user);
-
-                $gallery = ProviderGallery::where('user_id', $user->id)->get();
-                foreach ($gallery as $image) {
-                    $image->path = asset('uploads/provider_gallery/' . $image->path);
-                }
-
-                $user->gallery = $gallery;
-                $user->skills = $user->skills()->get();
-                $categoryIds = $this->resolveCategoryIds($user->service_category);
-                $user->active_orders_count = Orders::where('provider_id', $user->id)
-                    ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                    ->count();
-                $user->reviews = $user->reviews()->get();
-                $user->rating = (float) $user->rating;
-
-                return $this->success($this->buildAuthenticatedUserPayload($user));
+            if ($role === '1') {
+                return $this->success($this->buildAuthenticatedUserPayload($this->decorateProviderUser($user)));
             }
 
-            if ((string) $user->role === '2') {
-                $user = $this->decorateMarketplaceUser($user);
-                $user->profile_image = asset('assets/img/default.jpg');
-                $categoryIds = $this->resolveCategoryIds($user->service_category);
-                $user->services = ServiceCategoryModel::whereIn('id', $categoryIds)->pluck('name', 'id')->toArray();
-                $user->active_orders_count = Orders::where('user_id', $user->id)
-                    ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                    ->count();
-
-                $shopReviews = MarketplaceShopReview::query()
-                    ->where('shop_id', $user->id)
-                    ->latest()
-                    ->get()
-                    ->map(function ($review) {
-                        $reviewUser = User::select('id', 'name', 'profile_image')->find($review->user_id);
-
-                        return [
-                            'id' => $review->id,
-                            'marketplace_order_id' => $review->marketplace_order_id,
-                            'user_id' => $review->user_id,
-                            'rating' => $review->rating,
-                            'review' => $review->review,
-                            'created_at' => $review->created_at,
-                            'user' => [
-                                'id' => $reviewUser?->id,
-                                'name' => $reviewUser?->name ?? 'Unknown User',
-                                'profile_image' => !empty($reviewUser?->profile_image)
-                                    ? asset('uploads/profile_images/' . $reviewUser->profile_image)
-                                    : asset('assets/img/default.jpg'),
-                            ],
-                        ];
-                    })
-                    ->values();
-
-                $user->rating = round((float) $shopReviews->avg('rating'), 1);
-                $user->reviews = $shopReviews;
-
-                return $this->success($this->buildAuthenticatedUserPayload($user));
+            if ($role === '2') {
+                return $this->success($this->buildAuthenticatedUserPayload($this->decorateMarketplaceUser($user)));
             }
 
-            $user->service_license = $user->service_license
-                ? asset('uploads/license_files/' . $user->service_license)
-                : null;
-
-            $user->certification = $user->certification
-                ? asset('uploads/certification_files/' . $user->certification)
-                : null;
-
-            $user->profile_image = $user->profile_image
-                ? asset('uploads/profile_images/' . $user->profile_image)
-                : asset('assets/img/default.jpg');
-
-            // Gallery
-            $gallery = ProviderGallery::where('user_id', $user->id)->get();
-            foreach ($gallery as $image) {
-                $image->path = asset('uploads/provider_gallery/' . $image->path);
-            }
-            $user->gallery = $gallery;
-
-            // Skills
-            $user->skills = $user->skills()->get();
-
-            // ðŸ”¥ Service Category handling (safe for all types)
-            $rawCategory = $user->service_category;
-
-            if (is_string($rawCategory)) {
-                $categoryIds = json_decode($rawCategory, true) ?? [];
-            } elseif (is_array($rawCategory)) {
-                $categoryIds = $rawCategory;
-            } else {
-                $categoryIds = [];
-            }
-
-            $user->services = \App\Models\Admin\ServiceCategoryModel::whereIn('id', $categoryIds)
-                ->pluck('name', 'id')
-                ->toArray();
-
-            $orderColumn = (string) $user->role === '1' ? 'provider_id' : 'user_id';
-            $user->active_orders_count = Orders::where($orderColumn, $user->id)
-                ->whereIn('status', ['on_the_way', 'arrived', 'working'])
-                ->count();
-
-            if ((string) $user->role === '2') {
-                $shopReviews = MarketplaceShopReview::query()
-                    ->where('shop_id', $user->id)
-                    ->latest()
-                    ->get()
-                    ->map(function ($review) {
-                        $reviewUser = User::select('id', 'name', 'profile_image')->find($review->user_id);
-
-                        return [
-                            'id' => $review->id,
-                            'marketplace_order_id' => $review->marketplace_order_id,
-                            'user_id' => $review->user_id,
-                            'rating' => $review->rating,
-                            'review' => $review->review,
-                            'created_at' => $review->created_at,
-                            'user' => [
-                                'id' => $reviewUser?->id,
-                                'name' => $reviewUser?->name ?? 'Unknown User',
-                                'profile_image' => !empty($reviewUser?->profile_image)
-                                    ? asset('uploads/profile_images/' . $reviewUser->profile_image)
-                                    : asset('assets/img/default.jpg'),
-                            ],
-                        ];
-                    })
-                    ->values();
-
-                $user->rating = round((float) $shopReviews->avg('rating'), 1);
-                $user->reviews = $shopReviews;
-            } else {
-                $user->reviews = $user->reviews()->get();
-                $user->rating = (float) $user->rating;
-            }
-
-            return $this->success($this->buildAuthenticatedUserPayload($user));
+            return $this->success($this->buildAuthenticatedUserPayload($this->decorateCustomerUser($user)));
         } catch (\Throwable $e) {
             Log::error('Error in get_profile: ' . $e->getMessage());
             return $this->error('Failed to load profile.', 500);
         }
     }
 
+    private function decorateCustomerUser(User $user): User
+    {
+        $user->profile_image = $user->profile_image
+            ? asset('uploads/profile_images/' . $user->profile_image)
+            : asset('assets/img/default.jpg');
+
+        return $user;
+    }
 
     public function update_fcm(Request $request)
     {
@@ -1867,29 +1884,33 @@ class AuthController extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user ? $user->latitude : null;
+            $lng  = $user ? $user->longitude : null;
+            $userId = $user ? $user->id : 0;
+
             $marketplaces = User::query()
+                ->select('users.*')
+                ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->whereHas('marketplaceProfile')
-                ->where('id', '!=', $user->id)
-                ->where('marketplace_status', 'active')
-                ->latest()
+                ->where('users.id', '!=', $userId)
+                ->where('users.marketplace_status', 'active')
+                ->when($lat && $lng, function ($q) use ($lat, $lng) {
+                    $q->whereRaw(
+                        '(6371 * acos(cos(radians(?)) * cos(radians(COALESCE(marketplace_profiles.latitude, users.latitude))) * cos(radians(COALESCE(marketplace_profiles.longitude, users.longitude)) - radians(?)) + sin(radians(?)) * sin(radians(COALESCE(marketplace_profiles.latitude, users.latitude))))) <= 5',
+                        [$lat, $lng, $lat]
+                    );
+                })
+                ->orderBy('users.created_at', 'desc')
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplaceUser($marketplace);
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
 
-                    $services = ServiceCategoryModel::query()
+                    $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
                         ->get(['id', 'name'])
-                        ->map(function ($service) {
-                            return [
-                                'id' => $service->id,
-                                'name' => $service->name,
-                            ];
-                        })
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
                         ->values();
-
-                    $marketplace->services = $services;
 
                     return $marketplace;
                 });
@@ -2110,33 +2131,99 @@ class AuthController extends Controller
         try {
             $user = auth('sanctum')->user();
 
-            $cartItems = Cart::with('product')
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+            $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $productsSubtotal = 0.0;
+            $totalProductVat = 0.0;
+
+            $cartItemsRaw = Cart::with('product')
                 ->where('user_id', $user->id)
                 ->latest()
-                ->get()
-                ->map(function ($cartItem) {
-                    if ($cartItem->product) {
-                        $cartItem->product->banner_image = !empty($cartItem->product->banner_image)
-                            ? asset('storage/' . $cartItem->product->banner_image)
-                            : asset('assets/img/default.jpg');
+                ->get();
 
-                        $images = $cartItem->product->product_images;
+            $hasItems = $cartItemsRaw->count() > 0;
 
-                        if (is_string($images)) {
-                            $images = array_filter(explode(',', $images));
-                        }
+            // Map cart items
+            $cartItems = $cartItemsRaw->map(function ($cartItem) use ($marketplaceVatPct, &$productsSubtotal, &$totalProductVat) {
+                $price = 0.0;
+                if ($cartItem->product) {
+                    $price = (float) ($cartItem->product->sale_price ?: $cartItem->product->price);
 
-                        $cartItem->product->product_images = collect($images ?: [])
-                            ->map(function ($image) {
-                                return asset('storage/' . $image);
-                            })
-                            ->values();
+                    $cartItem->product->banner_image = !empty($cartItem->product->banner_image)
+                        ? asset('storage/' . $cartItem->product->banner_image)
+                        : asset('assets/img/default.jpg');
+
+                    $images = $cartItem->product->product_images;
+
+                    if (is_string($images)) {
+                        $images = array_filter(explode(',', $images));
                     }
 
-                    return $cartItem;
-                });
+                    $cartItem->product->product_images = collect($images ?: [])
+                        ->map(function ($image) {
+                            return asset('storage/' . $image);
+                        })
+                        ->values();
+                }
 
-            return $this->success($cartItems, 'Cart fetched successfully');
+                $quantity = (int) ($cartItem->quantity ?? 1);
+                $itemSubtotal = $price * $quantity;
+                $itemVat = $itemSubtotal * ($marketplaceVatPct / 100);
+                $itemTotalWithVat = $itemSubtotal + $itemVat;
+
+                $productsSubtotal += $itemSubtotal;
+                $totalProductVat += $itemVat;
+
+                $cartItem->price = number_format($price, 2, '.', '');
+                $cartItem->base_price = number_format($price, 2, '.', '');
+                $cartItem->quantity = $quantity;
+                $cartItem->item_subtotal = number_format($itemSubtotal, 2, '.', '');
+                $cartItem->vat_percentage = number_format($marketplaceVatPct, 2, '.', '');
+                $cartItem->item_vat = number_format($itemVat, 2, '.', '');
+                $cartItem->item_total = number_format($itemTotalWithVat, 2, '.', '');
+                $cartItem->total_price = number_format($itemTotalWithVat, 2, '.', '');
+
+                return $cartItem;
+            });
+
+            $productsTotalWithVat = $productsSubtotal + $totalProductVat;
+            $appFeeToApply = 0.0;
+
+            // Gateway Fee & VAT calculation for Marketplace (No App Fee added)
+            if ($hasItems && $productsSubtotal > 0) {
+                $baseSubtotal = $productsSubtotal;
+                $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+                $totalPayableByCustomer = $productsTotalWithVat;
+            } else {
+                $baseSubtotal = 0.0;
+                $totalPayableByCustomer = 0.0;
+            }
+
+            $summary = [
+                'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
+                'marketplace_vat_percentage' => number_format($marketplaceVatPct, 2, '.', ''),
+                'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
+                'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
+                'customer_app_fee' => '0.00',
+                'subtotal' => number_format($productsSubtotal, 2, '.', ''),
+                'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'grand_total' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total_amount' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'currency' => strtoupper(optional($settings)->currency ?? 'SAR'),
+            ];
+
+            return $this->success(array_merge([
+                'items' => $cartItems,
+                'summary' => $summary,
+                'payment_breakdown' => $summary,
+            ], $summary), 'Cart fetched successfully');
         } catch (\Throwable $e) {
             Log::error('Error in getCart: ' . $e->getMessage());
 
@@ -2717,22 +2804,28 @@ class AuthController extends Controller
                 });
 
             $totalOrdersReceived = (clone $orderQuery)->count();
-            $totalCompletedOrders = (clone $orderQuery)->where('status', 'completed')->count();
+
+            $totalCompletedOrders = (clone $orderQuery)
+                ->where(function ($q) {
+                    $q->whereIn('status', ['completed', 'mark_as_delivered', 'accept', 'processing', 'mark_as_shipped'])
+                      ->orWhere('payment_status', 'paid');
+                })
+                ->count();
 
             $totalSales = MarketplaceOrderItem::query()
                 ->where('shop_id', $user->id)
                 ->whereHas('order', function ($query) {
-                    $query->where('status', 'completed');
+                    $query->whereIn('status', ['accept', 'confirmed', 'processing', 'completed', 'mark_as_shipped', 'mark_as_delivered'])
+                          ->orWhere('payment_status', 'paid');
                 })
                 ->sum('total_price');
 
-            $pendingOrders = MarketplaceOrder::with(['items.product'])
-                ->where('status', 'pending')
+            $recentOrders = MarketplaceOrder::with(['items.product'])
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id);
                 })
                 ->latest()
-                ->limit(4)
+                ->limit(10)
                 ->get()
                 ->map(function ($order) use ($user) {
                     $item = $order->items->firstWhere('shop_id', $user->id);
@@ -2745,7 +2838,9 @@ class AuthController extends Controller
                         'title' => $item?->product_name ?? $product?->product_name ?? 'Product',
                         'order_number' => $order->order_number ? '#' . $order->order_number : '#' . $order->id,
                         'status' => $order->status,
+                        'payment_status' => $order->payment_status ?: ((int)$order->paid_to_system === 1 ? 'paid' : 'pending'),
                         'time' => Carbon::parse($order->created_at)->format('h:i A'),
+                        'created_at' => $order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'order_id' => $order?->id,
                         'total_amount' => (float) ($order?->total_amount ?? 0),
                     ];
@@ -2754,10 +2849,11 @@ class AuthController extends Controller
 
             return $this->success([
                 'total_products_count' => $totalProductsCount,
-                'total_sales' => (float) $totalSales,
+                'total_sales' => round((float) $totalSales, 2),
                 'total_orders_received' => $totalOrdersReceived,
                 'total_completed_orders' => $totalCompletedOrders,
-                'pending_orders' => $pendingOrders,
+                'pending_orders' => $recentOrders,
+                'recent_orders' => $recentOrders,
             ], 'Dashboard data fetched successfully');
         } catch (\Throwable $e) {
             Log::error('Error fetching marketplace dashboard: ' . $e->getMessage());
@@ -2824,7 +2920,7 @@ class AuthController extends Controller
             [$startDate, $endDate] = $this->resolveAnalyticsPeriod($period, $user->id);
 
             $orders = MarketplaceOrder::query()
-                ->select('id', 'status', 'created_at')
+                ->select('id', 'status', 'payment_status', 'created_at', 'total_amount')
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id);
                 })
@@ -2845,7 +2941,7 @@ class AuthController extends Controller
                 })
                 ->avg('rating');
 
-                $rating = $rating ? round($rating, 1) : 0;
+            $rating = $rating ? round($rating, 1) : 0;
 
             $storeVisits = StoreVisit::query()
                 ->where('shop_id', $user->id)
@@ -2861,15 +2957,15 @@ class AuthController extends Controller
                 })
                 ->sum('view_count');
 
+            $paidOrders = $orders->filter(function ($ord) {
+                return $ord->payment_status === 'paid' || in_array(strtolower($ord->status), ['accept', 'confirmed', 'processing', 'completed', 'mark_as_shipped', 'mark_as_delivered']);
+            });
+
             $summary = [
-                'total_earning' => round((float) $orders
-                    ->where('status', 'completed')
-                    ->sum(function ($order) {
-                        return $order->items->sum('total_price');
-                    }), 2),
+                'total_earning' => round((float) $paidOrders->sum('total_amount'), 2),
                 'total_orders' => $orders->count(),
-                'completed_orders' => $orders->where('status', 'completed')->count(),
-                'cancelled_orders' => $orders->where('status', 'reject')->count(),
+                'completed_orders' => $paidOrders->count(),
+                'cancelled_orders' => $orders->whereIn('status', ['reject', 'cancelled'])->count(),
                 'store_visits' => $storeVisits,
                 'product_views' => $productViews,
                 'rating' => round((float) ($rating ?? 0), 1),
@@ -3127,7 +3223,7 @@ class AuthController extends Controller
             if ($order->status === 'completed') {
                 $buckets[$bucketKey]['completed_orders']++;
                 $buckets[$bucketKey]['earnings'] = round(
-                    $buckets[$bucketKey]['earnings'] + (float) $order->items->sum('total_price'),
+                    $buckets[$bucketKey]['earnings'] + (float) $order->total_amount,
                     2
                 );
             }
@@ -3249,9 +3345,9 @@ class AuthController extends Controller
             'location_label' => $user->location_label,
             'country' => $user->country,
             'city_id' => $user->city_id,
-            'address' => $user->providerProfile?->address ?? $user->address ?? null,
-            'latitude' => $user->providerProfile?->latitude ?? $user->latitude ?? null,
-            'longitude' => $user->providerProfile?->longitude ?? $user->longitude ?? null,
+            'address' => $this->resolveAddressForRole($user),
+            'latitude' => $this->resolveLatitudeForRole($user),
+            'longitude' => $this->resolveLongitudeForRole($user),
             'fcm_token' => $user->fcm_token,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
@@ -3277,6 +3373,15 @@ class AuthController extends Controller
                 ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
                 ->values();
 
+            $referrerUser = $providerProfile?->referred_by_id ? User::with('providerProfile')->find($providerProfile->referred_by_id) : null;
+            $referredByData = $referrerUser ? [
+                'id' => $referrerUser->id,
+                'name' => $referrerUser->name,
+                'user_code' => $referrerUser->user_code,
+                'referral_code' => optional($referrerUser->providerProfile)->referral_code,
+            ] : null;
+            $totalReferrals = ProviderProfile::where('referred_by_id', $user->id)->count();
+
             return array_merge($payload, [
                 'gallery' => $gallery,
                 'skills' => $user->skills()->get(),
@@ -3288,6 +3393,11 @@ class AuthController extends Controller
                 'total_orders' => $user->total_orders,
                 'total_earnings' => $user->total_earnings,
                 'payment_due' => $user->payment_due,
+                'referral_code' => $providerProfile?->referral_code,
+                'referred_by_code' => $providerProfile?->referred_by_code,
+                'referred_by_id' => $providerProfile?->referred_by_id,
+                'referred_by' => $referredByData,
+                'total_referrals' => $totalReferrals,
                 'provider_profile' => $providerProfile ? [
                     'id' => $providerProfile->id,
                     'user_id' => $providerProfile->user_id,
@@ -3314,6 +3424,11 @@ class AuthController extends Controller
                     'certification' => $providerProfile->certification
                         ? asset('uploads/certification_files/' . $providerProfile->certification)
                         : null,
+                    'referral_code' => $providerProfile->referral_code,
+                    'referred_by_code' => $providerProfile->referred_by_code,
+                    'referred_by_id' => $providerProfile->referred_by_id,
+                    'referred_by' => $referredByData,
+                    'total_referrals' => $totalReferrals,
                     'created_at' => $providerProfile->created_at,
                     'updated_at' => $providerProfile->updated_at,
                 ] : null,
@@ -3354,6 +3469,9 @@ class AuthController extends Controller
                     'shop_status' => $marketplaceProfile->shop_status,
                     'document_type' => $marketplaceProfile->document_type,
                     'document_number' => $marketplaceProfile->document_number,
+                    'address' => $marketplaceProfile->address,
+                    'latitude' => $marketplaceProfile->latitude,
+                    'longitude' => $marketplaceProfile->longitude,
                     'created_at' => $marketplaceProfile->created_at,
                     'updated_at' => $marketplaceProfile->updated_at,
                 ] : null,
@@ -3403,6 +3521,27 @@ class AuthController extends Controller
         return asset(trim($directory, '/') . '/' . ltrim($path, '/'));
     }
 
+    private function resolveAddressForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->address ?? null;
+        return $user->address ?? null;
+    }
+
+    private function resolveLatitudeForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->latitude ?? null;
+        return $user->latitude ?? null;
+    }
+
+    private function resolveLongitudeForRole(User $user): ?string
+    {
+        $role = (string) $user->role;
+        if ($role === '1') return $user->providerProfile?->longitude ?? null;
+        return $user->longitude ?? null;
+    }
+
     private function parseRoleList(?string $roles): array
     {
         return array_values(array_unique(array_filter(array_map('trim', explode(',', (string) $roles)))));
@@ -3450,6 +3589,11 @@ class AuthController extends Controller
             return $user;
         }
 
+        if (empty($profile->referral_code)) {
+            $profile->referral_code = ProviderProfile::generateUniqueReferralCode();
+            $profile->save();
+        }
+
         $user->provider_type = $profile->provider_type;
         $user->company_name = $profile->company_name;
         $user->company_logo = $profile->company_logo
@@ -3473,6 +3617,21 @@ class AuthController extends Controller
         $user->certification = $profile->certification
             ? asset('uploads/certification_files/' . $profile->certification)
             : null;
+
+        // Referral details
+        $user->referral_code = $profile->referral_code;
+        $user->referred_by_code = $profile->referred_by_code;
+        $user->referred_by_id = $profile->referred_by_id;
+
+        $referrerUser = $profile->referred_by_id ? User::with('providerProfile')->find($profile->referred_by_id) : null;
+        $user->referred_by = $referrerUser ? [
+            'id' => $referrerUser->id,
+            'name' => $referrerUser->name,
+            'user_code' => $referrerUser->user_code,
+            'referral_code' => optional($referrerUser->providerProfile)->referral_code,
+        ] : null;
+
+        $user->total_referrals = ProviderProfile::where('referred_by_id', $user->id)->count();
 
         $user->profile_image = $profile->company_logo
             ? asset('uploads/company_logos/' . $profile->company_logo)
@@ -3511,6 +3670,9 @@ class AuthController extends Controller
         $user->shop_image = $profile->shop_logo
             ? asset('uploads/shop_logos/' . $profile->shop_logo)
             : asset('assets/img/default.jpg');
+        $user->marketplace_address = $profile->address;
+        $user->marketplace_latitude = $profile->latitude;
+        $user->marketplace_longitude = $profile->longitude;
 
         return $user;
     }

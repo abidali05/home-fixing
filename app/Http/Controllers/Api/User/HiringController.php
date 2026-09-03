@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
 use App\Models\Admin\ServiceCategoryModel;
+use App\Models\Admin\SystemSettingModel;
 use App\Models\BidModel;
 use App\Models\JobRequestImages;
 use App\Models\JobRequestModel;
@@ -31,11 +32,15 @@ class HiringController extends Controller
             'address' => 'required|string|max:255',
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
-            'description' => 'required|string',
+            'description' => 'nullable|string',
             'job_date' => 'required|date',
             'job_time' => 'required|date_format:H:i',
             'place_pictures' => 'nullable|array',
-            'place_pictures.*' => 'image|max:8192'
+            'place_pictures.*' => 'image|max:8192',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
+            'equipment_option' => 'nullable',
+        ], [
+            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validator->fails()) {
@@ -47,10 +52,13 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
             if (!$user) {
+                DB::rollBack();
                 return $this->error('Unauthorized.', 401);
             }
 
             $provider = User::findOrFail($request->provider_id);
+
+            $equipmentOption = $request->equipment_option;
 
             $job = JobRequestModel::create([
                 'category_id' => $request->service_id,
@@ -65,6 +73,7 @@ class HiringController extends Controller
                 'status' => 'pending',
                 'price_type' => $provider->charge_type,
                 'price' => $provider->charge_amount,
+                'equipment_option' => $equipmentOption,
             ]);
 
             // ✅ SAVE IMAGES
@@ -79,6 +88,29 @@ class HiringController extends Controller
                     ]);
                 }
             }
+
+            // ✅ SAVE VIDEO
+            if ($request->hasFile('video')) {
+                $file = $request->file('video');
+                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                $file->move(public_path('uploads/job_gallery/'), $filename);
+
+                $job->video = $filename;
+                $job->save();
+            }
+
+            // Create order with status 'open'
+            $order = new Orders();
+            $order->provider_id = $job->provider_id;
+            $order->user_id = $user->id;
+            $order->job_id = $job->id;
+            $order->source = 'direct_hiring';
+            $order->address = $job->address;
+            $order->details = $job->description;
+            $order->price = $job->price ?? 0;
+            $order->status = 'open';
+            $order->paid_to_system = 0;
+            $order->save();
 
             DB::commit();
 
@@ -100,14 +132,18 @@ class HiringController extends Controller
     {
         $validated = Validator::make($request->all(), [
             'service_id' => 'required|exists:categories,id',
-            'description' => 'required|string',
+            'description' => 'nullable|string',
             'date' => 'required|date',
             'time' => 'required|date_format:H:i',
             'address' => 'required|string|max:255',
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
             'place_pictures' => 'required|array',
-            'place_pictures.*' => 'image|max:8192'
+            'place_pictures.*' => 'image|max:8192',
+            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
+            'equipment_option' => 'nullable',
+        ], [
+            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validated->fails()) {
@@ -119,8 +155,11 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
             if ((int) $user->role !== 0) {
+                DB::rollBack();
                 return $this->error('Only normal users can create service requests.', 403);
             }
+
+            $equipmentOption = $request->equipment_option;
 
             $jobRequest = JobRequestModel::create([
                 'user_id' => $user->id,
@@ -134,6 +173,7 @@ class HiringController extends Controller
                 'latitude' => $request->latitude,
                 'longitude' => $request->longitude,
                 'status' => 'pending',
+                'equipment_option' => $equipmentOption,
             ]);
 
             if ($request->hasFile('place_pictures')) {
@@ -147,6 +187,28 @@ class HiringController extends Controller
                     ]);
                 }
             }
+
+            if ($request->hasFile('video')) {
+                $file = $request->file('video');
+                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                $file->move(public_path('uploads/job_gallery/'), $filename);
+
+                $jobRequest->video = $filename;
+                $jobRequest->save();
+            }
+
+            // Create order with status 'open'
+            $order = new Orders();
+            $order->provider_id = null;
+            $order->user_id = $user->id;
+            $order->job_id = $jobRequest->id;
+            $order->source = 'bid';
+            $order->address = $jobRequest->address;
+            $order->details = $jobRequest->description;
+            $order->price = $jobRequest->price ?? 0;
+            $order->status = 'open';
+            $order->paid_to_system = 0;
+            $order->save();
 
             DB::commit();
 
@@ -175,7 +237,7 @@ class HiringController extends Controller
         try {
             $user = auth('sanctum')->user();
 
-            $requests = JobRequestModel::with(['category', 'images'])
+            $requests = JobRequestModel::with(['category', 'images', 'order'])
                 ->where('user_id', $user->id)
                 ->orderByDesc('id')
                 ->get();
@@ -186,6 +248,8 @@ class HiringController extends Controller
                         ? asset('uploads/job_gallery/' . $image->path)
                         : asset('assets/img/default.jpg');
                 }
+
+                $request->setAttribute('order_status', $request->order ? $request->order->status : null);
             }
 
             return $this->success($requests);
@@ -208,6 +272,21 @@ class HiringController extends Controller
                 $image->path = $image->path != null ? asset('uploads/job_gallery/' . $image->path) : asset('assets/img/default.jpg');
             }
 
+            $order = Orders::with('provider')->where('job_id', $request->id)->latest()->first();
+            if ($order) {
+                $provider = $order->provider;
+                if ($provider) {
+                    $provider->profile_image = $provider->profile_image
+                        ? asset('uploads/profile_images/' . $provider->profile_image)
+                        : asset('assets/img/default.jpg');
+                }
+                $request->setAttribute('hired_provider', $provider);
+                $request->setAttribute('order_status', $order->status);
+            } else {
+                $request->setAttribute('hired_provider', null);
+                $request->setAttribute('order_status', null);
+            }
+
             return $this->success($request);
         } catch (ModelNotFoundException $e) {
             return $this->error('Service request not found.', 404);
@@ -220,7 +299,29 @@ class HiringController extends Controller
     public function view_bids_by_request($id)
     {
         try {
-            $bids = BidModel::with('job', 'provider','order')->where('job_id', $id)->get();
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+            $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
+
+            foreach ($bids as $bid) {
+                $repairPrice = (float) ($bid->price ?? 0);
+                $totalPayable = $repairPrice + $customerAppFee;
+
+                $bid->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                $bid->total_price = number_format($totalPayable, 2, '.', '');
+                $bid->total_payable_by_customer = number_format($totalPayable, 2, '.', '');
+
+                $bid->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($totalPayable, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($totalPayable, 2, '.', ''),
+                    'total_amount' => number_format($totalPayable, 2, '.', ''),
+                    'total' => number_format($totalPayable, 2, '.', ''),
+                ];
+            }
+
             return $this->success($bids);
         } catch (\Throwable $e) {
             Log::error('Error in view_bids_by_request: ' . $e->getMessage());
@@ -234,9 +335,11 @@ class HiringController extends Controller
             DB::beginTransaction();
             $customer = auth('sanctum')->user();
             if (!$customer) {
+                DB::rollBack();
                 return $this->error('Unauthorized.', 401);
             }
             if ((int) $customer->role !== 0) {
+                DB::rollBack();
                 return $this->error('Only customers can accept or reject bids.', 403);
             }
 
@@ -248,16 +351,19 @@ class HiringController extends Controller
                 ->first();
 
             if (!$bid) {
+                DB::rollBack();
                 return $this->error('Bid not found.', 404);
             }
 
             $job = $bid->job;
 
             if (!in_array($job->status, ['pending', 'quoted'])) {
+                DB::rollBack();
                 return $this->error('This job request is not available.', 400);
             }
 
             if ((int) $job->user_id !== (int) $customer->id) {
+                DB::rollBack();
                 return $this->error('You are not allowed to update this bid.', 403);
             }
 
@@ -279,30 +385,51 @@ class HiringController extends Controller
                 return $this->success(null, 'Bid rejected successfully.');
             }
 
-            $job->job_time = $bid->bid_time;
+            // $job->job_time = $bid->bid_time;
             $job->status = 'quoted';
             $job->save();
 
-            // Reject other pending bids before accepting
-            BidModel::where('job_id', $job->id)
+            // Reject other pending bids before accepting and send notifications
+            $otherBids = BidModel::where('job_id', $job->id)
                 ->where('id', '!=', $bid->id)
                 ->where('status', 'pending')
-                ->update(['status' => 'rejected']);
+                ->get();
+
+            foreach ($otherBids as $otherBid) {
+                $otherBid->status = 'rejected';
+                $otherBid->save();
+
+                $otherProvider = User::find($otherBid->provider_id);
+                if ($otherProvider) {
+                    try {
+                        $otherProvider->notify(
+                            (new BidRejectedNotification(
+                                $job,
+                                $customer,
+                                'Better luck next time. Your offer was not accepted for this request.'
+                            ))->afterCommit()
+                        );
+                    } catch (\Throwable $notificationException) {
+                        Log::error('Failed to send auto-bid-rejected notification to provider ' . $otherBid->provider_id . ': ' . $notificationException->getMessage());
+                    }
+                }
+            }
 
             $bid->status = 'accepted';
             $bid->save();
 
             // Create order
-            $order = new Orders();
+            // Update existing order for this job
+            $order = Orders::where('job_id', $job->id)->first();
+
+            if (!$order) {
+                DB::rollBack();
+                return $this->error('Order not found for this job.', 404);
+            }
+
             $order->provider_id = $bid->provider_id;
-            $order->user_id = $job->user_id;
-            $order->job_id = $job->id;
-            $order->source = 'bid';
-            $order->address = $job->address;
-            $order->details = $job->description;
             $order->price = $bid->price;
-            $order->status = 'pending';
-            $order->paid_to_system = 0;
+            $order->status = 'pending'; // or whatever status you want after bid acceptance
             $order->save();
 
             DB::commit();

@@ -58,21 +58,12 @@ class PaymentController extends Controller
                 return $this->error('Bid not found for this job.', 404);
             }
 
-            // 3. Calculate total payable amount by customer (Bid Price + App Fee + Gateway Fee + VAT)
+            // 3. Calculate total payable amount by customer (Bid Price + App Fee, without gateway tax)
             $settings = \App\Models\Admin\SystemSettingModel::first();
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
-            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $repairPrice = (float) ($bid->price ?? 0);
-            $subtotal = $repairPrice + $customerAppFee;
-
-            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-            $totalPayableByCustomer = $repairPrice + $customerAppFee + $totalGatewayFee;
+            $totalPayableByCustomer = $repairPrice + $customerAppFee;
 
             $payment = Payment::where('job_id', $job->id)
                 ->where('bid_id', $bid->id)
@@ -101,20 +92,22 @@ class PaymentController extends Controller
 
             Log::info("PaymentController: Payment initiated for job #{$job->id}, bid #{$bid->id}, payment ID #{$payment->id}");
 
+            $breakdown = [
+                'bid_price' => number_format($repairPrice, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'subtotal' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total_amount' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'total' => number_format($totalPayableByCustomer, 2, '.', ''),
+            ];
+
             return $this->success([
                 'payment_id' => $payment->id,
                 'amount' => (float) number_format($payment->amount, 2, '.', ''),
                 'currency' => $payment->currency,
-                'payment_breakdown' => [
-                    'bid_price' => number_format($repairPrice, 2, '.', ''),
-                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'subtotal' => number_format($subtotal, 2, '.', ''),
-                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
-                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
-                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
-                    'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
-                ]
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                'payment_breakdown' => $breakdown,
             ], 'Payment initiated successfully.');
 
         } catch (\Throwable $e) {

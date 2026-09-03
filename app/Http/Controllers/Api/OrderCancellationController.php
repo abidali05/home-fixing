@@ -102,7 +102,8 @@ class OrderCancellationController extends Controller
 
             // 5. Calculate Azhl System Fee & Customer Net Refund Amount
             $settings = SystemSettingModel::first();
-            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $azhlFee = round($paidAmount * ($azhlPercentage / 100), 2);
 
             $payment = Payment::where('job_id', $order->job_id)
                 ->orWhere('id', $order->id)

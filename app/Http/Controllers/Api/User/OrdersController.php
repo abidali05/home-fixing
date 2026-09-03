@@ -180,7 +180,7 @@ class OrdersController extends Controller
 
             $settings = SystemSettingModel::first();
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
@@ -208,6 +208,7 @@ class OrdersController extends Controller
             $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
             $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
             $totalPayableByCustomer = $payment ? (float) $payment->amount : ($repairPrice + $customerAppFee + $totalGatewayFee);
+            $azhlFee = $repairPrice * ($azhlPercentage / 100);
             $netProviderEarning = max(0, $repairPrice - $azhlFee);
 
             $receiptData = [
@@ -277,14 +278,23 @@ class OrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
             }
 
-            $order = MarketplaceOrder::with(['items.product', 'customer'])->find($id);
+            $order = MarketplaceOrder::with(['items.product', 'customer'])
+                ->where('id', $id)
+                ->orWhere('order_number', $id)
+                ->first();
 
             if (!$order) {
                 return response()->json(['success' => false, 'message' => 'Marketplace Order not found.'], 404);
             }
 
-            // Authorization check
-            if ((int) $order->user_id !== (int) $user->id && (int) $user->role !== 0) {
+            // Authorization check: Customer who placed order, Seller who owns items in this order, or Admin
+            $isCustomer = (int) $order->user_id === (int) $user->id;
+            $isSeller = $order->items->contains(function ($item) use ($user) {
+                return (int) optional($item->product)->user_id === (int) $user->id;
+            });
+            $isAdmin = in_array((string) $user->role, ['admin', 'superadmin']) || \Illuminate\Support\Facades\Auth::guard('admin')->check();
+
+            if (!$isCustomer && !$isSeller && !$isAdmin) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access to this marketplace order receipt.'], 403);
             }
 
@@ -381,14 +391,14 @@ class OrdersController extends Controller
 
             $provider = User::find($request->provider_id);
             if ($provider) {
-                $reviews = Reviews::where('provider_id', $request->provider_id)->get();
-                $avgRating = round($reviews->avg('rating'), 1);
+                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'rating')) {
+                    $reviews = Reviews::where('provider_id', $request->provider_id)->get();
+                    $avgRating = round($reviews->avg('rating'), 1);
 
-                $provider->rating = $avgRating;
-                $provider->save();
-            }
+                    $provider->rating = $avgRating;
+                    $provider->save();
+                }
 
-            if ($provider) {
                 try {
                     $provider->notify(new ProviderFeedbackReceivedNotification($review));
                 } catch (\Throwable $notificationException) {
@@ -402,7 +412,7 @@ class OrdersController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Error submitting feedback: ' . $e->getMessage());
-            return $this->error('Failed to submit feedback', 500);
+            return $this->error('Failed to submit feedback: ' . $e->getMessage(), 500);
         }
     }
 }

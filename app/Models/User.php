@@ -147,7 +147,7 @@ class User extends Authenticatable
     public function getTotalEarningsAttribute()
     {
         $settings = Admin\SystemSettingModel::first();
-        $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
         $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
         $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
@@ -162,7 +162,8 @@ class User extends Authenticatable
             $total = 0.0;
             foreach ($items as $item) {
                 $itemPrice = (float) ($item->total_price ?? 0);
-                $net = max(0, $itemPrice - $azhlFee);
+                $commission = $itemPrice * ($azhlPercentage / 100);
+                $net = max(0, $itemPrice - $commission);
                 $total += $net;
             }
             return (float) number_format($total, 2, '.', '');
@@ -186,7 +187,8 @@ class User extends Authenticatable
                 $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
             }
 
-            $net = max(0, $repairPrice - $azhlFee);
+            $commission = $repairPrice * ($azhlPercentage / 100);
+            $net = max(0, $repairPrice - $commission);
             $orderEarnings += $net;
         }
 

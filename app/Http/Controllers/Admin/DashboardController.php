@@ -49,7 +49,7 @@ class DashboardController extends Controller
 
             $settings = DB::table('system_settings')->first();
             $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
-            $azhlFeeSetting = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentageSetting = (float) ($settings->azhl_percentage ?? 10.00);
             $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
             $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
@@ -68,7 +68,8 @@ class DashboardController extends Controller
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFeeSetting);
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
-                $totalOrdersPrice += max(0, $repairPrice - $azhlFeeSetting);
+                $azhlFee = $repairPrice * ($azhlPercentageSetting / 100);
+                $totalOrdersPrice += max(0, $repairPrice - $azhlFee);
             }
 
             $totalMarketplaceRevenue = 0.0;
@@ -136,7 +137,7 @@ class DashboardController extends Controller
 
             $settings = DB::table('system_settings')->first();
             $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
-            $azhlFeeSetting = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentageSetting = (float) ($settings->azhl_percentage ?? 10.00);
             $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
             $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
@@ -175,12 +176,13 @@ class DashboardController extends Controller
                 $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
                 $totalCustomerPaid = $repairPrice + $customerAppFeeSetting + $totalGatewayFee;
 
-                $providerNet = max(0, $repairPrice - $azhlFeeSetting);
+                $azhlFee = $repairPrice * ($azhlPercentageSetting / 100);
+                $providerNet = max(0, $repairPrice - $azhlFee);
 
                 $totalCustomerPaidVolume += $totalCustomerPaid;
                 $totalNetRepairVolume += $repairPrice;
                 $totalProviderNetEarnings += $providerNet;
-                $totalNetAzhlAppProfit += ($customerAppFeeSetting + $azhlFeeSetting);
+                $totalNetAzhlAppProfit += ($customerAppFeeSetting + $azhlFee);
                 $totalGatewayFeesWithVat += $totalGatewayFee;
             }
 

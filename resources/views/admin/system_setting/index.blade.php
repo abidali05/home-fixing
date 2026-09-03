@@ -228,15 +228,15 @@
                                         @error('customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                     <div class="col-md-6">
-                                        <label for="azhl_fee" class="form-label">Provider Commission Fee (SAR)</label>
+                                        <label for="azhl_percentage" class="form-label">Provider Commission Fee (%)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" class="form-control @error('azhl_fee') is-invalid @enderror"
-                                                name="azhl_fee" id="azhl_fee"
-                                                value="{{ old('azhl_fee', $settings->azhl_fee ?? 5.00) }}" placeholder="5.00" required>
-                                            <span class="input-group-text">SAR</span>
+                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('azhl_percentage') is-invalid @enderror"
+                                                name="azhl_percentage" id="azhl_percentage"
+                                                value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 10.00) }}" placeholder="10.00" required>
+                                            <span class="input-group-text">%</span>
                                         </div>
-                                        <div class="helper-text">Commission fee deducted from service provider net earnings per order (e.g. 5.00 SAR).</div>
-                                        @error('azhl_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                        <div class="helper-text">Commission percentage deducted from service provider net earnings per order (e.g. 10.00%).</div>
+                                        @error('azhl_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
                             </div>
@@ -334,9 +334,14 @@
                             </div>
                             <div class="card-body p-4">
                                 <div class="preview-box text-center mb-4">
-                                    <img id="logoPreview"
-                                        src="{{ !empty($settings->logo) ? asset('uploads/system_settings/' . $settings->logo) : 'https://via.placeholder.com/150x160?text=System+Logo' }}"
-                                        class="img-fluid rounded p-2 bg-white shadow-sm mb-3" style="max-height: 120px; object-fit: contain;">
+                                    <div class="d-inline-flex align-items-center justify-content-center p-3 mb-3" 
+                                         style="background: linear-gradient(135deg, #4F2396 0%, #682eb8 100%); border-radius: 16px; box-shadow: 0 8px 22px rgba(79, 35, 150, 0.25); border: 1px solid rgba(255, 255, 255, 0.15); min-width: 140px; min-height: 70px;">
+                                        <img id="logoPreview"
+                                            src="{{ (!empty($settings->logo) && file_exists(public_path('uploads/system_settings/' . $settings->logo))) ? asset('uploads/system_settings/' . $settings->logo) : asset('uploads/system_settings/Logo1.png') }}"
+                                            class="img-fluid"
+                                            alt="{{ $settings->system_name ?? 'Azhl' }} Logo"
+                                            style="max-height: 54px; width: auto; object-fit: contain;">
+                                    </div>
                                     <h6 class="fw-bold mb-1" id="previewSystemName">{{ $settings->system_name ?? 'Azhl' }}</h6>
                                     <span class="badge bg-primary px-3 py-2 text-xs" id="previewCurrency">{{ $settings->currency ?? 'SAR' }}</span>
                                 </div>
@@ -352,7 +357,7 @@
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-briefcase-fill text-warning me-1"></i> Provider Commission:</span>
-                                        <strong class="text-dark">{{ number_format($settings->azhl_fee ?? 5.00, 2) }} SAR</strong>
+                                        <strong class="text-dark">{{ number_format($settings->azhl_percentage ?? 10.00, 2) }}%</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-credit-card-fill text-primary me-1"></i> Gateway Fee:</span>

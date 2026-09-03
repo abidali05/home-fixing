@@ -85,12 +85,8 @@ class MarketplacePaymentController extends Controller
             $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
             $appFeeToApply = 0.0;
 
-            $baseSubtotal = $productsSubtotal;
-            $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-            $totalAmount = max(0.1, round($productsTotalWithVat + $shippingCost + $totalGatewayFee, 2));
+            // Customer pays products_total_with_vat (plus shipping if any), without gateway fee/taxes
+            $totalAmount = max(0.1, round($productsTotalWithVat + $shippingCost, 2));
 
             $breakdown = [
                 'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
@@ -98,19 +94,12 @@ class MarketplacePaymentController extends Controller
                 'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
                 'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
                 'customer_app_fee' => '0.00',
-                'subtotal' => number_format($baseSubtotal, 2, '.', ''),
+                'subtotal' => number_format($productsSubtotal, 2, '.', ''),
                 'shipping_cost' => number_format($shippingCost, 2, '.', ''),
-                'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
-                'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'fixed_transaction_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'payment_gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'gateway_fee_subtotal' => number_format($gatewaySubtotal, 2, '.', ''),
-                'gateway_vat_percentage' => number_format($gatewayVatPct, 2, '.', ''),
-                'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
-                'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
                 'total_payable_by_customer' => number_format($totalAmount, 2, '.', ''),
                 'grand_total' => number_format($totalAmount, 2, '.', ''),
                 'total_amount' => number_format($totalAmount, 2, '.', ''),
+                'total' => number_format($totalAmount, 2, '.', ''),
                 'currency' => strtoupper(optional($settings)->currency ?? 'SAR'),
             ];
 

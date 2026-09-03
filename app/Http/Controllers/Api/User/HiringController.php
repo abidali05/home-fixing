@@ -300,33 +300,25 @@ class HiringController extends Controller
     {
         try {
             $settings = SystemSettingModel::first();
-
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
-            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
 
             foreach ($bids as $bid) {
                 $repairPrice = (float) ($bid->price ?? 0);
-                $subtotal = $repairPrice + $customerAppFee;
+                $totalPayable = $repairPrice + $customerAppFee;
 
-                $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-                $totalPayableByCustomer = $repairPrice + $customerAppFee + $totalGatewayFee;
+                $bid->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                $bid->total_price = number_format($totalPayable, 2, '.', '');
+                $bid->total_payable_by_customer = number_format($totalPayable, 2, '.', '');
 
                 $bid->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'subtotal' => number_format($subtotal, 2, '.', ''),
-                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
-                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
-                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
-                    'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                    'subtotal' => number_format($totalPayable, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($totalPayable, 2, '.', ''),
+                    'total_amount' => number_format($totalPayable, 2, '.', ''),
+                    'total' => number_format($totalPayable, 2, '.', ''),
                 ];
             }
 

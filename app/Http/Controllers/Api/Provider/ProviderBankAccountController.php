@@ -282,7 +282,7 @@ class ProviderBankAccountController extends Controller
         }
 
         $settings = \App\Models\Admin\SystemSettingModel::first();
-        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
         // 1. Pending Amount: Gross value of active/held provider orders
         $pendingAmount = (float) \App\Models\Payment::where('provider_id', $user->id)
@@ -291,7 +291,7 @@ class ProviderBankAccountController extends Controller
             })
             ->sum('amount');
 
-        // 2. Total Earnings: Sum of net provider credits from completed orders (gross - fixed azhl_fee)
+        // 2. Total Earnings: Sum of net provider credits from completed orders (gross - percentage azhl commission)
         $completedPayments = \App\Models\Payment::where('provider_id', $user->id)
             ->where('status', 'captured')
             ->whereHas('job', function ($q) {
@@ -302,7 +302,8 @@ class ProviderBankAccountController extends Controller
         $totalEarnings = 0.0;
         foreach ($completedPayments as $payment) {
             $gross = (float) $payment->amount;
-            $net = max(0, $gross - $azhlFeePerOrder);
+            $fee = $gross * ($azhlPercentage / 100);
+            $net = max(0, $gross - $fee);
             $totalEarnings += $net;
         }
 

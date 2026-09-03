@@ -1133,13 +1133,13 @@ class GeneralContoller extends Controller
             }
 
             $settings = SystemSettingModel::first();
-            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $formatOrder = function ($order) use ($settings, $azhlFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+            $formatOrder = function ($order) use ($settings, $azhlPercentage, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
                 $category = $order->job->category ?? null;
                 if ($category) {
                     $category->path = $category->path
@@ -1161,13 +1161,16 @@ class GeneralContoller extends Controller
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
 
+                $azhlFee = $repairPrice * ($azhlPercentage / 100);
                 $netAmount = max(0, $repairPrice - $azhlFee);
 
                 $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->azhl_percentage = number_format($azhlPercentage, 2, '.', '');
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
                 $order->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'azhl_percentage' => number_format($azhlPercentage, 2, '.', ''),
                     'azhl_fee' => number_format($azhlFee, 2, '.', ''),
                     'net_amount' => number_format($netAmount, 2, '.', ''),
                 ];
@@ -1308,15 +1311,73 @@ class GeneralContoller extends Controller
 
             $order = $tracking->first()->order;
 
-            $order->user->profile_image = $order->user->profile_image
-                ? asset('uploads/profile_images/' . $order->user->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->user) {
+                $order->user->profile_image = $order->user->profile_image
+                    ? asset('uploads/profile_images/' . $order->user->profile_image)
+                    : asset('assets/img/default.jpg');
+            }
 
-            $order->provider->profile_image = $order->provider->profile_image
-                ? asset('uploads/profile_images/' . $order->provider->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->provider) {
+                $order->provider->profile_image = $order->provider->profile_image
+                    ? asset('uploads/profile_images/' . $order->provider->profile_image)
+                    : asset('assets/img/default.jpg');
+            }
 
-            $isCompleted = $order->status === 'completed';
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+            if ($order) {
+                $repairPrice = (float) ($order->price ?? 0);
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->whereIn('status', ['accepted', 'completed', 'hired'])
+                        ->first();
+                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
+                        $repairPrice = (float) $acceptedBid->price;
+                    }
+                }
+
+                if ($repairPrice > 103) {
+                    $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                    $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
+                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
+                }
+
+                $total = $repairPrice + $customerAppFee;
+
+                $paymentBreakdown = [
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'system_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($total, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($total, 2, '.', ''),
+                    'total_amount' => number_format($total, 2, '.', ''),
+                    'total' => number_format($total, 2, '.', ''),
+                ];
+
+                foreach ($tracking as $track) {
+                    if ($track->order) {
+                        $track->order->repair_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->base_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->bid_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->total_price = number_format($total, 2, '.', '');
+                        $track->order->total_amount = number_format($total, 2, '.', '');
+                        $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
+                        $track->order->total = number_format($total, 2, '.', '');
+                        $track->order->price = number_format($total, 2, '.', '');
+                        $track->order->payment_breakdown = $paymentBreakdown;
+                    }
+                }
+            }
+
+            $isCompleted = $order ? $order->status === 'completed' : false;
 
             return $this->success(
                 $tracking,

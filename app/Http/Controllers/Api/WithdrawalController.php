@@ -26,7 +26,7 @@ class WithdrawalController extends Controller
         $settings = SystemSettingModel::first();
 
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
         $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
         $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
         $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
@@ -42,8 +42,8 @@ class WithdrawalController extends Controller
         // 3. Total Amount paid by Customer at Checkout
         $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
 
-        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Fee)
-        // Provider receives exact 95.00 SAR for a 100.00 SAR repair price!
+        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Percentage)
+        $azhlFee = $repairPrice * ($azhlPercentage / 100);
         $netProviderAmount = max(0, $repairPrice - $azhlFee);
 
         return [
@@ -52,6 +52,7 @@ class WithdrawalController extends Controller
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),
             'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
             'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlPercentage, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
             'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
         ];
@@ -374,7 +375,7 @@ class WithdrawalController extends Controller
         }
 
         $settings = SystemSettingModel::first();
-        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
         $transactions = collect();
 

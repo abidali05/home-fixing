@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
 use App\Models\MarketplaceOrder;
+use App\Models\MarketplaceOrderItem;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
@@ -55,6 +56,40 @@ class WithdrawalController extends Controller
             'azhl_percentage' => (float) number_format($azhlPercentage, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
             'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
+        ];
+    }
+
+    /**
+     * Calculate marketplace order financials based on single 15% VAT and azhl_percentage commission
+     */
+    private function calculateMarketplaceFinancials($productSubtotal): array
+    {
+        $settings = SystemSettingModel::first();
+        $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+
+        $vatAmount = round($productSubtotal * ($marketplaceVatPct / 100), 2);
+        $customerTotal = round($productSubtotal + $vatAmount, 2);
+
+        // Platform commission is azhl_percentage of product subtotal
+        $azhlFee = round($productSubtotal * ($azhlPercentage / 100), 2);
+        $netAmount = max(0, round($productSubtotal - $azhlFee, 2));
+
+        return [
+            'products_subtotal' => $productSubtotal,
+            'marketplace_vat_percentage' => $marketplaceVatPct,
+            'total_product_vat' => $vatAmount,
+            'vat_amount' => $vatAmount,
+            'products_total_with_vat' => $customerTotal,
+            'customer_total' => $customerTotal,
+            'total_amount' => $customerTotal,
+            'gross_amount' => $customerTotal,
+            'customer_app_fee' => 0.0,
+            'gateway_fee' => 0.0,
+            'azhl_percentage' => $azhlPercentage,
+            'azhl_fee' => $azhlFee,
+            'net_amount' => $netAmount,
+            'currency' => 'SAR',
         ];
     }
 
@@ -139,30 +174,43 @@ class WithdrawalController extends Controller
                 ->sum('amount');
         } else {
             // Marketplace Seller Calculations
-            $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $userId)
-                ->pluck('marketplace_order_id')
-                ->unique()
-                ->filter();
-
-            $pendingPayments = Payment::whereIn('marketplace_order_id', $orderIds)
-                ->whereIn('status', ['pending', 'processing', 'initiated'])
+            $sellerItems = MarketplaceOrderItem::with('order')
+                ->where(function ($q) use ($userId) {
+                    $q->where('shop_id', $userId)
+                      ->orWhereHas('product', fn($p) => $p->where('user_id', $userId));
+                })
                 ->get();
 
             $pendingAmount = 0.0;
-            foreach ($pendingPayments as $p) {
-                $gross = (float) ($p->amount ?? 0);
-                $pendingAmount += max(0, $gross - $azhlFeePerOrder);
-            }
-
-            $completedPayments = Payment::whereIn('marketplace_order_id', $orderIds)
-                ->where('status', 'captured')
-                ->get();
-
             $orderEarnings = 0.0;
-            foreach ($completedPayments as $p) {
-                $gross = (float) ($p->amount ?? 0);
-                $net = max(0, $gross - $azhlFeePerOrder);
-                $orderEarnings += $net;
+
+            foreach ($sellerItems as $item) {
+                $order = $item->order;
+                if (!$order) {
+                    continue;
+                }
+
+                $orderStatus = strtolower($order->status ?: 'pending');
+                if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
+                    continue;
+                }
+
+                $basePrice = (float) ($item->base_price ?? 0);
+                $totalPrice = (float) ($item->total_price ?? 0);
+                if ($basePrice <= 0 && $totalPrice > 0) {
+                    $settings = SystemSettingModel::first();
+                    $vatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+                    $basePrice = round($totalPrice / (1 + ($vatPct / 100)), 2);
+                }
+
+                $financials = $this->calculateMarketplaceFinancials($basePrice);
+                $net = $financials['net_amount'];
+
+                if ($orderStatus === 'completed') {
+                    $orderEarnings += $net;
+                } else {
+                    $pendingAmount += $net;
+                }
             }
 
             $referralEarnings = (float) ReferralReward::where('referrer_id', $userId)->sum('reward_amount');
@@ -467,20 +515,35 @@ class WithdrawalController extends Controller
             } else {
                 $marketplaceOrders = MarketplaceOrder::with(['items.product', 'payment'])
                     ->whereHas('items', function ($query) use ($user) {
-                        $query->where('shop_id', $user->id);
+                        $query->where('shop_id', $user->id)
+                              ->orWhereHas('product', fn($p) => $p->where('user_id', $user->id));
                     })
                     ->get();
 
                 foreach ($marketplaceOrders as $mktOrder) {
-                    $item = $mktOrder->items->firstWhere('shop_id', $user->id);
-                    $product = $item?->product;
-                    $grossPrice = (float) ($item?->total_price ?? ($mktOrder->total_amount ?? 0));
-                    $financials = $this->calculateOrderFinancials($grossPrice);
+                    $sellerItems = $mktOrder->items->filter(function ($it) use ($user) {
+                        return (int) $it->shop_id === (int) $user->id
+                            || (int) optional($it->product)->user_id === (int) $user->id;
+                    });
 
-                    $gross = $financials['repair_price'];
-                    $azhlFee = $financials['azhl_fee'];
-                    $gatewayFee = $financials['gateway_fee'];
-                    $net = $financials['net_amount'];
+                    if ($sellerItems->isEmpty()) {
+                        continue;
+                    }
+
+                    $subtotal = 0.0;
+                    foreach ($sellerItems as $it) {
+                        $base = (float) ($it->base_price ?? 0);
+                        $tot = (float) ($it->total_price ?? 0);
+                        if ($base <= 0 && $tot > 0) {
+                            $settings = SystemSettingModel::first();
+                            $vatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+                            $base = round($tot / (1 + ($vatPct / 100)), 2);
+                        }
+                        $subtotal += $base;
+                    }
+
+                    $financials = $this->calculateMarketplaceFinancials($subtotal);
+
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
                     $type = 'credit';
@@ -493,18 +556,28 @@ class WithdrawalController extends Controller
                         $label = 'Credit';
                     }
 
+                    $titles = $sellerItems->map(fn($it) => $it->product_name ?: optional($it->product)->product_name)->filter()->unique()->join(', ');
+
                     $orderPayload = [
                         'order_id' => (int) $mktOrder->id,
                         'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
-                        'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
+                        'order_title' => $titles ?: 'Marketplace Product Order',
                         'order_status' => $orderStatus,
-                        'gross_amount' => number_format($gross, 2, '.', ''),
-                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
-                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
-                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'subtotal' => number_format($financials['products_subtotal'], 2, '.', ''),
+                        'products_subtotal' => number_format($financials['products_subtotal'], 2, '.', ''),
+                        'marketplace_vat_percentage' => number_format($financials['marketplace_vat_percentage'], 2, '.', ''),
+                        'total_product_vat' => number_format($financials['total_product_vat'], 2, '.', ''),
+                        'vat_amount' => number_format($financials['vat_amount'], 2, '.', ''),
+                        'products_total_with_vat' => number_format($financials['products_total_with_vat'], 2, '.', ''),
+                        'gross_amount' => number_format($financials['gross_amount'], 2, '.', ''),
                         'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'total_amount' => number_format($financials['total_amount'], 2, '.', ''),
+                        'azhl_percentage' => number_format($financials['azhl_percentage'], 2, '.', ''),
+                        'azhl_fee' => number_format($financials['azhl_fee'], 2, '.', ''),
+                        'customer_app_fee' => '0.00',
+                        'gateway_fee' => '0.00',
                         'referral_fee' => '0.00',
-                        'net_amount' => number_format($net, 2, '.', ''),
+                        'net_amount' => number_format($financials['net_amount'], 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -512,7 +585,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $mktOrder->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => number_format($net, 2, '.', ''),
+                        'amount' => number_format($financials['net_amount'], 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => $type === 'cancelled' ? null : $orderPayload,

@@ -199,15 +199,12 @@ class WithdrawalController extends Controller
                     continue;
                 }
 
-                $basePrice = (float) ($item->base_price ?? 0);
-                $totalPrice = (float) ($item->total_price ?? 0);
-                if ($basePrice <= 0 && $totalPrice > 0) {
-                    $settings = SystemSettingModel::first();
-                    $vatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
-                    $basePrice = round($totalPrice / (1 + ($vatPct / 100)), 2);
+                $itemSubtotal = (float) ($item->total_price ?? 0);
+                if ($itemSubtotal <= 0) {
+                    $itemSubtotal = (float) ($item->base_price ?? 0) * (int) ($item->quantity ?? 1);
                 }
 
-                $financials = $this->calculateMarketplaceFinancials($basePrice);
+                $financials = $this->calculateMarketplaceFinancials($itemSubtotal);
                 $net = $financials['net_amount'];
 
                 if ($orderStatus === 'completed') {
@@ -536,17 +533,29 @@ class WithdrawalController extends Controller
 
                     $subtotal = 0.0;
                     foreach ($sellerItems as $it) {
-                        $base = (float) ($it->base_price ?? 0);
-                        $tot = (float) ($it->total_price ?? 0);
-                        if ($base <= 0 && $tot > 0) {
-                            $settings = SystemSettingModel::first();
-                            $vatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
-                            $base = round($tot / (1 + ($vatPct / 100)), 2);
+                        $itemTotal = (float) ($it->total_price ?? 0);
+                        if ($itemTotal <= 0) {
+                            $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
                         }
-                        $subtotal += $base;
+                        $subtotal += $itemTotal;
+                    }
+
+                    $isAllOrderItems = $sellerItems->count() === $mktOrder->items->count();
+                    if ($isAllOrderItems && (float) $mktOrder->subtotal > 0) {
+                        $subtotal = (float) $mktOrder->subtotal;
                     }
 
                     $financials = $this->calculateMarketplaceFinancials($subtotal);
+
+                    if ($isAllOrderItems && (float) $mktOrder->tax_amount > 0) {
+                        $financials['total_product_vat'] = (float) $mktOrder->tax_amount;
+                        $financials['vat_amount'] = (float) $mktOrder->tax_amount;
+                        $financials['tax_amount'] = (float) $mktOrder->tax_amount;
+                    }
+                    if ($isAllOrderItems && (float) $mktOrder->total_amount > 0) {
+                        $financials['products_total_with_vat'] = (float) $mktOrder->total_amount;
+                        $financials['customer_paid_with_tax'] = (float) $mktOrder->total_amount;
+                    }
 
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 

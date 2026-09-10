@@ -52,7 +52,7 @@ class OrdersController extends Controller
                 ->keyBy('order_id');
 
             $capturedJobIds = Payment::where('user_id', $user->id)
-                ->where('status', 'captured')
+                ->whereIn('status', ['captured', 'paid'])
                 ->pluck('job_id')
                 ->filter()
                 ->toArray();
@@ -67,9 +67,37 @@ class OrdersController extends Controller
                 }
 
                 $query = Orders::with(['job.category', 'provider'])
-                    ->where('user_id', $user->id)
-                    ->whereIn('status', (array) $statusArray)
-                    ->orderBy('id', 'DESC');
+                    ->where('user_id', $user->id);
+
+                if ($key === 'ongoing_orders') {
+                    // Ongoing orders: normal active statuses + completed orders whose payment is still pending
+                    $query->where(function ($q) use ($capturedJobIds) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) use ($capturedJobIds) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                              if (!empty($capturedJobIds)) {
+                                  $sub->whereNotIn('job_id', $capturedJobIds);
+                              }
+                          });
+                    });
+                } elseif ($key === 'completed_orders') {
+                    // Completed orders: status must be completed AND payment must be paid
+                    $query->where('status', 'completed')
+                          ->where(function ($q) use ($capturedJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($capturedJobIds)) {
+                                  $q->orWhereIn('job_id', $capturedJobIds);
+                              }
+                          });
+                } else {
+                    $query->whereIn('status', (array) $statusArray);
+                }
+
+                $query->orderBy('id', 'DESC');
 
                 $categoryTotal = $query->count();
                 $totalCount += $categoryTotal;
@@ -95,6 +123,9 @@ class OrdersController extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
+                    $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
+                    $order->is_paid = $isPaid;
+                    $order->payment_status = $isPaid ? 'paid' : 'pending';
 
                     // For cancelled_orders: Attach refund status lifecycle details
                     if ($key === 'cancelled_orders' || strtolower($order->status) === 'cancelled') {

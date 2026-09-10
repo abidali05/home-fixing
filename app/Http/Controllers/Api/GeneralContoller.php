@@ -1260,9 +1260,19 @@ class GeneralContoller extends Controller
                     ->orderBy('id', 'DESC');
 
                 if ($statusFilter === 'ongoing') {
-                    $query->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed']);
+                    $query->where(function ($q) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                          });
+                    });
                 } elseif ($statusFilter === 'completed') {
-                    $query->whereIn('status', ['completed']);
+                    $query->where('status', 'completed')
+                          ->where('paid_to_system', 1);
                 } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
                     $query->whereIn('status', ['pending', 'open', 'accepted']);
                 } elseif ($statusFilter === 'cancelled') {
@@ -1301,11 +1311,28 @@ class GeneralContoller extends Controller
             $data = [];
 
             foreach ($statuses as $key => $statusList) {
-                $orders = Orders::with(['job.category', 'user'])
-                    ->where('provider_id', $user->id)
-                    ->whereIn('status', (array) $statusList)
-                    ->orderBy('id', 'DESC')
-                    ->get();
+                $query = Orders::with(['job.category', 'user'])
+                    ->where('provider_id', $user->id);
+
+                if ($key === 'ongoing_orders') {
+                    $query->where(function ($q) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                          });
+                    });
+                } elseif ($key === 'completed_orders') {
+                    $query->where('status', 'completed')
+                          ->where('paid_to_system', 1);
+                } else {
+                    $query->whereIn('status', (array) $statusList);
+                }
+
+                $orders = $query->orderBy('id', 'DESC')->get();
 
                 foreach ($orders as $order) {
                     $formatOrder($order);

@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use App\Models\MarketplaceOrder;
 use App\Models\OrderTracking;
 use App\Models\JobRequestModel;
+use App\Models\Payment;
 use App\Models\ProviderGallery;
 use App\Models\JobRequestImages;
 use App\Models\SupportItemModel;
@@ -209,6 +210,9 @@ class GeneralContoller extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                    $order->payment_status = $isPaid ? 'paid' : 'pending';
+                    $order->is_paid = $isPaid;
 
                     if ($order->provider && $order->provider->profile_image && !str_starts_with($order->provider->profile_image, 'http')) {
                         $order->provider->profile_image = asset('uploads/profile_images/' . $order->provider->profile_image);
@@ -909,6 +913,9 @@ class GeneralContoller extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                    $order->payment_status = $isPaid ? 'paid' : 'pending';
+                    $order->is_paid = $isPaid;
 
                     if ($order->job) {
                         foreach ($order->job->images ?? [] as $image) {
@@ -1219,6 +1226,9 @@ class GeneralContoller extends Controller
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->is_paid = $isPaid;
                 $order->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
@@ -1229,6 +1239,8 @@ class GeneralContoller extends Controller
                     'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'is_paid' => $isPaid,
                     'azhl_commission' => number_format($azhlFee, 2, '.', ''),
                     'azhl_fee' => number_format($azhlFee, 2, '.', ''),
                     'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
@@ -1412,6 +1424,18 @@ class GeneralContoller extends Controller
                 $finalBase = $repairPrice + $applicableExtra;
                 $total = $finalBase + $customerAppFee;
 
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                if (!$isPaid && !empty($order->job_id)) {
+                    $payment = Payment::where('job_id', $order->job_id)
+                        ->whereIn('status', ['captured', 'paid'])
+                        ->latest()
+                        ->first();
+                    if ($payment) {
+                        $isPaid = true;
+                    }
+                }
+                $paymentStatus = $isPaid ? 'paid' : 'pending';
+
                 $paymentBreakdown = [
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
@@ -1427,6 +1451,9 @@ class GeneralContoller extends Controller
                     'total_payable_by_customer' => number_format($total, 2, '.', ''),
                     'total_amount' => number_format($total, 2, '.', ''),
                     'total' => number_format($total, 2, '.', ''),
+                    'payment_status' => $paymentStatus,
+                    'paid_to_system' => $isPaid ? 1 : 0,
+                    'is_paid' => $isPaid,
                 ];
 
                 foreach ($tracking as $track) {
@@ -1446,6 +1473,9 @@ class GeneralContoller extends Controller
                         $track->order->total_amount = number_format($total, 2, '.', '');
                         $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
                         $track->order->total = number_format($total, 2, '.', '');
+                        $track->order->payment_status = $paymentStatus;
+                        $track->order->paid_to_system = $isPaid ? 1 : 0;
+                        $track->order->is_paid = $isPaid;
                         $track->order->payment_breakdown = $paymentBreakdown;
                     }
                 }

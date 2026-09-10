@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ProcessChargeRequest;
 use App\Models\BidModel;
 use App\Models\JobRequestModel;
+use App\Models\Orders;
 use App\Models\Payment;
 use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\JsonResponse;

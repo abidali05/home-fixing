@@ -198,7 +198,26 @@ class GeneralContoller extends Controller
                 ->whereIn('status', ['open','pending','on_the_way', 'arrived', 'working','provider_completed'])
                 ->latest()
                 ->limit(4)
-                ->get();
+                ->get()
+                ->map(function ($order) {
+                    $extraAmount = (float) ($order->extra_amount ?? 0);
+                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $orderPrice = (float) ($order->price ?? 0);
+                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
+
+                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                    $order->extra_amount_reason = $order->extra_amount_reason;
+                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                    $order->total_amount = number_format($total, 2, '.', '');
+
+                    if ($order->provider && $order->provider->profile_image && !str_starts_with($order->provider->profile_image, 'http')) {
+                        $order->provider->profile_image = asset('uploads/profile_images/' . $order->provider->profile_image);
+                    }
+                    if ($order->job && $order->job->category && $order->job->category->path && !str_starts_with($order->job->category->path, 'http')) {
+                        $order->job->category->path = asset('uploads/service_category/' . $order->job->category->path);
+                    }
+                    return $order;
+                });
 
             $active_marketplace_orders = MarketplaceOrder::with('items')
                 ->where('user_id', $user->id)
@@ -879,19 +898,34 @@ class GeneralContoller extends Controller
                 ->whereNotIn('status', ['open', 'completed','cancelled'])
                 ->latest()
                 ->limit(4)
-                ->get();
+                ->get()
+                ->map(function ($order) {
+                    $extraAmount = (float) ($order->extra_amount ?? 0);
+                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $orderPrice = (float) ($order->price ?? 0);
+                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
 
-            foreach ($orders as $order) {
-                if ($order->job) {
-                    foreach ($order->job->images ?? [] as $image) {
-                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                    $order->extra_amount_reason = $order->extra_amount_reason;
+                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                    $order->total_amount = number_format($total, 2, '.', '');
+
+                    if ($order->job) {
+                        foreach ($order->job->images ?? [] as $image) {
+                            $image->path = asset('uploads/job_gallery/' . $image->path);
+                        }
+                        $category = $order->job->category ?? null;
+                        if ($category && $category->path && !str_starts_with($category->path, 'http')) {
+                            $category->path = asset('uploads/service_category/' . $category->path);
+                        }
                     }
-                    $category = $order->job->category ?? null;
-                    if ($category && $category->path && !str_starts_with($category->path, 'http')) {
-                        $category->path = asset('uploads/service_category/' . $category->path);
+
+                    if ($order->user && $order->user->profile_image && !str_starts_with($order->user->profile_image, 'http')) {
+                        $order->user->profile_image = asset('uploads/profile_images/' . $order->user->profile_image);
                     }
-                }
-            }
+
+                    return $order;
+                });
 
             return $this->success([
                 'post_requests' => $post_requests,
@@ -1133,13 +1167,13 @@ class GeneralContoller extends Controller
             }
 
             $settings = SystemSettingModel::first();
-            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $formatOrder = function ($order) use ($settings, $azhlPercentage, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+            $formatOrder = function ($order) use ($settings, $azhlFixedFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
                 $category = $order->job->category ?? null;
                 if ($category) {
                     $category->path = $category->path
@@ -1161,17 +1195,39 @@ class GeneralContoller extends Controller
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
 
-                $azhlFee = $repairPrice * ($azhlPercentage / 100);
-                $netAmount = max(0, $repairPrice - $azhlFee);
+                $extraAmount = (float) ($order->extra_amount ?? 0);
+                $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                $finalBase = $repairPrice + $acceptedExtra;
+                $subtotal = $finalBase + $customerAppFee;
+
+                $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
+                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+                $azhlFee = $azhlFixedFee;
+                $netAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
 
                 $order->bid_price = number_format($repairPrice, 2, '.', '');
-                $order->azhl_percentage = number_format($azhlPercentage, 2, '.', '');
+                $order->repair_price = number_format($repairPrice, 2, '.', '');
+                $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                $order->extra_amount_reason = $order->extra_amount_reason;
+                $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                $order->accepted_extra = number_format($acceptedExtra, 2, '.', '');
+                $order->total_amount = number_format($subtotal, 2, '.', '');
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
                 $order->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
-                    'azhl_percentage' => number_format($azhlPercentage, 2, '.', ''),
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'azhl_commission' => number_format($azhlFee, 2, '.', ''),
                     'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
                     'net_amount' => number_format($netAmount, 2, '.', ''),
                 ];
 
@@ -1347,11 +1403,17 @@ class GeneralContoller extends Controller
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
 
-                $total = $repairPrice + $customerAppFee;
+                $acceptedExtra = $order->extra_amount_status === 'accepted' ? (float) ($order->extra_amount ?? 0) : 0.00;
+                $finalBase = $repairPrice + $acceptedExtra;
+                $total = $finalBase + $customerAppFee;
 
                 $paymentBreakdown = [
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format((float) ($order->extra_amount ?? 0), 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'system_fee' => number_format($customerAppFee, 2, '.', ''),
                     'subtotal' => number_format($total, 2, '.', ''),
@@ -1365,6 +1427,9 @@ class GeneralContoller extends Controller
                         $track->order->repair_price = number_format($repairPrice, 2, '.', '');
                         $track->order->base_price = number_format($repairPrice, 2, '.', '');
                         $track->order->bid_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->extra_amount = number_format((float) ($order->extra_amount ?? 0), 2, '.', '');
+                        $track->order->extra_amount_reason = $order->extra_amount_reason;
+                        $track->order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                         $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->total_price = number_format($total, 2, '.', '');
@@ -1399,6 +1464,8 @@ class GeneralContoller extends Controller
                 'nullable',
                 'in:on_the_way,arrived,working,provider_completed,completed',
             ],
+            'extra_amount' => 'nullable|numeric|min:0',
+            'extra_amount_reason' => 'nullable|string',
             'latitude' => 'nullable',
             'longitude' => 'nullable',
         ]);
@@ -1430,6 +1497,25 @@ class GeneralContoller extends Controller
             } else {
                 $order->status = $request->status;
             }
+
+            // Handle extra charges declaration when provider completes the order
+            $extraAmount = (float) $request->input('extra_amount', 0);
+            $extraReason = $request->input('extra_amount_reason');
+
+            if ($order->status === 'provider_completed') {
+                if ($extraAmount > 0) {
+                    $order->extra_amount = $extraAmount;
+                    $order->extra_amount_reason = $extraReason;
+                    $order->extra_amount_status = 'pending';
+                    $order->total_amount = round((float) $order->price + $extraAmount, 2);
+                } else {
+                    $order->extra_amount = 0.00;
+                    $order->extra_amount_reason = null;
+                    $order->extra_amount_status = 'none';
+                    $order->total_amount = round((float) $order->price, 2);
+                }
+            }
+
             $order->save();
 
             if ($order->status === 'completed') {
@@ -1482,8 +1568,31 @@ class GeneralContoller extends Controller
                 }
             }
 
+            // If extra amount was declared by provider, send dedicated FCM to Customer
+            if ($order->status === 'provider_completed' && $order->extra_amount_status === 'pending' && $isProviderActor && $recipient) {
+                try {
+                    $recipient->notify((new \App\Notifications\ExtraPaymentRequestedNotification(
+                        $order,
+                        $actor,
+                        (float) $order->extra_amount,
+                        $order->extra_amount_reason
+                    ))->afterCommit());
+                } catch (\Throwable $fcmException) {
+                    Log::error('Failed to send EXTRA_PAYMENT_REQUEST notification: ' . $fcmException->getMessage());
+                }
+            }
 
-            return $this->success(null, 'Order status updated successfully.');
+            $responseData = [
+                'id' => (int) $order->id,
+                'status' => (string) $order->status,
+                'price' => number_format((float) ($order->price ?? 0), 2, '.', ''),
+                'extra_amount' => number_format((float) ($order->extra_amount ?? 0), 2, '.', ''),
+                'extra_amount_reason' => $order->extra_amount_reason,
+                'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                'total_amount' => number_format((float) ($order->total_amount ?: ($order->price + ($order->extra_amount_status === 'accepted' ? $order->extra_amount : 0))), 2, '.', ''),
+            ];
+
+            return $this->success($responseData, 'Order status updated successfully.');
         } catch (\Exception $e) {
             Log::error('Error in update_order_status: ' . $e->getMessage());
             return $this->error('Failed to update order status.', 500);

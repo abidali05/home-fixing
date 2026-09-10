@@ -86,6 +86,16 @@ class OrdersController extends Controller
                             : asset('assets/img/default.jpg');
                     }
 
+                    $extraAmount = (float) ($order->extra_amount ?? 0);
+                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $orderPrice = (float) ($order->price ?? 0);
+                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
+
+                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                    $order->extra_amount_reason = $order->extra_amount_reason;
+                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                    $order->total_amount = number_format($total, 2, '.', '');
+
                     // For cancelled_orders: Attach refund status lifecycle details
                     if ($key === 'cancelled_orders' || strtolower($order->status) === 'cancelled') {
                         $refund = $customerRefunds->get($order->id);
@@ -180,9 +190,9 @@ class OrdersController extends Controller
 
             $settings = SystemSettingModel::first();
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $job = $order->job;
@@ -203,13 +213,17 @@ class OrdersController extends Controller
                 $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
             }
 
-            $subtotal = $repairPrice + $customerAppFee;
+            $extraAmount = (float) ($order->extra_amount ?? 0);
+            $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+            $finalBase = $repairPrice + $acceptedExtra;
+            $subtotal = $finalBase + $customerAppFee;
+
             $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
             $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
             $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-            $totalPayableByCustomer = $payment ? (float) $payment->amount : ($repairPrice + $customerAppFee + $totalGatewayFee);
-            $azhlFee = $repairPrice * ($azhlPercentage / 100);
-            $netProviderEarning = max(0, $repairPrice - $azhlFee);
+            $totalPayableByCustomer = $payment ? (float) $payment->amount : $subtotal;
+            $azhlFee = $azhlFixedFee;
+            $netProviderEarning = max(0, $finalBase - $azhlFee - $totalGatewayFee);
 
             $receiptData = [
                 'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
@@ -230,6 +244,12 @@ class OrdersController extends Controller
                 ],
                 'financial_breakdown' => [
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'subtotal' => number_format($subtotal, 2, '.', ''),
                     'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
@@ -242,6 +262,10 @@ class OrdersController extends Controller
                 ],
                 'amount' => number_format($totalPayableByCustomer, 2, '.', ''),
                 'repair_price' => number_format($repairPrice, 2, '.', ''),
+                'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                'extra_amount_reason' => $order->extra_amount_reason,
+                'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                'total_amount' => number_format($subtotal, 2, '.', ''),
                 'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                 'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
                 'azhl_system_fee' => number_format($azhlFee, 2, '.', ''),
@@ -413,6 +437,100 @@ class OrdersController extends Controller
             DB::rollBack();
             Log::error('Error submitting feedback: ' . $e->getMessage());
             return $this->error('Failed to submit feedback: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Customer Extra Amount Decision API
+     * POST /api/orders/{order_id}/extra-amount-action
+     */
+    public function extraAmountAction($order_id, Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Unauthenticated.'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'action' => 'required|in:accept,reject',
+                'rejection_reason' => 'nullable|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $order = Orders::find($order_id);
+            if (!$order) {
+                return response()->json(['status' => false, 'message' => 'Order not found.'], 404);
+            }
+
+            // Ownership check: must be customer who owns this order
+            if ((int) $order->user_id !== (int) $user->id) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized. Only the customer can decide on extra charges.'], 403);
+            }
+
+            // Status guard: Decision allowed only if extra_amount_status is 'pending'
+            if ($order->extra_amount_status !== 'pending') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Decision not allowed. Extra amount status is currently ' . ($order->extra_amount_status ?: 'none') . '.'
+                ], 400);
+            }
+
+            $action = strtolower($request->action);
+            $originalPrice = (float) ($order->price ?? 0);
+            $extraAmount = (float) ($order->extra_amount ?? 0);
+
+            if ($action === 'accept') {
+                $order->extra_amount_status = 'accepted';
+                $order->total_amount = round($originalPrice + $extraAmount, 2);
+            } else {
+                $order->extra_amount_status = 'rejected';
+                $order->total_amount = round($originalPrice, 2);
+                if ($request->filled('rejection_reason')) {
+                    $order->extra_amount_reason = ($order->extra_amount_reason ? ($order->extra_amount_reason . ' | Rejection: ' . $request->rejection_reason) : $request->rejection_reason);
+                }
+            }
+
+            $order->save();
+
+            // Notify Provider via FCM EXTRA_PAYMENT_RESPONSE
+            $provider = User::find($order->provider_id);
+            if ($provider) {
+                try {
+                    $decisionStr = $action === 'accept' ? 'accepted' : 'rejected';
+                    $provider->notify((new \App\Notifications\ExtraPaymentDecisionNotification(
+                        $order,
+                        $user,
+                        $decisionStr,
+                        $extraAmount
+                    ))->afterCommit());
+                } catch (\Throwable $notifEx) {
+                    Log::error('Failed to send extra payment decision notification: ' . $notifEx->getMessage());
+                }
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Extra charge decision recorded successfully.',
+                'data' => [
+                    'order_id' => (int) $order->id,
+                    'extra_amount_status' => (string) $order->extra_amount_status,
+                    'original_amount' => number_format($originalPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'final_total' => number_format((float) $order->total_amount, 2, '.', ''),
+                ]
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('Error in extraAmountAction: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json(['status' => false, 'message' => 'Failed to process extra amount action: ' . $e->getMessage()], 500);
         }
     }
 }

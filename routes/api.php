@@ -244,6 +244,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
     // Order Cancellation & Refund Specification Routes
     Route::post('orders/{order_id}/cancel', [OrderCancellationController::class, 'cancelOrder']);
+    Route::post('orders/{order_id}/extra-amount-action', [OrdersController::class, 'extraAmountAction']);
 
     // Customer Bank Account Routes (Max 3 Limit)
     Route::get('customer/bank-accounts', [CustomerBankAccountController::class, 'getBankAccounts']);

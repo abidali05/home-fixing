@@ -228,14 +228,14 @@
                                         @error('customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                     <div class="col-md-6">
-                                        <label for="azhl_percentage" class="form-label">Provider Commission Fee (%)</label>
+                                        <label for="azhl_percentage" class="form-label">Provider Commission Fee (SAR)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('azhl_percentage') is-invalid @enderror"
+                                            <input type="number" step="0.01" min="0" class="form-control @error('azhl_percentage') is-invalid @enderror"
                                                 name="azhl_percentage" id="azhl_percentage"
-                                                value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 10.00) }}" placeholder="10.00" required>
-                                            <span class="input-group-text">%</span>
+                                                value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 5.00) }}" placeholder="5.00" required>
+                                            <span class="input-group-text">SAR</span>
                                         </div>
-                                        <div class="helper-text">Commission percentage deducted from service provider net earnings per order (e.g. 10.00%).</div>
+                                        <div class="helper-text">Fixed commission fee deducted from service provider net earnings per order (e.g. 5.00 SAR).</div>
                                         @error('azhl_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
@@ -357,7 +357,7 @@
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-briefcase-fill text-warning me-1"></i> Provider Commission:</span>
-                                        <strong class="text-dark">{{ number_format($settings->azhl_percentage ?? 10.00, 2) }}%</strong>
+                                        <strong class="text-dark">{{ number_format($settings->azhl_percentage ?? 5.00, 2) }} SAR</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-credit-card-fill text-primary me-1"></i> Gateway Fee:</span>

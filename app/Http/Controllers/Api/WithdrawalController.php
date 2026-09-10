@@ -22,38 +22,43 @@ class WithdrawalController extends Controller
     /**
      * Helper to calculate dynamic fees & net provider earnings based on System Settings
      */
-    private function calculateOrderFinancials(float $repairPrice): array
+    private function calculateOrderFinancials(float $repairPrice, float $extraAmount = 0.0, string $extraStatus = 'none'): array
     {
         $settings = SystemSettingModel::first();
 
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
         $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
         $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-        // 1. Subtotal for customer before gateway fee
-        $subtotal = $repairPrice + $customerAppFee;
+        $acceptedExtra = $extraStatus === 'accepted' ? $extraAmount : 0.00;
+        $finalBase = $repairPrice + $acceptedExtra;
+        $subtotal = $finalBase + $customerAppFee;
 
         // 2. Gateway Fee Subtotal + VAT
         $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
         $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
         $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
 
-        // 3. Total Amount paid by Customer at Checkout
-        $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
+        // 3. Customer Total (Base + 3 SAR)
+        $customerTotal = $subtotal;
 
-        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Percentage)
-        $azhlFee = $repairPrice * ($azhlPercentage / 100);
-        $netProviderAmount = max(0, $repairPrice - $azhlFee);
+        // 4. Net Amount for Technician / Provider (Final Base minus fixed provider fee minus gateway fee)
+        $azhlFee = $azhlFixedFee;
+        $netProviderAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
 
         return [
             'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
+            'extra_amount' => (float) number_format($extraAmount, 2, '.', ''),
+            'extra_amount_status' => $extraStatus,
+            'accepted_extra' => (float) number_format($acceptedExtra, 2, '.', ''),
+            'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),
             'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
             'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
-            'azhl_percentage' => (float) number_format($azhlPercentage, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlFixedFee, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
             'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
         ];
@@ -143,7 +148,7 @@ class WithdrawalController extends Controller
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice);
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
                 $pendingAmount += $financials['net_amount'];
             }
 
@@ -155,7 +160,7 @@ class WithdrawalController extends Controller
             $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice);
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
                 $orderEarnings += $financials['net_amount'];
             }
 
@@ -436,8 +441,8 @@ class WithdrawalController extends Controller
 
                 foreach ($providerOrders as $ord) {
                     $repairPrice = $this->extractRepairPrice($ord);
-                    $financials = $this->calculateOrderFinancials($repairPrice);
-                    $gross = $financials['repair_price'];
+                    $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
+                    $gross = $financials['final_base_price'];
                     $azhlFee = $financials['azhl_fee'];
                     $gatewayFee = $financials['gateway_fee'];
                     $net = $financials['net_amount'];
@@ -459,11 +464,18 @@ class WithdrawalController extends Controller
                         'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
                         'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
                         'order_status' => $orderStatus,
+                        'repair_price' => number_format($repairPrice, 2, '.', ''),
+                        'extra_amount' => number_format((float) ($ord->extra_amount ?? 0), 2, '.', ''),
+                        'extra_amount_reason' => $ord->extra_amount_reason,
+                        'extra_amount_status' => (string) ($ord->extra_amount_status ?: 'none'),
+                        'accepted_extra' => number_format($financials['accepted_extra'], 2, '.', ''),
                         'gross_amount' => number_format($gross, 2, '.', ''),
+                        'final_base_price' => number_format($gross, 2, '.', ''),
                         'azhl_fee' => number_format($azhlFee, 2, '.', ''),
                         'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
                         'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
                         'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'total_amount' => number_format($financials['customer_total'], 2, '.', ''),
                         'referral_fee' => '0.00',
                         'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,

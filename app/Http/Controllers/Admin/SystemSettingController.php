@@ -30,7 +30,7 @@ class SystemSettingController extends Controller
             'logo' => 'nullable|image|mimes:jpeg,png,jpg,svg|max:2048',
             'currency' => 'required|string|max:10',
             'payment_method' => 'required|string|max:50',
-            'azhl_percentage' => 'nullable|numeric|min:0|max:100',
+            'azhl_percentage' => 'nullable|numeric|min:0',
             'azhl_fee' => 'nullable|numeric|min:0',
             'customer_app_fee' => 'nullable|numeric|min:0',
             'marketplace_vat_percentage' => 'nullable|numeric|min:0|max:100',

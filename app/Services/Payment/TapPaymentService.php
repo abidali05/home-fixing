@@ -266,6 +266,15 @@ class TapPaymentService
                 return (bool) $createdOrder;
             }
 
+            // If service order already exists for this job, mark it paid
+            if ($payment->job_id) {
+                $serviceOrder = Orders::where('job_id', $payment->job_id)->first();
+                if ($serviceOrder) {
+                    $serviceOrder->paid_to_system = 1;
+                    $serviceOrder->save();
+                }
+            }
+
             // Hire Provider
             return $this->hireProviderService->hireProvider($payment);
         }

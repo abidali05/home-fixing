@@ -285,7 +285,7 @@ class HiringController extends Controller
                 $request->setAttribute('extra_amount', number_format((float) ($order->extra_amount ?? 0), 2, '.', ''));
                 $request->setAttribute('extra_amount_reason', $order->extra_amount_reason);
                 $request->setAttribute('extra_amount_status', (string) ($order->extra_amount_status ?: 'none'));
-                $request->setAttribute('total_amount', number_format((float) ($order->total_amount ?: ($order->price + ($order->extra_amount_status === 'accepted' ? $order->extra_amount : 0))), 2, '.', ''));
+                $request->setAttribute('total_amount', number_format((float) ($order->total_amount ?: ($order->price + ($order->extra_amount_status !== 'rejected' ? $order->extra_amount : 0))), 2, '.', ''));
                 $request->setAttribute('order', $order);
             } else {
                 $request->setAttribute('hired_provider', null);

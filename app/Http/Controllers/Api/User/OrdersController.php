@@ -87,9 +87,9 @@ class OrdersController extends Controller
                     }
 
                     $extraAmount = (float) ($order->extra_amount ?? 0);
-                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
                     $orderPrice = (float) ($order->price ?? 0);
-                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
+                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
 
                     $order->extra_amount = number_format($extraAmount, 2, '.', '');
                     $order->extra_amount_reason = $order->extra_amount_reason;
@@ -214,8 +214,8 @@ class OrdersController extends Controller
             }
 
             $extraAmount = (float) ($order->extra_amount ?? 0);
-            $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
-            $finalBase = $repairPrice + $acceptedExtra;
+            $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+            $finalBase = $repairPrice + $applicableExtra;
             $subtotal = $finalBase + $customerAppFee;
 
             $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;

@@ -201,9 +201,9 @@ class GeneralContoller extends Controller
                 ->get()
                 ->map(function ($order) {
                     $extraAmount = (float) ($order->extra_amount ?? 0);
-                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
                     $orderPrice = (float) ($order->price ?? 0);
-                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
+                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
 
                     $order->extra_amount = number_format($extraAmount, 2, '.', '');
                     $order->extra_amount_reason = $order->extra_amount_reason;
@@ -901,9 +901,9 @@ class GeneralContoller extends Controller
                 ->get()
                 ->map(function ($order) {
                     $extraAmount = (float) ($order->extra_amount ?? 0);
-                    $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
+                    $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
                     $orderPrice = (float) ($order->price ?? 0);
-                    $total = (float) ($order->total_amount ?? ($orderPrice + $acceptedExtra));
+                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
 
                     $order->extra_amount = number_format($extraAmount, 2, '.', '');
                     $order->extra_amount_reason = $order->extra_amount_reason;
@@ -1196,8 +1196,8 @@ class GeneralContoller extends Controller
                 }
 
                 $extraAmount = (float) ($order->extra_amount ?? 0);
-                $acceptedExtra = $order->extra_amount_status === 'accepted' ? $extraAmount : 0.00;
-                $finalBase = $repairPrice + $acceptedExtra;
+                $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+                $finalBase = $repairPrice + $applicableExtra;
                 $subtotal = $finalBase + $customerAppFee;
 
                 $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
@@ -1206,12 +1206,15 @@ class GeneralContoller extends Controller
                 $azhlFee = $azhlFixedFee;
                 $netAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
 
+                $order->price = number_format($repairPrice, 2, '.', '');
                 $order->bid_price = number_format($repairPrice, 2, '.', '');
                 $order->repair_price = number_format($repairPrice, 2, '.', '');
+                $order->base_price = number_format($repairPrice, 2, '.', '');
                 $order->extra_amount = number_format($extraAmount, 2, '.', '');
                 $order->extra_amount_reason = $order->extra_amount_reason;
                 $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
-                $order->accepted_extra = number_format($acceptedExtra, 2, '.', '');
+                $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                $order->final_base_price = number_format($finalBase, 2, '.', '');
                 $order->total_amount = number_format($subtotal, 2, '.', '');
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
@@ -1219,10 +1222,11 @@ class GeneralContoller extends Controller
                 $order->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
                     'extra_amount' => number_format($extraAmount, 2, '.', ''),
                     'extra_amount_reason' => $order->extra_amount_reason,
                     'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
-                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'azhl_commission' => number_format($azhlFee, 2, '.', ''),
@@ -1403,17 +1407,20 @@ class GeneralContoller extends Controller
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
 
-                $acceptedExtra = $order->extra_amount_status === 'accepted' ? (float) ($order->extra_amount ?? 0) : 0.00;
-                $finalBase = $repairPrice + $acceptedExtra;
+                $extraAmount = (float) ($order->extra_amount ?? 0);
+                $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+                $finalBase = $repairPrice + $applicableExtra;
                 $total = $finalBase + $customerAppFee;
 
                 $paymentBreakdown = [
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
-                    'extra_amount' => number_format((float) ($order->extra_amount ?? 0), 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
                     'extra_amount_reason' => $order->extra_amount_reason,
                     'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
-                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'system_fee' => number_format($customerAppFee, 2, '.', ''),
                     'subtotal' => number_format($total, 2, '.', ''),
@@ -1424,19 +1431,21 @@ class GeneralContoller extends Controller
 
                 foreach ($tracking as $track) {
                     if ($track->order) {
+                        $track->order->price = number_format($repairPrice, 2, '.', '');
                         $track->order->repair_price = number_format($repairPrice, 2, '.', '');
                         $track->order->base_price = number_format($repairPrice, 2, '.', '');
                         $track->order->bid_price = number_format($repairPrice, 2, '.', '');
-                        $track->order->extra_amount = number_format((float) ($order->extra_amount ?? 0), 2, '.', '');
+                        $track->order->extra_amount = number_format($extraAmount, 2, '.', '');
                         $track->order->extra_amount_reason = $order->extra_amount_reason;
                         $track->order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                        $track->order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                        $track->order->final_base_price = number_format($finalBase, 2, '.', '');
                         $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->total_price = number_format($total, 2, '.', '');
                         $track->order->total_amount = number_format($total, 2, '.', '');
                         $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
                         $track->order->total = number_format($total, 2, '.', '');
-                        $track->order->price = number_format($total, 2, '.', '');
                         $track->order->payment_breakdown = $paymentBreakdown;
                     }
                 }

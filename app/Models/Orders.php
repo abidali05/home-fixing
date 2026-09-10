@@ -20,7 +20,7 @@ class Orders extends Model
     public function getFinalBasePriceAttribute(): float
     {
         $base = (float) ($this->price ?? 0);
-        if ($this->extra_amount_status === 'accepted') {
+        if ($this->extra_amount_status !== 'rejected') {
             $base += (float) ($this->extra_amount ?? 0);
         }
         return round($base, 2);

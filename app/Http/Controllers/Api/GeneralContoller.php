@@ -1400,12 +1400,39 @@ class GeneralContoller extends Controller
 
             if ($order) {
                 $repairPrice = (float) ($order->price ?? 0);
+                $bidId = null;
                 if (!empty($order->job_id)) {
                     $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->when($order->provider_id, function ($q) use ($order) {
+                            $q->where('provider_id', $order->provider_id);
+                        })
                         ->whereIn('status', ['accepted', 'completed', 'hired'])
                         ->first();
-                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
-                        $repairPrice = (float) $acceptedBid->price;
+
+                    if (!$acceptedBid && !empty($order->provider_id)) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->where('provider_id', $order->provider_id)
+                            ->first();
+                    }
+
+                    if (!$acceptedBid) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->whereIn('status', ['accepted', 'completed', 'hired'])
+                            ->first();
+                    }
+
+                    if ($acceptedBid) {
+                        $bidId = (int) $acceptedBid->id;
+                        if ((float) $acceptedBid->price > 0) {
+                            $repairPrice = (float) $acceptedBid->price;
+                        }
+                    }
+                }
+
+                if (!$bidId && !empty($order->job_id)) {
+                    $paymentRec = Payment::where('job_id', $order->job_id)->whereNotNull('bid_id')->latest()->first();
+                    if ($paymentRec) {
+                        $bidId = (int) $paymentRec->bid_id;
                     }
                 }
 
@@ -1437,6 +1464,7 @@ class GeneralContoller extends Controller
                 $paymentStatus = $isPaid ? 'paid' : 'pending';
 
                 $paymentBreakdown = [
+                    'bid_id' => $bidId,
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'base_price' => number_format($repairPrice, 2, '.', ''),
@@ -1458,6 +1486,8 @@ class GeneralContoller extends Controller
 
                 foreach ($tracking as $track) {
                     if ($track->order) {
+                        $track->order->source = $order->source ?: ($bidId ? 'bid' : 'direct');
+                        $track->order->bid_id = $bidId;
                         $track->order->price = number_format($repairPrice, 2, '.', '');
                         $track->order->repair_price = number_format($repairPrice, 2, '.', '');
                         $track->order->base_price = number_format($repairPrice, 2, '.', '');

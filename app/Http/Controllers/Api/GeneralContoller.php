@@ -1512,16 +1512,19 @@ class GeneralContoller extends Controller
             $extraReason = $request->input('extra_amount_reason');
 
             if ($order->status === 'provider_completed') {
+                $settings = \App\Models\Admin\SystemSettingModel::first();
+                $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
                 if ($extraAmount > 0) {
                     $order->extra_amount = $extraAmount;
                     $order->extra_amount_reason = $extraReason;
                     $order->extra_amount_status = 'pending';
-                    $order->total_amount = round((float) $order->price + $extraAmount, 2);
+                    $order->total_amount = round((float) $order->price + $extraAmount + $customerAppFee, 2);
                 } else {
                     $order->extra_amount = 0.00;
                     $order->extra_amount_reason = null;
                     $order->extra_amount_status = 'none';
-                    $order->total_amount = round((float) $order->price, 2);
+                    $order->total_amount = round((float) $order->price + $customerAppFee, 2);
                 }
             }
 
@@ -1591,14 +1594,23 @@ class GeneralContoller extends Controller
                 }
             }
 
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $applicableExtra = ($order->extra_amount_status !== 'rejected' && (float) ($order->extra_amount ?? 0) > 0) ? (float) $order->extra_amount : 0.00;
+            $finalBasePrice = (float) ($order->price ?? 0) + $applicableExtra;
+            $totalAmount = $finalBasePrice + $customerAppFee;
+
             $responseData = [
                 'id' => (int) $order->id,
                 'status' => (string) $order->status,
                 'price' => number_format((float) ($order->price ?? 0), 2, '.', ''),
+                'base_price' => number_format((float) ($order->price ?? 0), 2, '.', ''),
                 'extra_amount' => number_format((float) ($order->extra_amount ?? 0), 2, '.', ''),
                 'extra_amount_reason' => $order->extra_amount_reason,
                 'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
-                'total_amount' => number_format((float) ($order->total_amount ?: ($order->price + ($order->extra_amount_status === 'accepted' ? $order->extra_amount : 0))), 2, '.', ''),
+                'final_base_price' => number_format($finalBasePrice, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'total_amount' => number_format($totalAmount, 2, '.', ''),
             ];
 
             return $this->success($responseData, 'Order status updated successfully.');

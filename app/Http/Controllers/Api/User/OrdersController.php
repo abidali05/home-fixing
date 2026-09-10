@@ -487,17 +487,22 @@ class OrdersController extends Controller
             $originalPrice = (float) ($order->price ?? 0);
             $extraAmount = (float) ($order->extra_amount ?? 0);
 
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
             if ($action === 'accept') {
                 $order->extra_amount_status = 'accepted';
-                $order->total_amount = round($originalPrice + $extraAmount, 2);
+                $finalBase = round($originalPrice + $extraAmount, 2);
             } else {
                 $order->extra_amount_status = 'rejected';
-                $order->total_amount = round($originalPrice, 2);
+                $finalBase = round($originalPrice, 2);
                 if ($request->filled('rejection_reason')) {
                     $order->extra_amount_reason = ($order->extra_amount_reason ? ($order->extra_amount_reason . ' | Rejection: ' . $request->rejection_reason) : $request->rejection_reason);
                 }
             }
 
+            $finalTotal = round($finalBase + $customerAppFee, 2);
+            $order->total_amount = $finalTotal;
             $order->save();
 
             // Notify Provider via FCM EXTRA_PAYMENT_RESPONSE
@@ -523,8 +528,12 @@ class OrdersController extends Controller
                     'order_id' => (int) $order->id,
                     'extra_amount_status' => (string) $order->extra_amount_status,
                     'original_amount' => number_format($originalPrice, 2, '.', ''),
+                    'base_price' => number_format($originalPrice, 2, '.', ''),
                     'extra_amount' => number_format($extraAmount, 2, '.', ''),
-                    'final_total' => number_format((float) $order->total_amount, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'final_total' => number_format($finalTotal, 2, '.', ''),
+                    'total_amount' => number_format($finalTotal, 2, '.', ''),
                 ]
             ], 200);
 

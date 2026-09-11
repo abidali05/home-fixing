@@ -93,6 +93,7 @@ class HireProviderService
             $order->price = $payment->bid ? (float) $payment->bid->price : (float) $payment->amount;
             $order->status = 'pending';
             $order->paid_to_system = 1;
+            $order->calculateAndSyncFinancials(false);
             $order->save();
 
             // 5. Send Bid Accepted Notification to Hired Provider

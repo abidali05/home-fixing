@@ -1243,30 +1243,16 @@ class GeneralContoller extends Controller
                         : asset('assets/img/default.jpg');
                 }
 
-                $repairPrice = (float) ($order->price ?? 0);
-                if (!empty($order->job_id)) {
-                    $acceptedBid = BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired'])->first();
-                    if ($acceptedBid && (float) $acceptedBid->price > 0) {
-                        $repairPrice = (float) $acceptedBid->price;
-                    }
-                }
-
-                if ($repairPrice > 103) {
-                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
-                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
-                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
-                }
-
-                $extraAmount = (float) ($order->extra_amount ?? 0);
-                $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
-                $finalBase = $repairPrice + $applicableExtra;
-                $subtotal = $finalBase + $customerAppFee;
-
-                $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
-                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-                $azhlFee = $azhlFixedFee;
-                $netAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $netAmount = $financials['net_amount'];
+                $subtotal = $financials['customer_total'];
 
                 $order->price = number_format($repairPrice, 2, '.', '');
                 $order->bid_price = number_format($repairPrice, 2, '.', '');
@@ -1518,20 +1504,15 @@ class GeneralContoller extends Controller
                     }
                 }
 
-                if ($repairPrice > 103) {
-                    $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
-                    $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
-
-                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
-                    $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
-                    $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
-                }
-
-                $extraAmount = (float) ($order->extra_amount ?? 0);
-                $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
-                $finalBase = $repairPrice + $applicableExtra;
-                $total = $finalBase + $customerAppFee;
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $total = $financials['customer_total'];
 
                 $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
                 if (!$isPaid && !empty($order->job_id)) {

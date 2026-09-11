@@ -230,31 +230,17 @@ class OrdersController extends Controller
             $categoryName = optional(optional($job)->category)->name ?: 'General Service';
             $orderTitle = optional($job)->title ?: $categoryName;
 
-            $repairPrice = (float) ($order->price ?? 0);
-            if (!empty($order->job_id)) {
-                $acceptedBid = \App\Models\BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
-                if ($acceptedBid && (float) $acceptedBid->price > 0) {
-                    $repairPrice = (float) $acceptedBid->price;
-                }
-            }
-
-            if ($repairPrice > 103) {
-                $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
-                $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
-                $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
-            }
-
-            $extraAmount = (float) ($order->extra_amount ?? 0);
-            $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
-            $finalBase = $repairPrice + $applicableExtra;
-            $subtotal = $finalBase + $customerAppFee;
-
-            $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
-            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+            $financials = $order->calculateAndSyncFinancials(true);
+            $repairPrice = $financials['repair_price'];
+            $extraAmount = $financials['extra_amount'];
+            $applicableExtra = $financials['accepted_extra'];
+            $finalBase = $financials['final_base_price'];
+            $customerAppFee = $financials['customer_app_fee'];
+            $totalGatewayFee = $financials['gateway_fee'];
+            $subtotal = $financials['subtotal'];
             $totalPayableByCustomer = $payment ? (float) $payment->amount : $subtotal;
-            $azhlFee = $azhlFixedFee;
-            $netProviderEarning = max(0, $finalBase - $azhlFee - $totalGatewayFee);
+            $azhlFee = $financials['azhl_fee'];
+            $netProviderEarning = $financials['net_amount'];
 
             $receiptData = [
                 'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
@@ -523,18 +509,19 @@ class OrdersController extends Controller
 
             if ($action === 'accept') {
                 $order->extra_amount_status = 'accepted';
-                $finalBase = round($originalPrice + $extraAmount, 2);
             } else {
                 $order->extra_amount_status = 'rejected';
-                $finalBase = round($originalPrice, 2);
                 if ($request->filled('rejection_reason')) {
                     $order->extra_amount_reason = ($order->extra_amount_reason ? ($order->extra_amount_reason . ' | Rejection: ' . $request->rejection_reason) : $request->rejection_reason);
                 }
             }
 
-            $finalTotal = round($finalBase + $customerAppFee, 2);
-            $order->total_amount = $finalTotal;
+            $order->calculateAndSyncFinancials(false);
             $order->save();
+
+            $finalBase = (float) $order->price + ($order->extra_amount_status === 'accepted' ? (float) $order->extra_amount : 0.00);
+            $finalTotal = (float) $order->total_amount;
+            $customerAppFee = (float) $order->customer_app_fee;
 
             // Notify Provider via FCM EXTRA_PAYMENT_RESPONSE
             $provider = User::find($order->provider_id);

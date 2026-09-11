@@ -22,8 +22,12 @@ class WithdrawalController extends Controller
     /**
      * Helper to calculate dynamic fees & net provider earnings based on System Settings
      */
-    private function calculateOrderFinancials(float $repairPrice, float $extraAmount = 0.0, string $extraStatus = 'none'): array
+    private function calculateOrderFinancials(float $repairPrice, float $extraAmount = 0.0, string $extraStatus = 'none', $order = null): array
     {
+        if ($order instanceof Orders) {
+            return $order->calculateAndSyncFinancials(true);
+        }
+
         $settings = SystemSettingModel::first();
 
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
@@ -148,7 +152,7 @@ class WithdrawalController extends Controller
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
                 $pendingAmount += $financials['net_amount'];
             }
 
@@ -160,7 +164,7 @@ class WithdrawalController extends Controller
             $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
                 $orderEarnings += $financials['net_amount'];
             }
 
@@ -441,7 +445,7 @@ class WithdrawalController extends Controller
 
                 foreach ($providerOrders as $ord) {
                     $repairPrice = $this->extractRepairPrice($ord);
-                    $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'));
+                    $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
                     $gross = $financials['final_base_price'];
                     $azhlFee = $financials['azhl_fee'];
                     $gatewayFee = $financials['gateway_fee'];

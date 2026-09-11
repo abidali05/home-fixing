@@ -950,18 +950,53 @@ class GeneralContoller extends Controller
                 ->limit(4)
                 ->get()
                 ->map(function ($order) use ($capturedJobIds) {
-                    $extraAmount = (float) ($order->extra_amount ?? 0);
-                    $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
-                    $orderPrice = (float) ($order->price ?? 0);
-                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
+                    $financials = $order->calculateAndSyncFinancials(true);
+                    $repairPrice = $financials['repair_price'];
+                    $extraAmount = $financials['extra_amount'];
+                    $applicableExtra = $financials['accepted_extra'];
+                    $finalBase = $financials['final_base_price'];
+                    $customerAppFee = $financials['customer_app_fee'];
+                    $azhlFee = $financials['azhl_fee'];
+                    $totalGatewayFee = $financials['gateway_fee'];
+                    $netAmount = $financials['net_amount'];
+                    $subtotal = $financials['customer_total'];
 
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
+
+                    $order->price = number_format($repairPrice, 2, '.', '');
+                    $order->bid_price = number_format($repairPrice, 2, '.', '');
+                    $order->repair_price = number_format($repairPrice, 2, '.', '');
+                    $order->base_price = number_format($repairPrice, 2, '.', '');
                     $order->extra_amount = number_format($extraAmount, 2, '.', '');
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
-                    $order->total_amount = number_format($total, 2, '.', '');
-                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
+                    $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                    $order->final_base_price = number_format($finalBase, 2, '.', '');
+                    $order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                    $order->total_amount = number_format($subtotal, 2, '.', '');
+                    $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                    $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
+                    $order->net_amount = number_format($netAmount, 2, '.', '');
                     $order->payment_status = $isPaid ? 'paid' : 'pending';
                     $order->is_paid = $isPaid;
+
+                    $order->payment_breakdown = [
+                        'bid_price' => number_format($repairPrice, 2, '.', ''),
+                        'repair_price' => number_format($repairPrice, 2, '.', ''),
+                        'base_price' => number_format($repairPrice, 2, '.', ''),
+                        'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                        'extra_amount_reason' => $order->extra_amount_reason,
+                        'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                        'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                        'final_base_price' => number_format($finalBase, 2, '.', ''),
+                        'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                        'payment_status' => $isPaid ? 'paid' : 'pending',
+                        'is_paid' => $isPaid,
+                        'azhl_commission' => number_format($azhlFee, 2, '.', ''),
+                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                        'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                        'net_amount' => number_format($netAmount, 2, '.', ''),
+                    ];
 
                     if ($order->job_id) {
                         $acceptedBid = BidModel::where('job_id', $order->job_id)

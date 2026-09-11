@@ -36,8 +36,8 @@ class WithdrawalController extends Controller
         $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
         $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-        $acceptedExtra = $extraStatus === 'accepted' ? $extraAmount : 0.00;
-        $finalBase = $repairPrice + $acceptedExtra;
+        $applicableExtra = ($extraStatus !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+        $finalBase = $repairPrice + $applicableExtra;
         $subtotal = $finalBase + $customerAppFee;
 
         // 2. Gateway Fee Subtotal + VAT (Fixed fee removed/0.00)
@@ -56,7 +56,7 @@ class WithdrawalController extends Controller
             'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
             'extra_amount' => (float) number_format($extraAmount, 2, '.', ''),
             'extra_amount_status' => $extraStatus,
-            'accepted_extra' => (float) number_format($acceptedExtra, 2, '.', ''),
+            'accepted_extra' => (float) number_format($applicableExtra, 2, '.', ''),
             'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),

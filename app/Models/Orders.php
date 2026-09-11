@@ -56,10 +56,10 @@ class Orders extends Model
             $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
         }
 
-        // 3. Extra charges
+        // 3. Extra charges (applicable unless explicitly rejected)
         $extraAmount = (float) ($this->extra_amount ?? 0);
-        $acceptedExtra = ($this->extra_amount_status === 'accepted') ? $extraAmount : 0.00;
-        $finalBase = $repairPrice + $acceptedExtra;
+        $applicableExtra = ($this->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+        $finalBase = $repairPrice + $applicableExtra;
         $subtotal = $finalBase + $customerAppFee;
 
         // 4. Gateway Fees & VAT (No fixed fee)
@@ -91,7 +91,7 @@ class Orders extends Model
             'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
             'extra_amount' => (float) number_format($extraAmount, 2, '.', ''),
             'extra_amount_status' => (string) ($this->extra_amount_status ?? 'none'),
-            'accepted_extra' => (float) number_format($acceptedExtra, 2, '.', ''),
+            'accepted_extra' => (float) number_format($applicableExtra, 2, '.', ''),
             'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),

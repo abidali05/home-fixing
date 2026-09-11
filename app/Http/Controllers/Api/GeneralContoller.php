@@ -1670,20 +1670,16 @@ class GeneralContoller extends Controller
             $extraReason = $request->input('extra_amount_reason');
 
             if ($order->status === 'provider_completed') {
-                $settings = \App\Models\Admin\SystemSettingModel::first();
-                $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-
                 if ($extraAmount > 0) {
                     $order->extra_amount = $extraAmount;
                     $order->extra_amount_reason = $extraReason;
                     $order->extra_amount_status = 'pending';
-                    $order->total_amount = round((float) $order->price + $extraAmount + $customerAppFee, 2);
                 } else {
                     $order->extra_amount = 0.00;
                     $order->extra_amount_reason = null;
                     $order->extra_amount_status = 'none';
-                    $order->total_amount = round((float) $order->price + $customerAppFee, 2);
                 }
+                $order->calculateAndSyncFinancials(false);
             }
 
             $order->save();

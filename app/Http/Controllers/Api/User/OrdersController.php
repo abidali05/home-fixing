@@ -522,7 +522,7 @@ class OrdersController extends Controller
             $order->calculateAndSyncFinancials(false);
             $order->save();
 
-            $finalBase = (float) $order->price + ($order->extra_amount_status === 'accepted' ? (float) $order->extra_amount : 0.00);
+            $finalBase = (float) $order->price + ($order->extra_amount_status !== 'rejected' ? (float) $order->extra_amount : 0.00);
             $finalTotal = (float) $order->total_amount;
             $customerAppFee = (float) $order->customer_app_fee;
 

@@ -269,7 +269,7 @@
                                         <div class="input-group">
                                             <input type="number" step="0.01" min="0" class="form-control @error('payment_gateway_fixed_fee') is-invalid @enderror"
                                                 name="payment_gateway_fixed_fee" id="payment_gateway_fixed_fee"
-                                                value="{{ old('payment_gateway_fixed_fee', $settings->payment_gateway_fixed_fee ?? 1.00) }}" placeholder="1.00" required>
+                                                value="{{ old('payment_gateway_fixed_fee', $settings->payment_gateway_fixed_fee ?? 0.00) }}" placeholder="0.00" required>
                                             <span class="input-group-text">SAR</span>
                                         </div>
                                         <div class="helper-text">Fixed fee per online checkout (e.g. 1.00 SAR).</div>
@@ -361,7 +361,7 @@
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-credit-card-fill text-primary me-1"></i> Gateway Fee:</span>
-                                        <strong class="text-dark">{{ $settings->payment_gateway_fee_percentage ?? 2.50 }}% + {{ number_format($settings->payment_gateway_fixed_fee ?? 1.00, 2) }} SAR</strong>
+                                        <strong class="text-dark">{{ $settings->payment_gateway_fee_percentage ?? 2.50 }}%{{ (float)($settings->payment_gateway_fixed_fee ?? 0.00) > 0 ? ' + ' . number_format($settings->payment_gateway_fixed_fee, 2) . ' SAR' : '' }}</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-percent text-primary me-1"></i> Gateway VAT:</span>

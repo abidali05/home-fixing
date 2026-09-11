@@ -55,8 +55,8 @@ class GeneralContoller extends Controller
                 'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
                 'marketplace_vat_percentage' => number_format((float) ($data->marketplace_vat_percentage ?? 15.00), 2, '.', ''),
                 'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
-                'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
-                'fixed_transaction_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 1.00), 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 0.00), 2, '.', ''),
+                'fixed_transaction_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 0.00), 2, '.', ''),
                 'payment_gateway_vat_percentage' => number_format((float) ($data->payment_gateway_vat_percentage ?? 15.00), 2, '.', ''),
                 'referral_amount' => number_format((float) ($data->referral_amount ?? 10.00), 2, '.', ''),
                 'created_at' => $data->created_at,
@@ -1252,7 +1252,7 @@ class GeneralContoller extends Controller
                 }
 
                 if ($repairPrice > 103) {
-                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
@@ -1262,7 +1262,7 @@ class GeneralContoller extends Controller
                 $finalBase = $repairPrice + $applicableExtra;
                 $subtotal = $finalBase + $customerAppFee;
 
-                $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
                 $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
                 $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
                 $azhlFee = $azhlFixedFee;
@@ -1520,10 +1520,10 @@ class GeneralContoller extends Controller
 
                 if ($repairPrice > 103) {
                     $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
                     $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-                    $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }

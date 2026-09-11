@@ -128,11 +128,11 @@ class OrderCancellationController extends Controller
                 }
                 if ($refundRepairPrice > 103) {
                     $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+                    $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
                     $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
                     $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
 
-                    $approxSubtotal = ($refundRepairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                    $approxSubtotal = $refundRepairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
                     $refundRepairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }

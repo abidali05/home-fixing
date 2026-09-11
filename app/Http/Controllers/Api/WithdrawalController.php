@@ -36,8 +36,8 @@ class WithdrawalController extends Controller
         $finalBase = $repairPrice + $acceptedExtra;
         $subtotal = $finalBase + $customerAppFee;
 
-        // 2. Gateway Fee Subtotal + VAT
-        $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+        // 2. Gateway Fee Subtotal + VAT (Fixed fee removed/0.00)
+        $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
         $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
         $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
 
@@ -118,10 +118,10 @@ class WithdrawalController extends Controller
             $settings = SystemSettingModel::first();
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $approxSubtotal = ($rawPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+            $approxSubtotal = $rawPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
             $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
 
             if (abs($estimatedRepair - round($estimatedRepair)) < 0.1) {

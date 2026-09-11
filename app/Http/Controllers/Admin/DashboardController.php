@@ -51,7 +51,7 @@ class DashboardController extends Controller
             $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
             $azhlPercentageSetting = (float) ($settings->azhl_percentage ?? 10.00);
             $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $totalOrdersPrice = 0.0;
@@ -64,7 +64,7 @@ class DashboardController extends Controller
                     }
                 }
                 if ($repairPrice > 103) {
-                    $approxSubtotal = ($repairPrice - $gatewayFixedFeeSetting * (1 + $gatewayVatPctSetting / 100)) / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
+                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFeeSetting);
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
@@ -139,7 +139,7 @@ class DashboardController extends Controller
             $customerAppFeeSetting = (float) ($settings->customer_app_fee ?? 3.00);
             $azhlPercentageSetting = (float) ($settings->azhl_percentage ?? 10.00);
             $gatewayFeePctSetting = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFeeSetting = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPctSetting = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $completedOrders = DB::table('orders')
@@ -165,13 +165,13 @@ class DashboardController extends Controller
                 }
 
                 if ($repairPrice > 103) {
-                    $approxSubtotal = ($repairPrice - $gatewayFixedFeeSetting * (1 + $gatewayVatPctSetting / 100)) / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
+                    $approxSubtotal = $repairPrice / (1 + ($gatewayFeePctSetting / 100) * (1 + $gatewayVatPctSetting / 100));
                     $estimatedRepair = max(0, $approxSubtotal - $customerAppFeeSetting);
                     $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
                 }
 
                 $subtotal = $repairPrice + $customerAppFeeSetting;
-                $gatewaySubtotal = ($subtotal * ($gatewayFeePctSetting / 100)) + $gatewayFixedFeeSetting;
+                $gatewaySubtotal = $subtotal * ($gatewayFeePctSetting / 100);
                 $gatewayVat = $gatewaySubtotal * ($gatewayVatPctSetting / 100);
                 $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
                 $totalCustomerPaid = $repairPrice + $customerAppFeeSetting + $totalGatewayFee;

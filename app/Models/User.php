@@ -150,7 +150,7 @@ class User extends Authenticatable
         $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
         $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
         $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
         if ((string) $this->role === '2') {
@@ -183,7 +183,7 @@ class User extends Authenticatable
             }
 
             if ($repairPrice > 103) {
-                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
                 $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
                 $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
             }

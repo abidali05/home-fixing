@@ -239,7 +239,7 @@ class OrdersController extends Controller
             }
 
             if ($repairPrice > 103) {
-                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+                $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
                 $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
                 $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
             }
@@ -249,7 +249,7 @@ class OrdersController extends Controller
             $finalBase = $repairPrice + $applicableExtra;
             $subtotal = $finalBase + $customerAppFee;
 
-            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+            $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
             $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
             $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
             $totalPayableByCustomer = $payment ? (float) $payment->amount : $subtotal;

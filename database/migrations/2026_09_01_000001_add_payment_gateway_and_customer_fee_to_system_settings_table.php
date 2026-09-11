@@ -19,7 +19,7 @@ return new class extends Migration
                 $table->decimal('payment_gateway_fee_percentage', 5, 2)->default(2.50)->after('customer_app_fee');
             }
             if (!Schema::hasColumn('system_settings', 'payment_gateway_fixed_fee')) {
-                $table->decimal('payment_gateway_fixed_fee', 8, 2)->default(1.00)->after('payment_gateway_fee_percentage');
+                $table->decimal('payment_gateway_fixed_fee', 8, 2)->default(0.00)->after('payment_gateway_fee_percentage');
             }
             if (!Schema::hasColumn('system_settings', 'payment_gateway_vat_percentage')) {
                 $table->decimal('payment_gateway_vat_percentage', 5, 2)->default(15.00)->after('payment_gateway_fixed_fee');

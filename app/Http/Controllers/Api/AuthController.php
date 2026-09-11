@@ -2135,7 +2135,7 @@ class AuthController extends Controller
             $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
             $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $productsSubtotal = 0.0;
@@ -2197,7 +2197,7 @@ class AuthController extends Controller
             // Gateway Fee & VAT calculation for Marketplace (No App Fee added)
             if ($hasItems && $productsSubtotal > 0) {
                 $baseSubtotal = $productsSubtotal;
-                $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
+                $gatewaySubtotal = $baseSubtotal * ($gatewayFeePct / 100);
                 $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
                 $totalPayableByCustomer = $productsTotalWithVat;
             } else {

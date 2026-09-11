@@ -1783,14 +1783,24 @@ class GeneralContoller extends Controller
             $extraReason = $request->input('extra_amount_reason');
 
             if ($order->status === 'provider_completed') {
-                if ($extraAmount > 0) {
-                    $order->extra_amount = $extraAmount;
-                    $order->extra_amount_reason = $extraReason;
-                    $order->extra_amount_status = 'pending';
+                $isAlreadyAccepted = ($order->extra_amount_status === 'accepted' && (float) $order->extra_amount > 0);
+                $isSameAmount = abs($extraAmount - (float) $order->extra_amount) < 0.001;
+
+                if ($isAlreadyAccepted && $isSameAmount) {
+                    // Keep accepted status intact when provider resubmits the same extra amount
+                    if ($request->filled('extra_amount_reason')) {
+                        $order->extra_amount_reason = $extraReason;
+                    }
                 } else {
-                    $order->extra_amount = 0.00;
-                    $order->extra_amount_reason = null;
-                    $order->extra_amount_status = 'none';
+                    if ($extraAmount > 0) {
+                        $order->extra_amount = $extraAmount;
+                        $order->extra_amount_reason = $extraReason;
+                        $order->extra_amount_status = 'pending';
+                    } else {
+                        $order->extra_amount = 0.00;
+                        $order->extra_amount_reason = null;
+                        $order->extra_amount_status = 'none';
+                    }
                 }
                 $order->calculateAndSyncFinancials(false);
             }

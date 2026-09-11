@@ -233,14 +233,17 @@ class OrdersController extends Controller
             $financials = $order->calculateAndSyncFinancials(true);
             $repairPrice = $financials['repair_price'];
             $extraAmount = $financials['extra_amount'];
-            $applicableExtra = $financials['accepted_extra'];
+            $acceptedExtra = $financials['accepted_extra'];
             $finalBase = $financials['final_base_price'];
             $customerAppFee = $financials['customer_app_fee'];
             $totalGatewayFee = $financials['gateway_fee'];
+            $gatewayVat = $financials['gateway_vat'];
             $subtotal = $financials['subtotal'];
             $totalPayableByCustomer = $payment ? (float) $payment->amount : $subtotal;
             $azhlFee = $financials['azhl_fee'];
             $netProviderEarning = $financials['net_amount'];
+            $gatewayFeePct = $order->gateway_fee_percentage !== null ? (float) $order->gateway_fee_percentage : $gatewayFeePct;
+            $gatewayVatPct = $order->gateway_vat_percentage !== null ? (float) $order->gateway_vat_percentage : $gatewayVatPct;
 
             $receiptData = [
                 'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),

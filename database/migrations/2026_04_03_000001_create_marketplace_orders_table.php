@@ -24,7 +24,7 @@ return new class extends Migration
             $table->decimal('total_amount', 10, 2)->default(0);
             $table->string('payment_method')->nullable();
             $table->text('notes')->nullable();
-            $table->enum('status', ['pending', 'paid', 'cancelled', 'completed'])->default('pending');
+            $table->string('status')->default('pending');
             $table->timestamps();
 
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade')->onUpdate('cascade');

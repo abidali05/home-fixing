@@ -17,9 +17,24 @@ class ProviderController extends Controller
 {
     public function index(Request $request)
     {
+        $currentUser = auth()->user() ?? auth('admin')->user();
+        $isCompany = $currentUser && $currentUser->is_company;
+
         $query = User::query()
-            ->with(['providerProfile'])
-            ->whereHas('providerProfile');
+            ->with(['providerProfile.referredBy'])
+            ->where(function ($b) {
+                $b->where('role', '1')
+                    ->orWhere('role', 1)
+                    ->orWhere('has_roles', '1')
+                    ->orWhere('has_roles', 1)
+                    ->orWhere('has_roles', 'like', '%1%')
+                    ->orWhereRaw("FIND_IN_SET('1', has_roles)")
+                    ->orWhereHas('providerProfile');
+            });
+
+        if ($isCompany) {
+            $query->where('company_id', $currentUser->id);
+        }
 
         if ($request->filled('search')) {
             $search = trim($request->search);
@@ -28,10 +43,15 @@ class ProviderController extends Controller
                 $builder->where('name', 'like', "%{$search}%")
                     ->orWhere('email', 'like', "%{$search}%")
                     ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('company_name', 'like', "%{$search}%")
                     ->orWhereHas('providerProfile', function ($profileQuery) use ($search) {
                         $profileQuery->where('company_name', 'like', "%{$search}%");
                     });
             });
+        }
+
+        if ($request->filled('company_id')) {
+            $query->where('company_id', $request->company_id);
         }
 
         if ($request->filled('status')) {
@@ -68,14 +88,26 @@ class ProviderController extends Controller
         }
 
         $providers = $query->latest()->paginate(15)->withQueryString();
+        $companies = \App\Models\AdminUsers::where('is_company', true)->orderBy('name')->get();
 
         return view('admin.providers.index', [
             'providers' => $providers,
+            'companies' => $companies,
             'cities' => CityModel::query()->orderBy('name')->get(),
             'services' => ServiceCategoryModel::query()->orderBy('name')->get(),
             'statuses' => ['active', 'inactive', 'suspended', 'banned'],
             'providerTypes' => ['individual', 'company'],
+            'isCompany' => $isCompany
         ]);
+    }
+
+    public function assignCompany(Request $request, $id)
+    {
+        $provider = User::findOrFail($id);
+        $provider->company_id = $request->input('company_id') ?: null;
+        $provider->save();
+
+        return back()->with('success', 'Provider company assignment updated successfully.');
     }
 
     public function create()
@@ -180,13 +212,26 @@ class ProviderController extends Controller
     public function show($id)
     {
         $provider = User::query()
-            ->with('providerProfile')
+            ->with(['providerProfile.referredBy'])
             ->whereHas('providerProfile')
             ->findOrFail($id);
 
+        if ($provider->providerProfile && empty($provider->providerProfile->referral_code)) {
+            $provider->providerProfile->referral_code = ProviderProfile::generateUniqueReferralCode();
+            $provider->providerProfile->save();
+        }
+
         $gallery = ProviderGallery::query()->where('user_id', $provider->id)->get();
 
-        return view('admin.providers.show', compact('provider', 'gallery'));
+        $referredProviders = User::query()
+            ->with('providerProfile')
+            ->whereHas('providerProfile', function ($q) use ($provider) {
+                $q->where('referred_by_id', $provider->id);
+            })
+            ->latest()
+            ->get();
+
+        return view('admin.providers.show', compact('provider', 'gallery', 'referredProviders'));
     }
 
     public function edit($id)

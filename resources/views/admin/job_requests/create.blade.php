@@ -144,7 +144,7 @@
 
                                 {{-- Submit --}}
                                 <div class="d-flex justify-content-end">
-                                    <button type="submit" class="btn " style="background-color: #2BBDCE; color: white;">
+                                    <button type="submit" class="btn " style="background-color: #4F2396; color: white;">
                                         <i class="bi bi-upload me-1"></i> Submit Request
                                     </button>
                                 </div>

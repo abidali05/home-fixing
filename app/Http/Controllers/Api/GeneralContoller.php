@@ -6,13 +6,16 @@ use Exception;
 use App\Models\AppVersion;
 use App\Models\User;
 use App\Models\Orders;
+use App\Models\Reviews;
 use App\Models\BidModel;
 use App\Models\CityModel;
 use App\Models\FaqModel;
 use App\Models\Cart;
 use Illuminate\Http\Request;
+use App\Models\MarketplaceOrder;
 use App\Models\OrderTracking;
 use App\Models\JobRequestModel;
+use App\Models\Payment;
 use App\Models\ProviderGallery;
 use App\Models\JobRequestImages;
 use App\Models\SupportItemModel;
@@ -33,15 +36,34 @@ class GeneralContoller extends Controller
     public function system_settings()
     {
         try {
-            $data = SystemSettingModel::select('system_name', 'logo', 'currency', 'payment_method')->first();
+            $data = SystemSettingModel::first();
 
             if (!$data) {
                 return $this->notFound('System settings not found');
             }
 
-            $data->logo = asset('uploads/system_settings/' . $data->logo);
+            $logoUrl = !empty($data->logo) ? asset('uploads/system_settings/' . $data->logo) : asset('assets/img/logo.png');
 
-            return $this->success($data, 'System settings fetched successfully');
+            $formattedData = [
+                'id' => (int) $data->id,
+                'system_name' => (string) ($data->system_name ?? 'Azhl'),
+                'logo' => $logoUrl,
+                'currency' => (string) ($data->currency ?? 'SAR'),
+                'payment_method' => (string) ($data->payment_method ?? 'applepay'),
+                'azhl_percentage' => number_format((float) ($data->azhl_percentage ?? 10.00), 2, '.', ''),
+                'azhl_fee' => number_format((float) ($data->azhl_fee ?? 5.00), 2, '.', ''),
+                'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
+                'marketplace_vat_percentage' => number_format((float) ($data->marketplace_vat_percentage ?? 15.00), 2, '.', ''),
+                'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
+                'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 0.00), 2, '.', ''),
+                'fixed_transaction_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 0.00), 2, '.', ''),
+                'payment_gateway_vat_percentage' => number_format((float) ($data->payment_gateway_vat_percentage ?? 15.00), 2, '.', ''),
+                'referral_amount' => number_format((float) ($data->referral_amount ?? 10.00), 2, '.', ''),
+                'created_at' => $data->created_at,
+                'updated_at' => $data->updated_at,
+            ];
+
+            return $this->success($formattedData, 'System settings fetched successfully');
         } catch (Exception $e) {
             return $this->error('An error occurred while fetching system settings', 500, [
                 'exception' => $e->getMessage()
@@ -70,12 +92,27 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
-            $banners = MobileBanners::select('path')->orderBy('id', 'desc')->get()->map(function ($banner) {
-                $banner->path = ($banner->path && $banner->path != '' && $banner->path != null) ? asset('uploads/mobile_banners/' . $banner->path) : asset('assets/img/default.jpg');
-                return $banner;
-            });
+            $banners = MobileBanners::select('id', 'path', 'showMarketplace', 'marketplace_id')
+                ->orderBy('id', 'desc')
+                ->get()
+                ->map(function ($banner) {
+                    $bannerPath = ($banner->path && $banner->path != '' && $banner->path != null)
+                        ? asset('uploads/mobile_banners/' . $banner->path)
+                        : asset('assets/img/default.jpg');
 
+                    $data = [
+                        'path' => $bannerPath,
+                    ];
+
+                    if ($banner->showMarketplace) {
+                        $data['marketplace_id'] = $banner->marketplace_id;
+                    }
+
+                    return $data;
+                });
 
             $topCategoryIds = JobRequestModel::where('status', '!=', 'cancelled')
                 ->select('category_id', DB::raw('COUNT(*) as total'))
@@ -103,9 +140,16 @@ class GeneralContoller extends Controller
                     return $service;
                 });
 
-
             $providers = User::with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
                 ->latest()
@@ -114,67 +158,116 @@ class GeneralContoller extends Controller
                 ->map(function ($provider) {
                     $provider = $this->decorateProvider($provider);
                     $serviceCategories = $this->getProviderServiceCategories($provider);
-
                     $provider->categories = ServiceCategoryModel::whereIn('id', $serviceCategories)->get()
                         ->map(function ($cat) {
                             $cat->path = $cat->path && !str_starts_with($cat->path, 'http')
                                 ? asset('uploads/service_category/' . $cat->path)
                                 : $cat->path;
                             return $cat;
-                        })
-                        ->values();
-
+                        })->values();
                     return $provider;
-                })
-                ->values();
+                })->values();
 
             $marketplaces = User::query()
+                ->select('users.*')
+                ->join('marketplace_profiles', 'marketplace_profiles.user_id', '=', 'users.id')
                 ->with('marketplaceProfile')
-                ->whereHas('marketplaceProfile')
-                ->where('id', '!=', $user->id)
-                ->where('marketplace_status', 'active')
-                ->latest()
+                ->where('users.id', '!=', $user->id)
+                ->where('users.marketplace_status', 'active')
+                ->when($lat && $lng, function ($q) use ($lat, $lng) {
+                    $q->whereRaw(
+                        '(6371 * acos(cos(radians(?)) * cos(radians(COALESCE(marketplace_profiles.latitude, users.latitude))) * cos(radians(COALESCE(marketplace_profiles.longitude, users.longitude)) - radians(?)) + sin(radians(?)) * sin(radians(COALESCE(marketplace_profiles.latitude, users.latitude))))) <= 5',
+                        [$lat, $lng, $lat]
+                    );
+                })
+                ->orderBy('users.created_at', 'desc')
                 ->limit(4)
                 ->get()
                 ->map(function ($marketplace) {
                     $marketplace = $this->decorateMarketplace($marketplace);
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
-
-                    $services = ServiceCategoryModel::query()
+                    $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
                         ->get(['id', 'name'])
-                        ->map(function ($service) {
-                            return [
-                                'id' => $service->id,
-                                'name' => $service->name,
-                            ];
-                        })
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
                         ->values();
-
-                    $marketplace->services = $services;
-
                     return $marketplace;
                 });
 
+            $capturedJobIds = Payment::where('user_id', $user->id)
+                ->whereIn('status', ['captured', 'paid'])
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
             $active_orders = Orders::with(['job.category', 'provider'])
                 ->where('user_id', $user->id)
-                ->whereIn('status', ['on_the_way', 'arrived', 'working'])
+                ->where(function ($q) use ($capturedJobIds) {
+                    $q->whereIn('status', ['open', 'pending', 'on_the_way', 'arrived', 'working', 'provider_completed'])
+                      ->orWhere(function ($sub) use ($capturedJobIds) {
+                          $sub->where('status', 'completed')
+                              ->where(function ($p) {
+                                  $p->where('paid_to_system', '!=', 1)
+                                    ->orWhereNull('paid_to_system');
+                              });
+                          if (!empty($capturedJobIds)) {
+                              $sub->whereNotIn('job_id', $capturedJobIds);
+                          }
+                      });
+                })
+                ->latest()
+                ->limit(4)
+                ->get()
+                ->map(function ($order) use ($capturedJobIds) {
+                    $extraAmount = (float) ($order->extra_amount ?? 0);
+                    $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
+                    $orderPrice = (float) ($order->price ?? 0);
+                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
+
+                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                    $order->extra_amount_reason = $order->extra_amount_reason;
+                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                    $order->total_amount = number_format($total, 2, '.', '');
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
+                    $order->payment_status = $isPaid ? 'paid' : 'pending';
+                    $order->is_paid = $isPaid;
+
+                    if ($order->job_id) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
+                            ->whereIn('status', ['accepted', 'completed', 'hired'])
+                            ->first();
+                        $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
+                        $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+                    }
+
+                    if ($order->provider && $order->provider->profile_image && !str_starts_with($order->provider->profile_image, 'http')) {
+                        $order->provider->profile_image = asset('uploads/profile_images/' . $order->provider->profile_image);
+                    }
+                    if ($order->job && $order->job->category && $order->job->category->path && !str_starts_with($order->job->category->path, 'http')) {
+                        $order->job->category->path = asset('uploads/service_category/' . $order->job->category->path);
+                    }
+                    return $order;
+                });
+
+            $active_marketplace_orders = MarketplaceOrder::with('items')
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['pending', 'accept', 'processing', 'mark_as_shipped', 'mark_as_delivered'])
                 ->latest()
                 ->limit(4)
                 ->get();
 
             $cart_count = Cart::where('user_id', $user->id)->count();
 
-            $data = [
-                'banners' => $banners,
+            return $this->success([
+                'banners'        => $banners,
                 'popular_services' => $popular_services,
-                'providers' => $providers,
-                'marketplaces' => $marketplaces,
-                'active_orders' => $active_orders,
-                'cart_count' => $cart_count,
-            ];
-
-            return $this->success($data, 'Home page fetched successfully');
+                'providers'      => $providers,
+                'marketplaces'   => $marketplaces,
+                'active_orders'  => $active_orders,
+                'active_marketplace_orders' => $active_marketplace_orders,
+                'cart_count'     => $cart_count,
+            ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
                 'exception' => $e->getMessage()
@@ -278,50 +371,48 @@ class GeneralContoller extends Controller
     {
         try {
             $user = auth('sanctum')->user();
+            $lat  = $user->latitude;
+            $lng  = $user->longitude;
 
             $users = User::select('id', 'name', 'profile_image')
                 ->with(['reviews', 'providerProfile'])
-                ->whereHas('providerProfile')
+                ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
+                    if ($lat && $lng) {
+                        $q->whereNotNull('latitude')->whereNotNull('longitude')
+                          ->whereRaw(
+                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                              [$lat, $lng, $lat]
+                          );
+                    }
+                })
                 ->where('id', '!=', $user->id)
                 ->where('provider_status', 'active')
-                ->get();
+                ->get()
+                ->map(function ($provider) {
+                    $provider->loadMissing('providerProfile');
+                    $providerProfile = $provider->providerProfile;
 
-            $users = $users->map(function ($provider) {
-                $provider->loadMissing('providerProfile');
-                $providerProfile = $provider->providerProfile;
+                    if ($providerProfile) {
+                        $serviceIds = $this->getProviderServiceCategories($provider);
+                        $providerProfile->services = ServiceCategoryModel::query()
+                            ->whereIn('id', $serviceIds)
+                            ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                            ->map(function ($category) {
+                                $category->path = $category->path && !str_starts_with($category->path, 'http')
+                                    ? asset('uploads/service_category/' . $category->path)
+                                    : $category->path;
+                                return $category;
+                            })->values();
+                    }
 
-                if ($providerProfile) {
-                    $serviceIds = $this->getProviderServiceCategories($provider);
+                    return $provider;
+                });
 
-                    $providerProfile->services = ServiceCategoryModel::query()
-                        ->whereIn('id', $serviceIds)
-                        ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
-                        ->map(function ($category) {
-                            $category->path = $category->path && !str_starts_with($category->path, 'http')
-                                ? asset('uploads/service_category/' . $category->path)
-                                : $category->path;
-
-                            return $category;
-                        })
-                        ->values();
-                }
-
-                return $provider;
-            });
-
-            return response()->json([
-                'status' => true,
-                'message' => 'All services fetched successfully',
-                'data' => $users
-            ]);
+            return $this->success($users, 'All providers fetched successfully');
         } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'message' => 'An error occurred while fetching all services',
-                'data' => [
-                    'exception' => $e->getMessage()
-                ]
-            ], 500);
+            return $this->error('An error occurred while fetching all providers', 500, [
+                'exception' => $e->getMessage()
+            ]);
         }
     }
 
@@ -594,6 +685,140 @@ class GeneralContoller extends Controller
         }
     }
 
+    public function toggle_favorite_marketplace(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'marketplace_id' => 'nullable|integer',
+            'marketplace_store_id' => 'nullable|integer',
+            'seller_id' => 'nullable|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors(), 'Validation failed.');
+        }
+
+        $marketplaceId = $request->input('marketplace_id')
+            ?? $request->input('marketplace_store_id')
+            ?? $request->input('seller_id');
+
+        if (!$marketplaceId) {
+            return $this->error('marketplace_id is required.', 422);
+        }
+
+        try {
+            $user = auth('sanctum')->user();
+            $marketplace = User::where('id', $marketplaceId)->whereHas('marketplaceProfile')->first();
+
+            if (!$marketplace) {
+                return $this->notFound('Marketplace shop not found');
+            }
+
+            $existing = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->where('marketplace_id', $marketplace->id)
+                ->first();
+
+            if ($existing) {
+                DB::table('favorite_marketplaces')
+                    ->where('user_id', $user->id)
+                    ->where('marketplace_id', $marketplace->id)
+                    ->delete();
+
+                return $this->success([
+                    'marketplace_id' => (int) $marketplace->id,
+                    'is_favorite' => false,
+                ], 'Marketplace removed from favorites');
+            }
+
+            DB::table('favorite_marketplaces')->insert([
+                'user_id' => $user->id,
+                'marketplace_id' => $marketplace->id,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return $this->success([
+                'marketplace_id' => (int) $marketplace->id,
+                'is_favorite' => true,
+            ], 'Marketplace added to favorites');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while updating favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace_ids()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            return $this->success($ids, 'Favorite marketplace IDs fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function get_favorite_marketplace()
+    {
+        try {
+            $user = auth('sanctum')->user();
+
+            $ids = DB::table('favorite_marketplaces')
+                ->where('user_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->pluck('marketplace_id')
+                ->map(function ($id) {
+                    return (int) $id;
+                })
+                ->values();
+
+            if ($ids->isEmpty()) {
+                return $this->success(collect(), 'Favorite marketplaces fetched successfully');
+            }
+
+            $marketplaces = User::with(['marketplaceProfile'])
+                ->whereHas('marketplaceProfile')
+                ->where('marketplace_status', 'active')
+                ->whereIn('id', $ids->toArray())
+                ->get()
+                ->map(function ($marketplace) {
+                    $marketplace = $this->decorateMarketplace($marketplace);
+                    $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
+
+                    $marketplace->services = ServiceCategoryModel::query()
+                        ->whereIn('id', $serviceIds ?: [])
+                        ->get(['id', 'name'])
+                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
+                        ->values();
+
+                    return $marketplace;
+                })
+                ->keyBy('id');
+
+            $orderedMarketplaces = $ids->map(function ($id) use ($marketplaces) {
+                return $marketplaces->get($id);
+            })->filter()->values();
+
+            return $this->success($orderedMarketplaces, 'Favorite marketplaces fetched successfully');
+        } catch (\Exception $e) {
+            return $this->error('An error occurred while fetching favorite marketplaces', 500, [
+                'exception' => $e->getMessage()
+            ]);
+        }
+    }
+
     // ===================== FAQs =====================
     public function faqs_list()
     {
@@ -634,71 +859,6 @@ class GeneralContoller extends Controller
             ]);
         }
     }
-
-    // public function provider_home()
-    // {
-    //     try {
-    //         $serviceCategories = is_string(auth()->user()->service_category)
-    //             ? json_decode(auth()->user()->service_category, true) ?? []
-    //             : (auth()->user()->service_category ?? []);
-
-
-    //         $post_requests = JobRequestModel::with('images', 'category', 'user')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', null)
-    //             ->whereIn('category_id', $serviceCategories)
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($post_requests as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($post_requests as $post) {
-    //             if ($post->category->path && !str_starts_with($post->category->path, 'http')) {
-    //                 $post->category->path = asset('uploads/service_category/' . $post->category->path);
-    //             }
-    //         }
-
-    //         $direct_hires = JobRequestModel::with('images', 'user', 'category')
-    //             ->where('status', 'pending')
-    //             ->where('provider_id', auth()->id())
-    //             ->latest()
-    //             ->limit(2)
-    //             ->get();
-
-    //         foreach ($direct_hires as $request) {
-    //             if ($request->images) {
-    //                 foreach ($request->images as $image) {
-    //                     $image->path = asset('uploads/job_gallery/' . $image->path);
-    //                 }
-    //             }
-    //         }
-
-    //         foreach ($direct_hires as $hire) {
-    //             if ($hire->category->path && !str_starts_with($hire->category->path, 'http')) {
-    //                 $hire->category->path = asset('uploads/service_category/' . $hire->category->path);
-    //             }
-    //         }
-
-
-    //         $data = [
-    //             'post_requests' => $post_requests,
-    //             'direct_hires' => $direct_hires,
-    //         ];
-
-    //         return $this->success($data, 'Home page fetched successfully');
-    //     } catch (\Exception $e) {
-    //         return $this->error('An error occurred while fetching home page', 500, [
-    //             'exception' => $e->getMessage()
-    //         ]);
-    //     }
-    // }
 
     public function provider_home()
     {
@@ -764,9 +924,150 @@ class GeneralContoller extends Controller
                 }
             }
 
+            $providerId = auth()->id();
+            $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
+                ->where(function ($q) use ($providerId) {
+                    $q->where('provider_id', $providerId)
+                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                      })
+                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                      });
+                })
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $paidOrderJobIds = Orders::where('provider_id', $providerId)
+                ->where('paid_to_system', 1)
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $allPaidJobIds = array_values(array_unique(array_merge($capturedJobIds, $paidOrderJobIds)));
+
+            $formatHomeOrder = function ($order) use ($allPaidJobIds) {
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $netAmount = $financials['net_amount'];
+                $subtotal = $financials['customer_total'];
+
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                    || in_array($order->job_id, $allPaidJobIds)
+                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                    $order->paid_to_system = 1;
+                    $order->saveQuietly();
+                }
+
+                $order->price = number_format($repairPrice, 2, '.', '');
+                $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->repair_price = number_format($repairPrice, 2, '.', '');
+                $order->base_price = number_format($repairPrice, 2, '.', '');
+                $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                $order->extra_amount_reason = $order->extra_amount_reason;
+                $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                $order->final_base_price = number_format($finalBase, 2, '.', '');
+                $order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                $order->total_amount = number_format($subtotal, 2, '.', '');
+                $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
+                $order->net_amount = number_format($netAmount, 2, '.', '');
+                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->is_paid = $isPaid;
+
+                $order->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'is_paid' => $isPaid,
+                    'azhl_commission' => number_format($azhlFee, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'net_amount' => number_format($netAmount, 2, '.', ''),
+                ];
+
+                if ($order->job_id) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
+                        ->whereIn('status', ['accepted', 'completed', 'hired'])
+                        ->first();
+                    $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
+                    $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+                }
+
+                if ($order->job) {
+                    foreach ($order->job->images ?? [] as $image) {
+                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                    }
+                    $category = $order->job->category ?? null;
+                    if ($category && $category->path && !str_starts_with($category->path, 'http')) {
+                        $category->path = asset('uploads/service_category/' . $category->path);
+                    }
+                }
+
+                if ($order->user && $order->user->profile_image && !str_starts_with($order->user->profile_image, 'http')) {
+                    $order->user->profile_image = asset('uploads/profile_images/' . $order->user->profile_image);
+                }
+
+                return $order;
+            };
+
+            $orders = Orders::with(['job.category', 'user'])
+                ->where('provider_id', $providerId)
+                ->where(function ($q) use ($allPaidJobIds) {
+                    $q->whereNotIn('status', ['open', 'completed', 'cancelled'])
+                      ->orWhere(function ($sub) use ($allPaidJobIds) {
+                          $sub->where('status', 'completed')
+                              ->where(function ($p) {
+                                  $p->where('paid_to_system', '!=', 1)
+                                    ->orWhereNull('paid_to_system');
+                              });
+                          if (!empty($allPaidJobIds)) {
+                              $sub->whereNotIn('job_id', $allPaidJobIds);
+                          }
+                      });
+                })
+                ->latest()
+                ->limit(4)
+                ->get()
+                ->map($formatHomeOrder);
+
+            $completedOrders = Orders::with(['job.category', 'user'])
+                ->where('provider_id', $providerId)
+                ->where('status', 'completed')
+                ->where(function ($q) use ($allPaidJobIds) {
+                    $q->where('paid_to_system', 1);
+                    if (!empty($allPaidJobIds)) {
+                        $q->orWhereIn('job_id', $allPaidJobIds);
+                    }
+                })
+                ->latest()
+                ->limit(4)
+                ->get()
+                ->map($formatHomeOrder);
+
             return $this->success([
-                'post_requests' => $post_requests,
-                'direct_hires'  => $direct_hires,
+                'post_requests'    => $post_requests,
+                'direct_hires'     => $direct_hires,
+                'orders'           => $orders,
+                'completed_orders' => $completedOrders,
             ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
@@ -994,10 +1295,166 @@ class GeneralContoller extends Controller
         }
     }
 
-    public function my_orders()
+    public function my_orders(Request $request)
     {
         try {
             $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $providerId = $user->id;
+            $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
+                ->where(function ($q) use ($providerId) {
+                    $q->where('provider_id', $providerId)
+                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                      })
+                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                      });
+                })
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $paidOrderJobIds = Orders::where('provider_id', $providerId)
+                ->where('paid_to_system', 1)
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $allPaidJobIds = array_values(array_unique(array_merge($capturedJobIds, $paidOrderJobIds)));
+
+            $settings = SystemSettingModel::first();
+            $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
+            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+
+            $formatOrder = function ($order) use ($allPaidJobIds, $settings, $azhlFixedFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+                $category = $order->job->category ?? null;
+                if ($category) {
+                    $category->path = $category->path
+                        ? asset('uploads/service_category/' . $category->path)
+                        : asset('assets/img/default.jpg');
+                }
+
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $netAmount = $financials['net_amount'];
+                $subtotal = $financials['customer_total'];
+
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                    || in_array($order->job_id, $allPaidJobIds)
+                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                    $order->paid_to_system = 1;
+                    $order->saveQuietly();
+                }
+
+                $order->price = number_format($repairPrice, 2, '.', '');
+                $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->repair_price = number_format($repairPrice, 2, '.', '');
+                $order->base_price = number_format($repairPrice, 2, '.', '');
+                $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                $order->extra_amount_reason = $order->extra_amount_reason;
+                $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                $order->final_base_price = number_format($finalBase, 2, '.', '');
+                $order->total_amount = number_format($subtotal, 2, '.', '');
+                $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
+                $order->net_amount = number_format($netAmount, 2, '.', '');
+                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->is_paid = $isPaid;
+                $order->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'is_paid' => $isPaid,
+                    'azhl_commission' => number_format($azhlFee, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'net_amount' => number_format($netAmount, 2, '.', ''),
+                ];
+
+                return $order;
+            };
+
+            $statusFilter = strtolower($request->input('filter', ''));
+            $page = (int) $request->input('page', 0);
+            $perPage = (int) $request->input('per_page', 15);
+
+            if ($statusFilter !== '' || $page > 0 || $request->has('paginate')) {
+                $query = Orders::with(['job.category', 'user'])
+                    ->where('provider_id', $user->id)
+                    ->orderBy('id', 'DESC');
+
+                if ($statusFilter === 'ongoing') {
+                    $query->where(function ($q) use ($allPaidJobIds) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) use ($allPaidJobIds) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                              if (!empty($allPaidJobIds)) {
+                                  $sub->whereNotIn('job_id', $allPaidJobIds);
+                              }
+                          });
+                    });
+                } elseif ($statusFilter === 'completed') {
+                    $query->where('status', 'completed')
+                          ->where(function ($q) use ($allPaidJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($allPaidJobIds)) {
+                                  $q->orWhereIn('job_id', $allPaidJobIds);
+                              }
+                          });
+                } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
+                    $query->whereIn('status', ['pending', 'open', 'accepted']);
+                } elseif ($statusFilter === 'cancelled') {
+                    $query->whereIn('status', ['cancelled', 'cancel', 'r eject', 'rejected']);
+                } elseif ($statusFilter !== '' && $statusFilter !== 'all') {
+                    $query->where('status', $statusFilter);
+                }
+
+                $paginator = $query->paginate($perPage);
+
+                $orders = collect($paginator->items())->map(function ($order) use ($formatOrder) {
+                    return $formatOrder($order);
+                });
+
+                return $this->success([
+                    'orders' => $orders,
+                    'pagination' => [
+                        'current_page' => $paginator->currentPage(),
+                        'per_page' => $paginator->perPage(),
+                        'last_page' => $paginator->lastPage(),
+                        'total' => $paginator->total(),
+                        'from' => $paginator->firstItem() ?: 0,
+                        'to' => $paginator->lastItem() ?: 0,
+                        'has_more' => $paginator->hasMorePages(),
+                    ],
+                ], 'Provider orders loaded successfully.');
+            }
 
             $statuses = [
                 'ongoing_orders' => ['arrived', 'on_the_way', 'working', 'provider_completed'],
@@ -1008,20 +1465,40 @@ class GeneralContoller extends Controller
 
             $data = [];
 
-            foreach ($statuses as $key => $status) {
-                $orders = Orders::with(['job.category', 'user'])
-                    ->where('provider_id', $user->id)
-                    ->whereIn('status', (array) $status)
-                    ->orderBy('id', 'DESC')
-                    ->get();
+            foreach ($statuses as $key => $statusList) {
+                $query = Orders::with(['job.category', 'user'])
+                    ->where('provider_id', $user->id);
+
+                if ($key === 'ongoing_orders') {
+                    $query->where(function ($q) use ($allPaidJobIds) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) use ($allPaidJobIds) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                              if (!empty($allPaidJobIds)) {
+                                  $sub->whereNotIn('job_id', $allPaidJobIds);
+                              }
+                          });
+                    });
+                } elseif ($key === 'completed_orders') {
+                    $query->where('status', 'completed')
+                          ->where(function ($q) use ($allPaidJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($allPaidJobIds)) {
+                                  $q->orWhereIn('job_id', $allPaidJobIds);
+                              }
+                          });
+                } else {
+                    $query->whereIn('status', (array) $statusList);
+                }
+
+                $orders = $query->orderBy('id', 'DESC')->get();
 
                 foreach ($orders as $order) {
-                    $category = $order->job->category ?? null;
-                    if ($category) {
-                        $category->path = $category->path
-                            ? asset('uploads/service_category/' . $category->path)
-                            : asset('assets/img/default.jpg');
-                    }
+                    $formatOrder($order);
                 }
 
                 $data[$key] = $orders;
@@ -1086,7 +1563,7 @@ class GeneralContoller extends Controller
     public function track_order($id)
     {
         try {
-            $tracking = OrderTracking::with('order.user', 'order.provider', 'order.job')
+            $tracking = OrderTracking::with(['order.user', 'order.provider', 'order.job.category', 'order.job.images'])
                 ->where('order_id', $id)
                 ->get();
 
@@ -1096,15 +1573,156 @@ class GeneralContoller extends Controller
 
             $order = $tracking->first()->order;
 
-            $order->user->profile_image = $order->user->profile_image
-                ? asset('uploads/profile/' . $order->user->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->user) {
+                $order->user->profile_image = $order->user->profile_image
+                    ? (str_starts_with($order->user->profile_image, 'http') ? $order->user->profile_image : asset('uploads/profile_images/' . $order->user->profile_image))
+                    : asset('assets/img/default.jpg');
+            }
 
-            $order->provider->profile_image = $order->provider->profile_image
-                ? asset('uploads/profile/' . $order->provider->profile_image)
-                : asset('assets/img/default.jpg');
+            if ($order && $order->provider) {
+                $order->provider->profile_image = $order->provider->profile_image
+                    ? (str_starts_with($order->provider->profile_image, 'http') ? $order->provider->profile_image : asset('uploads/profile_images/' . $order->provider->profile_image))
+                    : asset('assets/img/default.jpg');
+            }
 
-            $isCompleted = $order->status === 'completed';
+            if ($order && $order->job) {
+                if ($order->job->images) {
+                    foreach ($order->job->images as $image) {
+                        if ($image->path && !str_starts_with($image->path, 'http')) {
+                            $image->path = asset('uploads/job_gallery/' . $image->path);
+                        }
+                    }
+                }
+                if ($order->job->category && $order->job->category->path && !str_starts_with($order->job->category->path, 'http')) {
+                    $order->job->category->path = asset('uploads/service_category/' . $order->job->category->path);
+                }
+            }
+
+            $settings = SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+            if ($order) {
+                $repairPrice = (float) ($order->price ?? 0);
+                $bidId = null;
+                if (!empty($order->job_id)) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->when($order->provider_id, function ($q) use ($order) {
+                            $q->where('provider_id', $order->provider_id);
+                        })
+                        ->whereIn('status', ['accepted', 'completed', 'hired'])
+                        ->first();
+
+                    if (!$acceptedBid && !empty($order->provider_id)) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->where('provider_id', $order->provider_id)
+                            ->first();
+                    }
+
+                    if (!$acceptedBid) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->whereIn('status', ['accepted', 'completed', 'hired'])
+                            ->first();
+                    }
+
+                    if ($acceptedBid) {
+                        $bidId = (int) $acceptedBid->id;
+                        if ((float) $acceptedBid->price > 0) {
+                            $repairPrice = (float) $acceptedBid->price;
+                        }
+                    }
+                }
+
+                if (!$bidId && !empty($order->job_id)) {
+                    $paymentRec = Payment::where('job_id', $order->job_id)->whereNotNull('bid_id')->latest()->first();
+                    if ($paymentRec) {
+                        $bidId = (int) $paymentRec->bid_id;
+                    }
+                }
+
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $total = $financials['customer_total'];
+
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                if (!$isPaid && !empty($order->job_id)) {
+                    $payment = Payment::where('job_id', $order->job_id)
+                        ->whereIn('status', ['captured', 'paid'])
+                        ->latest()
+                        ->first();
+                    if ($payment) {
+                        $isPaid = true;
+                    }
+                }
+                $paymentStatus = $isPaid ? 'paid' : 'pending';
+
+                $paymentBreakdown = [
+                    'bid_id' => $bidId,
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'system_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'subtotal' => number_format($total, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($total, 2, '.', ''),
+                    'total_amount' => number_format($total, 2, '.', ''),
+                    'total' => number_format($total, 2, '.', ''),
+                    'payment_status' => $paymentStatus,
+                    'paid_to_system' => $isPaid ? 1 : 0,
+                    'is_paid' => $isPaid,
+                ];
+
+                foreach ($tracking as $track) {
+                    if ($track->order) {
+                        $track->order->source = $order->source ?: ($bidId ? 'bid' : 'direct');
+                        $track->order->bid_id = $bidId;
+                        $track->order->price = number_format($repairPrice, 2, '.', '');
+                        $track->order->repair_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->base_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->bid_price = number_format($repairPrice, 2, '.', '');
+                        $track->order->extra_amount = number_format($extraAmount, 2, '.', '');
+                        $track->order->extra_amount_reason = $order->extra_amount_reason;
+                        $track->order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                        $track->order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                        $track->order->final_base_price = number_format($finalBase, 2, '.', '');
+                        $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->total_price = number_format($total, 2, '.', '');
+                        $track->order->total_amount = number_format($total, 2, '.', '');
+                        $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
+                        $track->order->total = number_format($total, 2, '.', '');
+                        $track->order->payment_status = $paymentStatus;
+                        $track->order->paid_to_system = $isPaid ? 1 : 0;
+                        $track->order->is_paid = $isPaid;
+                        $track->order->payment_breakdown = $paymentBreakdown;
+
+                        if ($track->order->job) {
+                            if ($track->order->job->images) {
+                                foreach ($track->order->job->images as $image) {
+                                    if ($image->path && !str_starts_with($image->path, 'http')) {
+                                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                                    }
+                                }
+                            }
+                            if ($track->order->job->category && $track->order->job->category->path && !str_starts_with($track->order->job->category->path, 'http')) {
+                                $track->order->job->category->path = asset('uploads/service_category/' . $track->order->job->category->path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            $isCompleted = $order ? $order->status === 'completed' : false;
 
             return $this->success(
                 $tracking,
@@ -1126,8 +1744,10 @@ class GeneralContoller extends Controller
                 'nullable',
                 'in:on_the_way,arrived,working,provider_completed,completed',
             ],
-            'latitude' => 'required_if:status,on_the_way|nullable',
-            'longitude' => 'required_if:status,on_the_way|nullable',
+            'extra_amount' => 'nullable|numeric|min:0',
+            'extra_amount_reason' => 'nullable|string',
+            'latitude' => 'nullable',
+            'longitude' => 'nullable',
         ]);
 
         try {
@@ -1157,7 +1777,39 @@ class GeneralContoller extends Controller
             } else {
                 $order->status = $request->status;
             }
+
+            // Handle extra charges declaration when provider completes the order
+            $extraAmount = (float) $request->input('extra_amount', 0);
+            $extraReason = $request->input('extra_amount_reason');
+
+            if ($order->status === 'provider_completed') {
+                $isAlreadyAccepted = ($order->extra_amount_status === 'accepted' && (float) $order->extra_amount > 0);
+                $isSameAmount = abs($extraAmount - (float) $order->extra_amount) < 0.001;
+
+                if ($isAlreadyAccepted && $isSameAmount) {
+                    // Keep accepted status intact when provider resubmits the same extra amount
+                    if ($request->filled('extra_amount_reason')) {
+                        $order->extra_amount_reason = $extraReason;
+                    }
+                } else {
+                    if ($extraAmount > 0) {
+                        $order->extra_amount = $extraAmount;
+                        $order->extra_amount_reason = $extraReason;
+                        $order->extra_amount_status = 'pending';
+                    } else {
+                        $order->extra_amount = 0.00;
+                        $order->extra_amount_reason = null;
+                        $order->extra_amount_status = 'none';
+                    }
+                }
+                $order->calculateAndSyncFinancials(false);
+            }
+
             $order->save();
+
+            if ($order->status === 'completed') {
+                \App\Services\Referral\ReferralRewardService::checkAndRewardReferrer($order);
+            }
 
 
             if ($request->filled('type')) {
@@ -1205,8 +1857,40 @@ class GeneralContoller extends Controller
                 }
             }
 
+            // If extra amount was declared by provider, send dedicated FCM to Customer
+            if ($order->status === 'provider_completed' && $order->extra_amount_status === 'pending' && $isProviderActor && $recipient) {
+                try {
+                    $recipient->notify((new \App\Notifications\ExtraPaymentRequestedNotification(
+                        $order,
+                        $actor,
+                        (float) $order->extra_amount,
+                        $order->extra_amount_reason
+                    ))->afterCommit());
+                } catch (\Throwable $fcmException) {
+                    Log::error('Failed to send EXTRA_PAYMENT_REQUEST notification: ' . $fcmException->getMessage());
+                }
+            }
 
-            return $this->success(null, 'Order status updated successfully.');
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $applicableExtra = ($order->extra_amount_status !== 'rejected' && (float) ($order->extra_amount ?? 0) > 0) ? (float) $order->extra_amount : 0.00;
+            $finalBasePrice = (float) ($order->price ?? 0) + $applicableExtra;
+            $totalAmount = $finalBasePrice + $customerAppFee;
+
+            $responseData = [
+                'id' => (int) $order->id,
+                'status' => (string) $order->status,
+                'price' => number_format((float) ($order->price ?? 0), 2, '.', ''),
+                'base_price' => number_format((float) ($order->price ?? 0), 2, '.', ''),
+                'extra_amount' => number_format((float) ($order->extra_amount ?? 0), 2, '.', ''),
+                'extra_amount_reason' => $order->extra_amount_reason,
+                'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                'final_base_price' => number_format($finalBasePrice, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'total_amount' => number_format($totalAmount, 2, '.', ''),
+            ];
+
+            return $this->success($responseData, 'Order status updated successfully.');
         } catch (\Exception $e) {
             Log::error('Error in update_order_status: ' . $e->getMessage());
             return $this->error('Failed to update order status.', 500);
@@ -1326,28 +2010,34 @@ class GeneralContoller extends Controller
     }
 
     public function my_bids(Request $request)
-    {
-        try {
-            $user = auth()->user();
-            $bids = BidModel::with(['job.category', 'job.user', 'order'])
-                ->where('provider_id', $user->id)->get();
+{
+    try {
+        $user = auth()->user();
 
-            if ($bids->isEmpty()) {
-                return $this->notFound('No bids found for this provider.');
-            }
+        $bids = BidModel::with(['job.category', 'job.user', 'order'])
+            ->where('provider_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
 
-            foreach ($bids as $bid) {
-                if ($bid->job->category) {
-                    $bid->job->category->path = $bid->job->category->path ? asset('uploads/service_category/' . $bid->job->category->path) : asset('assets/img/default.jpg');
-                }
-            }
-
-            return $this->success($bids, 'My bids fetched successfully.');
-        } catch (\Exception $e) {
-            Log::error('Error in my_bids: ' . $e->getMessage());
-            return $this->error('Failed to load my bids.', 500);
+        if ($bids->isEmpty()) {
+            return $this->notFound('No bids found for this provider.');
         }
+
+        foreach ($bids as $bid) {
+            if ($bid->job && $bid->job->category) {
+                $bid->job->category->path = $bid->job->category->path
+                    ? asset('uploads/service_category/' . $bid->job->category->path)
+                    : asset('assets/img/default.jpg');
+            }
+        }
+
+        return $this->success($bids, 'My bids fetched successfully.');
+
+    } catch (\Exception $e) {
+        Log::error('Error in my_bids: ' . $e->getMessage());
+        return $this->error('Failed to load my bids.', 500);
     }
+}
 
     private function resolveCategoryIds($raw): array
     {
@@ -1393,6 +2083,27 @@ class GeneralContoller extends Controller
             : $provider->name;
 
         return $provider;
+    }
+
+    public function provider_reviews(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if ((int) $user->role !== 1) {
+                return $this->error('Only providers can view their reviews.', 403);
+            }
+
+            $perPage = $request->input('per_page', 10);
+
+            $reviews = Reviews::where('provider_id', $user->id)
+                ->orderBy('id', 'desc')
+                ->paginate($perPage);
+
+            return $this->success($reviews, 'Provider reviews loaded successfully.');
+        } catch (\Throwable $e) {
+            Log::error('Error in provider_reviews: ' . $e->getMessage());
+            return $this->error('Failed to load reviews.', 500);
+        }
     }
 
     private function decorateMarketplace(User $marketplace): User

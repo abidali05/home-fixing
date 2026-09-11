@@ -27,25 +27,45 @@
     @stack('styles')
 <style>
     .btn-primary {
-    --bs-btn-color: #000;
-    --bs-btn-bg: #2BBDCE !important;
-    --bs-btn-border-color: #5e72e4;
-    --bs-btn-hover-color: #000;
-    --bs-btn-hover-bg: #2BBDCE !important;
-    --bs-btn-hover-border-color: #2BBDCE !important;
-    --bs-btn-focus-shadow-rgb: 80, 97, 194;
-    --bs-btn-active-color: #000;
-    --bs-btn-active-bg: rgb(126.2, 142.2, 233.4);
-    --bs-btn-active-border-color: rgb(110.1, 128.1, 230.7);
-    --bs-btn-active-shadow: none;
-    --bs-btn-disabled-color: #000;
-    --bs-btn-disabled-bg: #5e72e4;
-    --bs-btn-disabled-border-color: #5e72e4;
-}
-.btn-primary:hover, .btn.bg-gradient-primary:hover {
-    background-color: #2BBDCE !important;
-    border-color: #2BBDCE !important;
-}
+        --bs-btn-color: #ffffff !important;
+        --bs-btn-bg: #4F2396 !important;
+        --bs-btn-border-color: #4F2396 !important;
+        --bs-btn-hover-color: #ffffff !important;
+        --bs-btn-hover-bg: #3c1973 !important;
+        --bs-btn-hover-border-color: #3c1973 !important;
+        --bs-btn-focus-shadow-rgb: 80, 97, 194;
+        --bs-btn-active-color: #ffffff !important;
+        --bs-btn-active-bg: #2b1154 !important;
+        --bs-btn-active-border-color: #2b1154 !important;
+        --bs-btn-active-shadow: none;
+        --bs-btn-disabled-color: #ffffff !important;
+        --bs-btn-disabled-bg: #4F2396 !important;
+        --bs-btn-disabled-border-color: #4F2396 !important;
+    }
+    .btn-primary:hover, .btn.bg-gradient-primary:hover {
+        background-color: #3c1973 !important;
+        border-color: #3c1973 !important;
+        color: #ffffff !important;
+    }
+    .btn-primary:active, .btn-primary.active {
+        background-color: #2b1154 !important;
+        border-color: #2b1154 !important;
+        color: #ffffff !important;
+    }
+    .badge-primary {
+        background-color: #4F2396 !important;
+        color: #ffffff !important;
+    }
+    .badge-secondary {
+        background-color: #F27D4B !important;
+        color: #ffffff !important;
+    }
+    .text-primary {
+        color: #4F2396 !important;
+    }
+    .text-secondary {
+        color: #F27D4B !important;
+    }
 </style>
 
 </head>
@@ -57,8 +77,8 @@
             <img src="{{ asset('assets/img/loader.gif') }}" alt="Loading..." style="height:150px; width:150px;" />
         </div>
     </div>
-    <!-- Removed min-height-300 and position-absolute from bg-dark to avoid layout conflicts with fixed sidebar -->
     @include('layouts.sidebar')
+    @include('layouts.header')
     @yield('content')
 
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
@@ -98,6 +118,14 @@
         var base_url = "{{ url('/') }}";
         $('.select2').select2({
             width: '100%'
+        });
+
+        $(document).ready(function() {
+            if ($('.main-content').length > 0 && $('#navbarBlur').length > 0) {
+                if ($('.main-content').first().find('#navbarBlur').length === 0) {
+                    $('.main-content').first().prepend($('#navbarBlur'));
+                }
+            }
         });
 
         $(document).on('submit', '.admin-loader-form', function () {

@@ -46,16 +46,6 @@
                                     @enderror
                                 </div>
 
-                                {{-- Email --}}
-                                <div class="mb-3">
-                                    <label for="email" class="form-label">Email</label>
-                                    <input type="email" name="email" id="email" class="form-control"
-                                        value="{{ old('email', $user->email) }}" required>
-                                    @error('email')
-                                        <small class="text-danger">{{ $message }}</small>
-                                    @enderror
-                                </div>
-
                                 {{-- Date of Birth --}}
                                 <div class="mb-3">
                                     <label for="dob" class="form-label">Date of Birth</label>

@@ -17,117 +17,52 @@
             <div class="row">
                 <div class="col-12">
                     <div class="card shadow-sm">
-                        <div class="card-header pb-0">
-                            <h6 class="mb-0">Orders</h6>
+                        <div class="card-header pb-0 d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-0 text-dark font-weight-bold">Orders Management</h6>
+                                <p class="text-muted text-xs mb-0">View, filter, and download receipts for customer & provider service orders.</p>
+                            </div>
                         </div>
 
                         <div class="card-body px-4 pt-3 pb-3">
-                            {{-- Tabs --}}
-                            <ul class="nav nav-tabs mb-3" id="orderTabs" role="tablist">
-                                <li class="nav-item" role="presentation">
-                                    <button
-                                        class="nav-link {{ request('user_id') ? 'active' : (request('provider_id') ? '' : 'active') }}"
-                                        id="user-tab" data-bs-toggle="tab" data-bs-target="#userOrders" type="button"
-                                        role="tab">
-                                        User Orders
-                                    </button>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <button class="nav-link {{ request('provider_id') ? 'active' : '' }}" id="provider-tab"
-                                        data-bs-toggle="tab" data-bs-target="#providerOrders" type="button" role="tab">
-                                        Provider Orders
-                                    </button>
-                                </li>
-                            </ul>
-
-                            <div class="tab-content" id="orderTabsContent">
-                                {{-- User Orders Tab --}}
-                                <div class="tab-pane fade {{ request('user_id') ? 'show active' : (request('provider_id') ? '' : 'show active') }}"
-                                    id="userOrders" role="tabpanel">
-                                    <form method="GET" action="{{ route('orders.index') }}" class="row g-3 mb-3 mt-3">
-                                        <div class="col-md-6">
-                                            {{-- <label for="user_id" class="form-label">Select User</label> --}}
-                                            <select name="user_id" id="user_id" class="form-select select2">
-                                                <option value="">-- Select User --</option>
-                                                @foreach ($users as $user)
-                                                    <option value="{{ $user->id }}"
-                                                        {{ request('user_id') == $user->id ? 'selected' : '' }}>
-                                                        {{ $user->name }}
-                                                    </option>
-                                                @endforeach
-                                            </select>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <button type="submit" class="btn w-100" style="background-color: #2BBDCE; color: white;">Search</button>
-                                            @if (request('user_id'))
-                                                <a href="{{ route('orders.index') }}"
-                                                    class="btn btn-secondary ms-2">Clear</a>
-                                            @endif
-                                        </div>
-                                    </form>
-
-                                    <div class="table-responsive">
-                                        <table class="table table-bordered table-striped text-sm w-100"
-                                            id="userOrdersTable">
-                                            <thead>
-                                                <tr>
-                                                    <th>S.No</th>
-                                                    <th>User</th>
-                                                    <th>Provider</th>
-                                                    <th>Order Date</th>
-                                                    <th>Order Source </th>
-                                                    <th>Price</th>
-                                                    <th>Status</th>
-                                                    <th>Action</th>
-                                                </tr>
-                                            </thead>
-                                        </table>
-                                    </div>
+                            {{-- Unified Filter Form --}}
+                            <form id="ordersFilterForm" class="row g-3 mb-4 p-3 bg-light border-radius-lg align-items-end">
+                                <div class="col-md-9">
+                                    <label for="provider_id" class="form-label text-dark font-weight-bold text-xs">Filter by Service Provider</label>
+                                    <select name="provider_id" id="provider_id" class="form-select select2">
+                                        <option value="">-- All Service Providers --</option>
+                                        @foreach ($providers as $provider)
+                                            <option value="{{ $provider->id }}" {{ request('provider_id') == $provider->id ? 'selected' : '' }}>
+                                                {{ $provider->name }} ({{ $provider->phone ?? 'ID #' . $provider->id }})
+                                            </option>
+                                        @endforeach
+                                    </select>
                                 </div>
-
-                                {{-- Provider Orders Tab --}}
-                                <div class="tab-pane fade {{ request('provider_id') ? 'show active' : '' }}"
-                                    id="providerOrders" role="tabpanel">
-                                    <form method="GET" action="{{ route('orders.index') }}" class="row g-3 mb-3 mt-3">
-                                        <div class="col-md-6">
-                                            {{-- <label for="provider_id" class="form-label">Select Provider</label> --}}
-                                            <select name="provider_id" id="provider_id" class="form-select select2">
-                                                <option value="">-- Select Provider --</option>
-                                                @foreach ($providers as $provider)
-                                                    <option value="{{ $provider->id }}"
-                                                        {{ request('provider_id') == $provider->id ? 'selected' : '' }}>
-                                                        {{ $provider->name }}
-                                                    </option>
-                                                @endforeach
-                                            </select>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <button type="submit" class="btn  w-100" style="background-color: #2BBDCE; color: white;">Search</button>
-                                            @if (request('provider_id'))
-                                                <a href="{{ route('orders.index') }}"
-                                                    class="btn btn-secondary ms-2">Clear</a>
-                                            @endif
-                                        </div>
-                                    </form>
-
-                                    <div class="table-responsive">
-                                        <table class="table table-bordered table-striped text-sm w-100"
-                                            id="providerOrdersTable">
-                                            <thead>
-                                                <tr>
-                                                    <th>S.No</th>
-                                                    <th>User</th>
-                                                    <th>Provider</th>
-                                                    <th>Order Date</th>
-                                                    <th>Order Source </th>
-                                                    <th>Price</th>
-                                                    <th>Status</th>
-                                                    <th>Action</th>
-                                                </tr>
-                                            </thead>
-                                        </table>
-                                    </div>
+                                <div class="col-md-3 d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary w-100 mb-0" style="background-color: #4F2396; border-color: #4F2396;">
+                                        <i class="bi bi-funnel me-1"></i> Filter
+                                    </button>
+                                    <button type="button" id="resetOrdersFilter" class="btn btn-outline-secondary mb-0">
+                                        Clear
+                                    </button>
                                 </div>
+                            </form>
+
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-striped text-sm w-100 align-middle" id="ordersTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width: 6%">S.No</th>
+                                            <th>Customer</th>
+                                            <th>Provider</th>
+                                            <th>Order Date</th>
+                                            <th>Order Source</th>
+                                            <th>Price</th>
+                                            <th>Status</th>
+                                            <th style="width: 15%" class="text-center">Action</th>
+                                        </tr>
+                                    </thead>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -140,135 +75,44 @@
 @push('scripts')
     <script>
         $(document).ready(function() {
-            // Initialize empty DataTables
-            const userOrdersTable = $('#userOrdersTable').DataTable({
+            const ordersTable = $('#ordersTable').DataTable({
                 processing: true,
                 serverSide: true,
                 ajax: {
                     url: "{{ route('orders.index') }}",
                     data: function(d) {
-                        d.user_orders = true;
-                        d.user_id = $('#user_id').val();
-                    }
-                },
-                columns: [{
-                        data: 'DT_RowIndex',
-                        name: 'DT_RowIndex',
-                        orderable: false,
-                        searchable: false
-                    },
-                    {
-                        data: 'user',
-                        name: 'user'
-                    },
-                    {
-                        data: 'provider',
-                        name: 'provider'
-                    },
-                    {
-                        data: 'created_at',
-                        name: 'created_at'
-                    },
-                    {
-                        data: 'source',
-                        name: 'source'
-                    },
-                    {
-                        data: 'price',
-                        name: 'price'
-                    },
-                    {
-                        data: 'status',
-                        name: 'status'
-                    },
-                    {
-                        data: 'action',
-                        name: 'action',
-                        orderable: false,
-                        searchable: false
-                    }
-                ],
-                language: {
-                    emptyTable: "No orders found. Please apply filters to see results.",
-                    zeroRecords: "No matching orders found",
-                    processing: '<i class="fa fa-spinner fa-spin fa-3x fa-fw"></i>'
-                }
-            });
-
-            const providerOrdersTable = $('#providerOrdersTable').DataTable({
-                processing: true,
-                serverSide: true,
-                ajax: {
-                    url: "{{ route('orders.index') }}",
-                    data: function(d) {
-                        d.provider_orders = true;
                         d.provider_id = $('#provider_id').val();
                     }
                 },
-                columns: [{
-                        data: 'DT_RowIndex',
-                        name: 'DT_RowIndex',
-                        orderable: false,
-                        searchable: false
-                    },
-                    {
-                        data: 'user',
-                        name: 'user'
-                    },
-                    {
-                        data: 'provider',
-                        name: 'provider'
-                    },
-                    {
-                        data: 'created_at',
-                        name: 'created_at'
-                    },
-                    {
-                        data: 'source',
-                        name: 'source'
-                    },
-                    {
-                        data: 'price',
-                        name: 'price'
-                    },
-                    {
-                        data: 'status',
-                        name: 'status'
-                    },
-                    {
-                        data: 'action',
-                        name: 'action',
-                        orderable: false,
-                        searchable: false
-                    }
+                columns: [
+                    { data: 'DT_RowIndex', name: 'DT_RowIndex', orderable: false, searchable: false },
+                    { data: 'user', name: 'user' },
+                    { data: 'provider', name: 'provider' },
+                    { data: 'created_at', name: 'created_at' },
+                    { data: 'source', name: 'source' },
+                    { data: 'price', name: 'price' },
+                    { data: 'status', name: 'status' },
+                    { data: 'action', name: 'action', orderable: false, searchable: false }
                 ],
                 language: {
-                    emptyTable: "No orders found. Please apply filters to see results.",
+                    emptyTable: "No orders found.",
                     zeroRecords: "No matching orders found",
-                    processing: '<i class="fa fa-spinner fa-spin fa-3x fa-fw"></i>'
+                    processing: '<i class="fa fa-spinner fa-spin fa-2x fa-fw"></i>'
                 }
             });
 
-            // Handle form submissions
-            $('form').on('submit', function(e) {
+            $('#ordersFilterForm').on('submit', function(e) {
                 e.preventDefault();
-
-                if ($(this).closest('.tab-pane').attr('id') === 'userOrders') {
-                    userOrdersTable.ajax.reload();
-                } else {
-                    providerOrdersTable.ajax.reload();
-                }
+                ordersTable.ajax.reload();
             });
 
-            // Clear filters
-            $('.btn-secondary').on('click', function() {
-                $(this).closest('form').find('select').val('').trigger('change');
-                if ($(this).closest('.tab-pane').attr('id') === 'userOrders') {
-                    userOrdersTable.ajax.reload();
-                } else {
-                    providerOrdersTable.ajax.reload();
-                }
-                return false;
+            $('#provider_id').on('change', function() {
+                ordersTable.ajax.reload();
+            });
+
+            $('#resetOrdersFilter').on('click', function() {
+                $('#provider_id').val('').trigger('change.select2');
+                ordersTable.ajax.reload();
             });
         });
     </script>

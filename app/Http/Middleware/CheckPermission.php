@@ -19,8 +19,10 @@ class CheckPermission
     {
         $user = Auth::guard('admin')->user();
         if ($user) {
-            $userRole = $user->role;
-            $rolePermissions = RolePermissions::where('role_id', Auth::guard('admin')->user()->role)
+            if ($user->is_company) {
+                return $next($request);
+            }
+            $rolePermissions = RolePermissions::where('role_id', $user->role)
                 ->pluck('permission_id')
                 ->toArray();
             if (in_array($permissionId, $rolePermissions)) {

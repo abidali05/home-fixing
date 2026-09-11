@@ -74,6 +74,21 @@
                         </div>
                     </div>
 
+                    {{-- Video --}}
+                    @if ($jobRequest->video)
+                        <div class="card shadow-sm mb-4">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0 fw-bold">Video Attachment</h6>
+                            </div>
+                            <div class="card-body">
+                                <video controls class="img-thumbnail border" style="max-width: 100%; max-height: 300px;">
+                                    <source src="{{ $jobRequest->video }}" type="video/mp4">
+                                    Your browser does not support the video tag.
+                                </video>
+                            </div>
+                        </div>
+                    @endif
+
                     {{-- Accepted Bid --}}
                     @if ($bid)
                         <div class="card shadow-sm mb-4">

@@ -194,13 +194,31 @@ class GeneralContoller extends Controller
                     return $marketplace;
                 });
 
+            $capturedJobIds = Payment::where('user_id', $user->id)
+                ->whereIn('status', ['captured', 'paid'])
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
             $active_orders = Orders::with(['job.category', 'provider'])
                 ->where('user_id', $user->id)
-                ->whereIn('status', ['open','pending','on_the_way', 'arrived', 'working','provider_completed'])
+                ->where(function ($q) use ($capturedJobIds) {
+                    $q->whereIn('status', ['open', 'pending', 'on_the_way', 'arrived', 'working', 'provider_completed'])
+                      ->orWhere(function ($sub) use ($capturedJobIds) {
+                          $sub->where('status', 'completed')
+                              ->where(function ($p) {
+                                  $p->where('paid_to_system', '!=', 1)
+                                    ->orWhereNull('paid_to_system');
+                              });
+                          if (!empty($capturedJobIds)) {
+                              $sub->whereNotIn('job_id', $capturedJobIds);
+                          }
+                      });
+                })
                 ->latest()
                 ->limit(4)
                 ->get()
-                ->map(function ($order) {
+                ->map(function ($order) use ($capturedJobIds) {
                     $extraAmount = (float) ($order->extra_amount ?? 0);
                     $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
                     $orderPrice = (float) ($order->price ?? 0);
@@ -210,9 +228,18 @@ class GeneralContoller extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
-                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
                     $order->payment_status = $isPaid ? 'paid' : 'pending';
                     $order->is_paid = $isPaid;
+
+                    if ($order->job_id) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
+                            ->whereIn('status', ['accepted', 'completed', 'hired'])
+                            ->first();
+                        $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
+                        $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+                    }
 
                     if ($order->provider && $order->provider->profile_image && !str_starts_with($order->provider->profile_image, 'http')) {
                         $order->provider->profile_image = asset('uploads/profile_images/' . $order->provider->profile_image);
@@ -897,13 +924,32 @@ class GeneralContoller extends Controller
                 }
             }
 
+            $providerId = auth()->id();
+            $capturedJobIds = Payment::where('provider_id', $providerId)
+                ->whereIn('status', ['captured', 'paid'])
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
             $orders = Orders::with(['job.category', 'user'])
-                ->where('provider_id', auth()->id())
-                ->whereNotIn('status', ['open', 'completed','cancelled'])
+                ->where('provider_id', $providerId)
+                ->where(function ($q) use ($capturedJobIds) {
+                    $q->whereNotIn('status', ['open', 'completed', 'cancelled'])
+                      ->orWhere(function ($sub) use ($capturedJobIds) {
+                          $sub->where('status', 'completed')
+                              ->where(function ($p) {
+                                  $p->where('paid_to_system', '!=', 1)
+                                    ->orWhereNull('paid_to_system');
+                              });
+                          if (!empty($capturedJobIds)) {
+                              $sub->whereNotIn('job_id', $capturedJobIds);
+                          }
+                      });
+                })
                 ->latest()
                 ->limit(4)
                 ->get()
-                ->map(function ($order) {
+                ->map(function ($order) use ($capturedJobIds) {
                     $extraAmount = (float) ($order->extra_amount ?? 0);
                     $applicableExtra = ($order->extra_amount_status !== 'rejected') ? $extraAmount : 0.00;
                     $orderPrice = (float) ($order->price ?? 0);
@@ -913,9 +959,18 @@ class GeneralContoller extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
-                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
                     $order->payment_status = $isPaid ? 'paid' : 'pending';
                     $order->is_paid = $isPaid;
+
+                    if ($order->job_id) {
+                        $acceptedBid = BidModel::where('job_id', $order->job_id)
+                            ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
+                            ->whereIn('status', ['accepted', 'completed', 'hired'])
+                            ->first();
+                        $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
+                        $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+                    }
 
                     if ($order->job) {
                         foreach ($order->job->images ?? [] as $image) {

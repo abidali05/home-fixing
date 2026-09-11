@@ -925,109 +925,149 @@ class GeneralContoller extends Controller
             }
 
             $providerId = auth()->id();
-            $capturedJobIds = Payment::where('provider_id', $providerId)
-                ->whereIn('status', ['captured', 'paid'])
+            $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
+                ->where(function ($q) use ($providerId) {
+                    $q->where('provider_id', $providerId)
+                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                      })
+                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                      });
+                })
                 ->pluck('job_id')
                 ->filter()
                 ->toArray();
 
+            $paidOrderJobIds = Orders::where('provider_id', $providerId)
+                ->where('paid_to_system', 1)
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $allPaidJobIds = array_values(array_unique(array_merge($capturedJobIds, $paidOrderJobIds)));
+
+            $formatHomeOrder = function ($order) use ($allPaidJobIds) {
+                $financials = $order->calculateAndSyncFinancials(true);
+                $repairPrice = $financials['repair_price'];
+                $extraAmount = $financials['extra_amount'];
+                $applicableExtra = $financials['accepted_extra'];
+                $finalBase = $financials['final_base_price'];
+                $customerAppFee = $financials['customer_app_fee'];
+                $azhlFee = $financials['azhl_fee'];
+                $totalGatewayFee = $financials['gateway_fee'];
+                $netAmount = $financials['net_amount'];
+                $subtotal = $financials['customer_total'];
+
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                    || in_array($order->job_id, $allPaidJobIds)
+                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                    $order->paid_to_system = 1;
+                    $order->saveQuietly();
+                }
+
+                $order->price = number_format($repairPrice, 2, '.', '');
+                $order->bid_price = number_format($repairPrice, 2, '.', '');
+                $order->repair_price = number_format($repairPrice, 2, '.', '');
+                $order->base_price = number_format($repairPrice, 2, '.', '');
+                $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                $order->extra_amount_reason = $order->extra_amount_reason;
+                $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
+                $order->final_base_price = number_format($finalBase, 2, '.', '');
+                $order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                $order->total_amount = number_format($subtotal, 2, '.', '');
+                $order->azhl_fee = number_format($azhlFee, 2, '.', '');
+                $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
+                $order->net_amount = number_format($netAmount, 2, '.', '');
+                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->is_paid = $isPaid;
+
+                $order->payment_breakdown = [
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'base_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'is_paid' => $isPaid,
+                    'azhl_commission' => number_format($azhlFee, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlFee, 2, '.', ''),
+                    'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
+                    'net_amount' => number_format($netAmount, 2, '.', ''),
+                ];
+
+                if ($order->job_id) {
+                    $acceptedBid = BidModel::where('job_id', $order->job_id)
+                        ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
+                        ->whereIn('status', ['accepted', 'completed', 'hired'])
+                        ->first();
+                    $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
+                    $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+                }
+
+                if ($order->job) {
+                    foreach ($order->job->images ?? [] as $image) {
+                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                    }
+                    $category = $order->job->category ?? null;
+                    if ($category && $category->path && !str_starts_with($category->path, 'http')) {
+                        $category->path = asset('uploads/service_category/' . $category->path);
+                    }
+                }
+
+                if ($order->user && $order->user->profile_image && !str_starts_with($order->user->profile_image, 'http')) {
+                    $order->user->profile_image = asset('uploads/profile_images/' . $order->user->profile_image);
+                }
+
+                return $order;
+            };
+
             $orders = Orders::with(['job.category', 'user'])
                 ->where('provider_id', $providerId)
-                ->where(function ($q) use ($capturedJobIds) {
+                ->where(function ($q) use ($allPaidJobIds) {
                     $q->whereNotIn('status', ['open', 'completed', 'cancelled'])
-                      ->orWhere(function ($sub) use ($capturedJobIds) {
+                      ->orWhere(function ($sub) use ($allPaidJobIds) {
                           $sub->where('status', 'completed')
                               ->where(function ($p) {
                                   $p->where('paid_to_system', '!=', 1)
                                     ->orWhereNull('paid_to_system');
                               });
-                          if (!empty($capturedJobIds)) {
-                              $sub->whereNotIn('job_id', $capturedJobIds);
+                          if (!empty($allPaidJobIds)) {
+                              $sub->whereNotIn('job_id', $allPaidJobIds);
                           }
                       });
                 })
                 ->latest()
                 ->limit(4)
                 ->get()
-                ->map(function ($order) use ($capturedJobIds) {
-                    $financials = $order->calculateAndSyncFinancials(true);
-                    $repairPrice = $financials['repair_price'];
-                    $extraAmount = $financials['extra_amount'];
-                    $applicableExtra = $financials['accepted_extra'];
-                    $finalBase = $financials['final_base_price'];
-                    $customerAppFee = $financials['customer_app_fee'];
-                    $azhlFee = $financials['azhl_fee'];
-                    $totalGatewayFee = $financials['gateway_fee'];
-                    $netAmount = $financials['net_amount'];
-                    $subtotal = $financials['customer_total'];
+                ->map($formatHomeOrder);
 
-                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
-
-                    $order->price = number_format($repairPrice, 2, '.', '');
-                    $order->bid_price = number_format($repairPrice, 2, '.', '');
-                    $order->repair_price = number_format($repairPrice, 2, '.', '');
-                    $order->base_price = number_format($repairPrice, 2, '.', '');
-                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
-                    $order->extra_amount_reason = $order->extra_amount_reason;
-                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
-                    $order->accepted_extra = number_format($applicableExtra, 2, '.', '');
-                    $order->final_base_price = number_format($finalBase, 2, '.', '');
-                    $order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
-                    $order->total_amount = number_format($subtotal, 2, '.', '');
-                    $order->azhl_fee = number_format($azhlFee, 2, '.', '');
-                    $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
-                    $order->net_amount = number_format($netAmount, 2, '.', '');
-                    $order->payment_status = $isPaid ? 'paid' : 'pending';
-                    $order->is_paid = $isPaid;
-
-                    $order->payment_breakdown = [
-                        'bid_price' => number_format($repairPrice, 2, '.', ''),
-                        'repair_price' => number_format($repairPrice, 2, '.', ''),
-                        'base_price' => number_format($repairPrice, 2, '.', ''),
-                        'extra_amount' => number_format($extraAmount, 2, '.', ''),
-                        'extra_amount_reason' => $order->extra_amount_reason,
-                        'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
-                        'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
-                        'final_base_price' => number_format($finalBase, 2, '.', ''),
-                        'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                        'payment_status' => $isPaid ? 'paid' : 'pending',
-                        'is_paid' => $isPaid,
-                        'azhl_commission' => number_format($azhlFee, 2, '.', ''),
-                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
-                        'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
-                        'net_amount' => number_format($netAmount, 2, '.', ''),
-                    ];
-
-                    if ($order->job_id) {
-                        $acceptedBid = BidModel::where('job_id', $order->job_id)
-                            ->when($order->provider_id, fn($q) => $q->where('provider_id', $order->provider_id))
-                            ->whereIn('status', ['accepted', 'completed', 'hired'])
-                            ->first();
-                        $order->bid_id = $acceptedBid ? (int) $acceptedBid->id : null;
-                        $order->source = $order->source ?: ($order->bid_id ? 'bid' : 'direct');
+            $completedOrders = Orders::with(['job.category', 'user'])
+                ->where('provider_id', $providerId)
+                ->where('status', 'completed')
+                ->where(function ($q) use ($allPaidJobIds) {
+                    $q->where('paid_to_system', 1);
+                    if (!empty($allPaidJobIds)) {
+                        $q->orWhereIn('job_id', $allPaidJobIds);
                     }
-
-                    if ($order->job) {
-                        foreach ($order->job->images ?? [] as $image) {
-                            $image->path = asset('uploads/job_gallery/' . $image->path);
-                        }
-                        $category = $order->job->category ?? null;
-                        if ($category && $category->path && !str_starts_with($category->path, 'http')) {
-                            $category->path = asset('uploads/service_category/' . $category->path);
-                        }
-                    }
-
-                    if ($order->user && $order->user->profile_image && !str_starts_with($order->user->profile_image, 'http')) {
-                        $order->user->profile_image = asset('uploads/profile_images/' . $order->user->profile_image);
-                    }
-
-                    return $order;
-                });
+                })
+                ->latest()
+                ->limit(4)
+                ->get()
+                ->map($formatHomeOrder);
 
             return $this->success([
-                'post_requests' => $post_requests,
-                'direct_hires'  => $direct_hires,
-                'orders'        => $orders,
+                'post_requests'    => $post_requests,
+                'direct_hires'     => $direct_hires,
+                'orders'           => $orders,
+                'completed_orders' => $completedOrders,
             ], 'Home page fetched successfully');
         } catch (\Exception $e) {
             return $this->error('An error occurred while fetching home page', 500, [
@@ -1263,6 +1303,29 @@ class GeneralContoller extends Controller
                 return $this->error('Unauthorized.', 401);
             }
 
+            $providerId = $user->id;
+            $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
+                ->where(function ($q) use ($providerId) {
+                    $q->where('provider_id', $providerId)
+                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                      })
+                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                      });
+                })
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $paidOrderJobIds = Orders::where('provider_id', $providerId)
+                ->where('paid_to_system', 1)
+                ->pluck('job_id')
+                ->filter()
+                ->toArray();
+
+            $allPaidJobIds = array_values(array_unique(array_merge($capturedJobIds, $paidOrderJobIds)));
+
             $settings = SystemSettingModel::first();
             $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
             $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
@@ -1270,7 +1333,7 @@ class GeneralContoller extends Controller
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $formatOrder = function ($order) use ($settings, $azhlFixedFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
+            $formatOrder = function ($order) use ($allPaidJobIds, $settings, $azhlFixedFee, $customerAppFee, $gatewayFeePct, $gatewayFixedFee, $gatewayVatPct) {
                 $category = $order->job->category ?? null;
                 if ($category) {
                     $category->path = $category->path
@@ -1289,6 +1352,15 @@ class GeneralContoller extends Controller
                 $netAmount = $financials['net_amount'];
                 $subtotal = $financials['customer_total'];
 
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                    || in_array($order->job_id, $allPaidJobIds)
+                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                    $order->paid_to_system = 1;
+                    $order->saveQuietly();
+                }
+
                 $order->price = number_format($repairPrice, 2, '.', '');
                 $order->bid_price = number_format($repairPrice, 2, '.', '');
                 $order->repair_price = number_format($repairPrice, 2, '.', '');
@@ -1302,7 +1374,6 @@ class GeneralContoller extends Controller
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
                 $order->payment_status = $isPaid ? 'paid' : 'pending';
                 $order->is_paid = $isPaid;
                 $order->payment_breakdown = [
@@ -1336,19 +1407,27 @@ class GeneralContoller extends Controller
                     ->orderBy('id', 'DESC');
 
                 if ($statusFilter === 'ongoing') {
-                    $query->where(function ($q) {
+                    $query->where(function ($q) use ($allPaidJobIds) {
                         $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
-                          ->orWhere(function ($sub) {
+                          ->orWhere(function ($sub) use ($allPaidJobIds) {
                               $sub->where('status', 'completed')
                                   ->where(function ($p) {
                                       $p->where('paid_to_system', '!=', 1)
                                         ->orWhereNull('paid_to_system');
                                   });
+                              if (!empty($allPaidJobIds)) {
+                                  $sub->whereNotIn('job_id', $allPaidJobIds);
+                              }
                           });
                     });
                 } elseif ($statusFilter === 'completed') {
                     $query->where('status', 'completed')
-                          ->where('paid_to_system', 1);
+                          ->where(function ($q) use ($allPaidJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($allPaidJobIds)) {
+                                  $q->orWhereIn('job_id', $allPaidJobIds);
+                              }
+                          });
                 } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
                     $query->whereIn('status', ['pending', 'open', 'accepted']);
                 } elseif ($statusFilter === 'cancelled') {
@@ -1391,19 +1470,27 @@ class GeneralContoller extends Controller
                     ->where('provider_id', $user->id);
 
                 if ($key === 'ongoing_orders') {
-                    $query->where(function ($q) {
+                    $query->where(function ($q) use ($allPaidJobIds) {
                         $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
-                          ->orWhere(function ($sub) {
+                          ->orWhere(function ($sub) use ($allPaidJobIds) {
                               $sub->where('status', 'completed')
                                   ->where(function ($p) {
                                       $p->where('paid_to_system', '!=', 1)
                                         ->orWhereNull('paid_to_system');
                                   });
+                              if (!empty($allPaidJobIds)) {
+                                  $sub->whereNotIn('job_id', $allPaidJobIds);
+                              }
                           });
                     });
                 } elseif ($key === 'completed_orders') {
                     $query->where('status', 'completed')
-                          ->where('paid_to_system', 1);
+                          ->where(function ($q) use ($allPaidJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($allPaidJobIds)) {
+                                  $q->orWhereIn('job_id', $allPaidJobIds);
+                              }
+                          });
                 } else {
                     $query->whereIn('status', (array) $statusList);
                 }

@@ -291,21 +291,8 @@ class ProviderBankAccountController extends Controller
             })
             ->sum('amount');
 
-        // 2. Total Earnings: Sum of net provider credits from completed orders (gross - percentage azhl commission)
-        $completedPayments = \App\Models\Payment::where('provider_id', $user->id)
-            ->where('status', 'captured')
-            ->whereHas('job', function ($q) {
-                $q->whereIn('status', ['completed', 'accepted', 'finished']);
-            })
-            ->get();
-
-        $totalEarnings = 0.0;
-        foreach ($completedPayments as $payment) {
-            $gross = (float) $payment->amount;
-            $fee = $gross * ($azhlPercentage / 100);
-            $net = max(0, $gross - $fee);
-            $totalEarnings += $net;
-        }
+        // 2. Total Earnings: Net provider credits from completed orders + referral rewards
+        $totalEarnings = (float) $user->total_earnings;
 
         // 3. Total Withdrawn: Sum of withdrawals where status = completed only
         $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)

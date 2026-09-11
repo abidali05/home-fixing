@@ -1476,7 +1476,7 @@ class GeneralContoller extends Controller
     public function track_order($id)
     {
         try {
-            $tracking = OrderTracking::with('order.user', 'order.provider', 'order.job')
+            $tracking = OrderTracking::with(['order.user', 'order.provider', 'order.job.category', 'order.job.images'])
                 ->where('order_id', $id)
                 ->get();
 
@@ -1488,14 +1488,27 @@ class GeneralContoller extends Controller
 
             if ($order && $order->user) {
                 $order->user->profile_image = $order->user->profile_image
-                    ? asset('uploads/profile_images/' . $order->user->profile_image)
+                    ? (str_starts_with($order->user->profile_image, 'http') ? $order->user->profile_image : asset('uploads/profile_images/' . $order->user->profile_image))
                     : asset('assets/img/default.jpg');
             }
 
             if ($order && $order->provider) {
                 $order->provider->profile_image = $order->provider->profile_image
-                    ? asset('uploads/profile_images/' . $order->provider->profile_image)
+                    ? (str_starts_with($order->provider->profile_image, 'http') ? $order->provider->profile_image : asset('uploads/profile_images/' . $order->provider->profile_image))
                     : asset('assets/img/default.jpg');
+            }
+
+            if ($order && $order->job) {
+                if ($order->job->images) {
+                    foreach ($order->job->images as $image) {
+                        if ($image->path && !str_starts_with($image->path, 'http')) {
+                            $image->path = asset('uploads/job_gallery/' . $image->path);
+                        }
+                    }
+                }
+                if ($order->job->category && $order->job->category->path && !str_starts_with($order->job->category->path, 'http')) {
+                    $order->job->category->path = asset('uploads/service_category/' . $order->job->category->path);
+                }
             }
 
             $settings = SystemSettingModel::first();
@@ -1605,6 +1618,19 @@ class GeneralContoller extends Controller
                         $track->order->paid_to_system = $isPaid ? 1 : 0;
                         $track->order->is_paid = $isPaid;
                         $track->order->payment_breakdown = $paymentBreakdown;
+
+                        if ($track->order->job) {
+                            if ($track->order->job->images) {
+                                foreach ($track->order->job->images as $image) {
+                                    if ($image->path && !str_starts_with($image->path, 'http')) {
+                                        $image->path = asset('uploads/job_gallery/' . $image->path);
+                                    }
+                                }
+                            }
+                            if ($track->order->job->category && $track->order->job->category->path && !str_starts_with($track->order->job->category->path, 'http')) {
+                                $track->order->job->category->path = asset('uploads/service_category/' . $track->order->job->category->path);
+                            }
+                        }
                     }
                 }
             }

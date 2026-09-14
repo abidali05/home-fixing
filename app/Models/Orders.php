@@ -129,4 +129,9 @@ class Orders extends Model
     {
         return $this->belongsTo(JobRequestModel::class, 'job_id');
     }
+
+    public function tracking()
+    {
+        return $this->hasMany(OrderTracking::class, 'order_id');
+    }
 }

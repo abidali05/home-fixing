@@ -9,6 +9,7 @@ use App\Models\BidModel;
 use App\Models\JobRequestImages;
 use App\Models\JobRequestModel;
 use App\Models\Orders;
+use App\Models\OrderTracking;
 use App\Models\User;
 use App\Notifications\BidAcceptedNotification;
 use App\Notifications\BidRejectedNotification;
@@ -432,14 +433,35 @@ class HiringController extends Controller
             $order = Orders::where('job_id', $job->id)->first();
 
             if (!$order) {
-                DB::rollBack();
-                return $this->error('Order not found for this job.', 404);
+                $order = new Orders();
+                $order->user_id = $job->user_id ?? $customer->id;
+                $order->job_id = $job->id;
+                $order->source = 'bid';
+                $order->address = $job->address ?? '';
+                $order->details = $job->description ?? '';
+                $order->paid_to_system = 0;
             }
 
             $order->provider_id = $bid->provider_id;
             $order->price = $bid->price;
             $order->status = 'pending'; // or whatever status you want after bid acceptance
+            $order->calculateAndSyncFinancials(false);
             $order->save();
+
+            // Create or update initial tracking entity with 'pending' status
+            $tracking = OrderTracking::where('order_id', $order->id)
+                ->where('status', 'pending')
+                ->first();
+
+            if (!$tracking) {
+                $tracking = new OrderTracking();
+                $tracking->order_id = $order->id;
+                $tracking->status = 'pending';
+            }
+
+            $tracking->latitude = $request->latitude ?? $order->latitude ?? $job->latitude ?? null;
+            $tracking->longitude = $request->longitude ?? $order->longitude ?? $job->longitude ?? null;
+            $tracking->save();
 
             DB::commit();
 

@@ -60,14 +60,9 @@ class MarketplacePaymentController extends Controller
             }
 
             $settings = \App\Models\Admin\SystemSettingModel::first();
-            $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
-            $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
-            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
-            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+            $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 
             $productsSubtotal = 0.0;
-            $totalProductVat = 0.0;
 
             foreach ($cartItems as $ci) {
                 $price = 0.0;
@@ -76,24 +71,22 @@ class MarketplacePaymentController extends Controller
                 }
                 $qty = (int) ($ci->quantity ?? 1);
                 $sub = $price * $qty;
-                $vat = $sub * ($marketplaceVatPct / 100);
                 $productsSubtotal += $sub;
-                $totalProductVat += $vat;
             }
 
-            $productsTotalWithVat = $productsSubtotal + $totalProductVat;
             $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
-            $appFeeToApply = 0.0;
+            $customerAppFee = $cartItems->isNotEmpty() && $productsSubtotal > 0 ? $marketplaceCustomerAppFee : 0.0;
 
-            // Customer pays products_total_with_vat (plus shipping if any), without gateway fee/taxes
-            $totalAmount = max(0.1, round($productsTotalWithVat + $shippingCost, 2));
+            // Customer pays products_subtotal + customer_app_fee (plus shipping if any), without percentage VAT
+            $totalAmount = max(0.1, round($productsSubtotal + $shippingCost + $customerAppFee, 2));
 
             $breakdown = [
                 'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
-                'marketplace_vat_percentage' => number_format($marketplaceVatPct, 2, '.', ''),
-                'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
-                'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
-                'customer_app_fee' => '0.00',
+                'marketplace_vat_percentage' => '0.00',
+                'total_product_vat' => '0.00',
+                'products_total_with_vat' => number_format($productsSubtotal, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'marketplace_customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                 'subtotal' => number_format($productsSubtotal, 2, '.', ''),
                 'shipping_cost' => number_format($shippingCost, 2, '.', ''),
                 'total_payable_by_customer' => number_format($totalAmount, 2, '.', ''),
@@ -106,7 +99,9 @@ class MarketplacePaymentController extends Controller
             $checkoutMetadata = array_merge([
                 'shipping_address' => $request->input('shipping_address') ?: $user->address,
                 'shipping_cost' => $shippingCost,
-                'tax_amount' => $totalProductVat,
+                'tax_amount' => 0.00,
+                'customer_app_fee' => $customerAppFee,
+                'marketplace_customer_app_fee' => $customerAppFee,
                 'subtotal' => $productsSubtotal,
                 'notes' => $request->input('notes'),
                 'cart_items_count' => $cartItems->count(),

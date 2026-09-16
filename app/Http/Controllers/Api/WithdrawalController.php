@@ -74,29 +74,29 @@ class WithdrawalController extends Controller
     private function calculateMarketplaceFinancials($productSubtotal): array
     {
         $settings = SystemSettingModel::first();
-        $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
+        $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 
-        $vatAmount = round($productSubtotal * ($marketplaceVatPct / 100), 2);
-        $totalWithVat = round($productSubtotal + $vatAmount, 2);
+        $vatAmount = 0.00;
+        $totalWithVat = (float) $productSubtotal;
 
-        // In marketplace, 15% VAT is taken by Azhl.
-        // The seller gets the full product subtotal (e.g. 160 SAR) without provider commission deductions.
+        // In marketplace, seller gets the full product subtotal without provider commission deductions.
         $azhlFee = 0.0;
         $netAmount = (float) $productSubtotal;
 
         return [
             'products_subtotal' => $productSubtotal,
             'subtotal' => $productSubtotal,
-            'marketplace_vat_percentage' => $marketplaceVatPct,
-            'total_product_vat' => $vatAmount,
-            'vat_amount' => $vatAmount,
-            'tax_amount' => $vatAmount,
+            'marketplace_vat_percentage' => 0.00,
+            'total_product_vat' => 0.00,
+            'vat_amount' => 0.00,
+            'tax_amount' => 0.00,
             'products_total_with_vat' => $totalWithVat,
             'customer_paid_with_tax' => $totalWithVat,
             'gross_amount' => $productSubtotal,
             'customer_total' => $productSubtotal,
             'total_amount' => $productSubtotal,
-            'customer_app_fee' => 0.0,
+            'customer_app_fee' => $marketplaceCustomerAppFee,
+            'marketplace_customer_app_fee' => $marketplaceCustomerAppFee,
             'gateway_fee' => 0.0,
             'azhl_percentage' => 0.0,
             'azhl_fee' => $azhlFee,

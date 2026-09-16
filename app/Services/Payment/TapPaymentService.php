@@ -326,10 +326,14 @@ class TapPaymentService
         }
 
         return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+
             $subtotal = (float) ($meta['subtotal'] ?? ($cartItems->isNotEmpty() ? $cartItems->sum('total_price') : $payment->amount));
             $shippingCost = (float) ($meta['shipping_cost'] ?? 0);
-            $taxAmount = (float) ($meta['tax_amount'] ?? 0);
-            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $taxAmount));
+            $customerAppFee = (float) ($meta['customer_app_fee'] ?? $meta['marketplace_customer_app_fee'] ?? $defaultAppFee);
+            $taxAmount = 0.00;
+            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $customerAppFee));
 
             $order = MarketplaceOrder::create([
                 'user_id' => $user->id,
@@ -338,6 +342,7 @@ class TapPaymentService
                 'subtotal' => $subtotal,
                 'shipping_cost' => $shippingCost,
                 'tax_amount' => $taxAmount,
+                'customer_app_fee' => $customerAppFee,
                 'discount_price' => 0,
                 'total_amount' => $totalAmount,
                 'payment_method' => 'tap',

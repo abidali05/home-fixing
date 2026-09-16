@@ -361,6 +361,8 @@ class OrdersController extends Controller
                 'subtotal' => round((float) ($order->subtotal ?? 0), 2),
                 'shipping_cost' => round((float) ($order->shipping_cost ?? 0), 2),
                 'tax_amount' => round((float) ($order->tax_amount ?? 0), 2),
+                'customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
+                'marketplace_customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
                 'discount_price' => round((float) ($order->discount_price ?? 0), 2),
                 'total_amount' => round((float) ($order->total_amount ?? 0), 2),
                 'currency' => 'SAR',

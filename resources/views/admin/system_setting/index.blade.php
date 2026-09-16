@@ -177,30 +177,30 @@
                             </div>
                         </div>
 
-                        {{-- 2. Marketplace Product VAT Settings --}}
+                        {{-- 2. Marketplace Customer App Fee Settings --}}
                         <div class="card settings-card mb-4 border-start border-4 border-success">
                             <div class="settings-card-header d-flex justify-content-between align-items-center">
                                 <h6 class="settings-card-title">
                                     <span class="settings-icon-wrapper icon-marketplace"><i class="bi bi-cart-check-fill"></i></span>
-                                    Marketplace Product VAT & Tax Configuration
+                                    Marketplace Customer App Fee Configuration
                                 </h6>
-                                <span class="badge-vat"><i class="bi bi-shield-check me-1"></i>15% Product VAT</span>
+                                <span class="badge-vat" style="background: rgba(16, 185, 129, 0.12); color: #059669;"><i class="bi bi-shield-check me-1"></i>Fixed App Fee</span>
                             </div>
                             <div class="card-body p-4">
                                 <div class="row g-3">
                                     <div class="col-md-12">
-                                        <label for="marketplace_vat_percentage" class="form-label">Marketplace Product VAT Tax (%)</label>
+                                        <label for="marketplace_customer_app_fee" class="form-label">Marketplace Customer App Fee (SAR)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" max="100" class="form-control form-control-lg fw-bold text-success @error('marketplace_vat_percentage') is-invalid @enderror"
-                                                name="marketplace_vat_percentage" id="marketplace_vat_percentage"
-                                                value="{{ old('marketplace_vat_percentage', $settings->marketplace_vat_percentage ?? 15.00) }}" placeholder="15.00" required>
-                                            <span class="input-group-text font-weight-bold bg-success-soft text-success">%</span>
+                                            <input type="number" step="0.01" min="0" class="form-control form-control-lg fw-bold text-success @error('marketplace_customer_app_fee') is-invalid @enderror"
+                                                name="marketplace_customer_app_fee" id="marketplace_customer_app_fee"
+                                                value="{{ old('marketplace_customer_app_fee', $settings->marketplace_customer_app_fee ?? 3.00) }}" placeholder="3.00" required>
+                                            <span class="input-group-text font-weight-bold bg-success-soft text-success">SAR</span>
                                         </div>
                                         <div class="helper-text mt-2">
                                             <i class="bi bi-info-circle me-1 text-success"></i>
-                                            <strong>Product VAT Rule:</strong> This 15% VAT tax applies to Marketplace product prices multiplied by quantity (e.g. 1 unit of 100 SAR product = 15 SAR VAT, 2 units of 100 SAR = 30 SAR VAT).
+                                            <strong>Marketplace Fee Rule:</strong> This fixed Customer App Fee is added to the customer's total at cart checkout / payment initiation (e.g. 3.00 SAR). Percentage-based product VAT is no longer applied.
                                         </div>
-                                        @error('marketplace_vat_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                        @error('marketplace_customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
                             </div>
@@ -336,8 +336,8 @@
 
                                 <ul class="list-group list-group-flush text-xs">
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                                        <span class="text-muted"><i class="bi bi-cart-fill text-success me-1"></i> Marketplace Product VAT:</span>
-                                        <strong class="text-success fw-bold">{{ $settings->marketplace_vat_percentage ?? 15.00 }}%</strong>
+                                        <span class="text-muted"><i class="bi bi-cart-fill text-success me-1"></i> Marketplace App Fee:</span>
+                                        <strong class="text-success fw-bold">{{ number_format($settings->marketplace_customer_app_fee ?? 3.00, 2) }} SAR</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-person-workspace text-warning me-1"></i> Customer App Fee:</span>

@@ -867,8 +867,8 @@ class GeneralContoller extends Controller
             $user = auth()->user();
             $serviceCategories = $this->getProviderServiceCategories($user);
 
-            $lat = $request->input('latitude') ?? optional($user->providerProfile)->latitude ?? $user->latitude;
-            $lng = $request->input('longitude') ?? optional($user->providerProfile)->longitude ?? $user->longitude;
+            $lat = $user->providerProfile?->latitude;
+            $lng = $user->providerProfile?->longitude;
 
             /**
              * --------------------
@@ -1111,8 +1111,8 @@ class GeneralContoller extends Controller
             $user = auth()->user();
             $serviceCategories = $this->getProviderServiceCategories($user);
 
-            $lat = $request->input('latitude') ?? optional($user->providerProfile)->latitude ?? $user->latitude;
-            $lng = $request->input('longitude') ?? optional($user->providerProfile)->longitude ?? $user->longitude;
+            $lat = $user->providerProfile?->latitude;
+            $lng = $user->providerProfile?->longitude;
 
             $postRequestsQuery = JobRequestModel::with('user', 'images', 'category')
                 ->where('status', 'pending')

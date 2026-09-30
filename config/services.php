@@ -59,8 +59,8 @@ return [
     ],
 
     'ibanapi' => [
-        'base_url' => env('IBANAPI_BASE_URL', 'https://api.ibanapi.com/v1'),
-        'key' => env('IBANAPI_KEY', ''),
+        'base_url' => env('IBAN_API_BASE_URL', env('IBANAPI_BASE_URL', 'https://api.ibanapi.com/v1')),
+        'key' => env('IBAN_API_KEY', env('IBANAPI_KEY', 'b8d872a786d2be0591ec426b6d23fb5977c6bdf9')),
     ],
 
 ];

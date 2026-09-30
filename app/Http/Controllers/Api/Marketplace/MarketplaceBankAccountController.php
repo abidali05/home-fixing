@@ -5,31 +5,16 @@ namespace App\Http\Controllers\Api\Marketplace;
 use App\Http\Controllers\Controller;
 use App\Models\BankAccount;
 use App\Models\MarketplaceProfile;
+use App\Services\Banking\IbanApiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class MarketplaceBankAccountController extends Controller
 {
     /**
-     * Known Saudi Bank Mapping helper by IBAN 2-digit bank code.
+     * Validate Saudi IBAN and return bank metadata for Marketplace Seller using IBAN API service
      */
-    private array $saudiBanks = [
-        '10' => ['name' => 'Saudi National Bank (SNB)', 'swift' => 'NCBKSAJE', 'location' => 'JEDDAH, Saudi Arabia'],
-        '20' => ['name' => 'Al Rajhi Bank', 'swift' => 'RJHISARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '15' => ['name' => 'Bank AlBilad', 'swift' => 'BLADSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '05' => ['name' => 'Alinma Bank', 'swift' => 'INMASARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '50' => ['name' => 'Saudi Awwal Bank (SABB)', 'swift' => 'SABBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '55' => ['name' => 'Banque Saudi Fransi', 'swift' => 'BSFRSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '65' => ['name' => 'Saudi Investment Bank (SAIB)', 'swift' => 'SAIBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '80' => ['name' => 'Arab National Bank (ANB)', 'swift' => 'ARNBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '60' => ['name' => 'Bank AlJazira', 'swift' => 'BJAZSARI', 'location' => 'JEDDAH, Saudi Arabia'],
-        '45' => ['name' => 'Saudi British Bank', 'swift' => 'SABBKS22', 'location' => 'RIYADH, Saudi Arabia'],
-    ];
-
-    /**
-     * Validate Saudi IBAN and return bank metadata for Marketplace Seller
-     */
-    public function validateIban(Request $request)
+    public function validateIban(Request $request, IbanApiService $ibanService)
     {
         $validator = Validator::make($request->all(), [
             'iban' => 'required|string',
@@ -43,31 +28,24 @@ class MarketplaceBankAccountController extends Controller
             ], 422);
         }
 
-        $iban = strtoupper(str_replace(' ', '', $request->iban));
+        $result = $ibanService->verify($request->iban);
 
-        if (!str_starts_with($iban, 'SA') || strlen($iban) !== 24) {
+        if (!$result['valid']) {
             return response()->json([
                 'status' => 400,
-                'message' => 'Invalid Saudi IBAN format. Must start with SA followed by 22 digits.',
+                'message' => $result['message'],
                 'data' => null
             ], 400);
         }
 
-        $bankCode = substr($iban, 4, 2);
-        $bankInfo = $this->saudiBanks[$bankCode] ?? [
-            'name' => 'Saudi Commercial Bank',
-            'swift' => 'SAUDBANK',
-            'location' => 'Saudi Arabia',
-        ];
-
         return response()->json([
             'status' => 200,
-            'message' => 'IBAN verified successfully.',
+            'message' => $result['message'],
             'data' => [
-                'iban' => $iban,
-                'bank_name' => $bankInfo['name'],
-                'swift_code' => $bankInfo['swift'],
-                'bank_location' => $bankInfo['location'],
+                'iban' => $result['data']['iban'],
+                'bank_name' => $result['data']['bank_name'],
+                'swift_code' => $result['data']['swift_code'],
+                'bank_location' => $result['data']['bank_location'],
             ]
         ]);
     }

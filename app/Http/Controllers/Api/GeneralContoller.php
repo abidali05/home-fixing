@@ -145,10 +145,10 @@ class GeneralContoller extends Controller
                 ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
                     if ($lat && $lng) {
                         $q->whereNotNull('latitude')->whereNotNull('longitude')
-                          ->whereRaw(
-                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
-                              [$lat, $lng, $lat]
-                          );
+                            ->whereRaw(
+                                '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                                [$lat, $lng, $lat]
+                            );
                     }
                 })
                 ->where('id', '!=', $user->id)
@@ -205,16 +205,16 @@ class GeneralContoller extends Controller
                 ->where('user_id', $user->id)
                 ->where(function ($q) use ($capturedJobIds) {
                     $q->whereIn('status', ['open', 'pending', 'on_the_way', 'arrived', 'working', 'provider_completed'])
-                      ->orWhere(function ($sub) use ($capturedJobIds) {
-                          $sub->where('status', 'completed')
-                              ->where(function ($p) {
-                                  $p->where('paid_to_system', '!=', 1)
-                                    ->orWhereNull('paid_to_system');
-                              });
-                          if (!empty($capturedJobIds)) {
-                              $sub->whereNotIn('job_id', $capturedJobIds);
-                          }
-                      });
+                        ->orWhere(function ($sub) use ($capturedJobIds) {
+                            $sub->where('status', 'completed')
+                                ->where(function ($p) {
+                                    $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                });
+                            if (!empty($capturedJobIds)) {
+                                $sub->whereNotIn('job_id', $capturedJobIds);
+                            }
+                        });
                 })
                 ->latest()
                 ->limit(4)
@@ -380,10 +380,10 @@ class GeneralContoller extends Controller
                 ->whereHas('providerProfile', function ($q) use ($lat, $lng) {
                     if ($lat && $lng) {
                         $q->whereNotNull('latitude')->whereNotNull('longitude')
-                          ->whereRaw(
-                              '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
-                              [$lat, $lng, $lat]
-                          );
+                            ->whereRaw(
+                                '(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) <= 5',
+                                [$lat, $lng, $lat]
+                            );
                     }
                 })
                 ->where('id', '!=', $user->id)
@@ -861,17 +861,21 @@ class GeneralContoller extends Controller
         }
     }
 
-    public function provider_home()
+    public function provider_home(Request $request)
     {
         try {
-            $serviceCategories = $this->getProviderServiceCategories(auth()->user());
+            $user = auth()->user();
+            $serviceCategories = $this->getProviderServiceCategories($user);
+
+            $lat = $request->input('latitude') ?? optional($user->providerProfile)->latitude ?? $user->latitude;
+            $lng = $request->input('longitude') ?? optional($user->providerProfile)->longitude ?? $user->longitude;
 
             /**
              * --------------------
-             * POST REQUESTS
+             * POST REQUESTS (Filtered by 5km radius from customer job location)
              * --------------------
              */
-            $post_requests = JobRequestModel::with([
+            $postRequestsQuery = JobRequestModel::with([
                 'images',
                 'category',
                 'user',
@@ -879,12 +883,35 @@ class GeneralContoller extends Controller
             ])
                 ->where('status', 'pending')
                 ->whereNull('provider_id')
-                ->whereIn('category_id', $serviceCategories)
-                ->latest()
+                ->whereIn('category_id', $serviceCategories);
+
+            if ($lat && $lng) {
+                $postRequestsQuery->whereNotNull('latitude')
+                    ->whereNotNull('longitude')
+                    ->whereRaw(
+                        '(6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))) <= 5',
+                        [$lat, $lng, $lat]
+                    )
+                    ->select('jobss.*')
+                    ->selectRaw(
+                        'ROUND((6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))), 2) AS distance',
+                        [$lat, $lng, $lat]
+                    )
+                    ->orderBy('distance', 'asc');
+            } else {
+                $postRequestsQuery->latest();
+            }
+
+            $post_requests = $postRequestsQuery
                 ->limit(2)
                 ->get();
 
             foreach ($post_requests as $job) {
+                if (isset($job->distance)) {
+                    $job->distance_in_km = (float) $job->distance;
+                    $job->distance_text = $job->distance . ' km';
+                }
+
                 foreach ($job->images ?? [] as $image) {
                     $image->path = asset('uploads/job_gallery/' . $image->path);
                 }
@@ -929,12 +956,12 @@ class GeneralContoller extends Controller
             $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
                 ->where(function ($q) use ($providerId) {
                     $q->where('provider_id', $providerId)
-                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
-                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
-                      })
-                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
-                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
-                      });
+                        ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                            $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                        })
+                        ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                            $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                        });
                 })
                 ->pluck('job_id')
                 ->filter()
@@ -960,7 +987,7 @@ class GeneralContoller extends Controller
                 $netAmount = $financials['net_amount'];
                 $subtotal = $financials['customer_total'];
 
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1
                     || in_array($order->job_id, $allPaidJobIds)
                     || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
 
@@ -1034,16 +1061,16 @@ class GeneralContoller extends Controller
                 ->where('provider_id', $providerId)
                 ->where(function ($q) use ($allPaidJobIds) {
                     $q->whereNotIn('status', ['open', 'completed', 'cancelled'])
-                      ->orWhere(function ($sub) use ($allPaidJobIds) {
-                          $sub->where('status', 'completed')
-                              ->where(function ($p) {
-                                  $p->where('paid_to_system', '!=', 1)
-                                    ->orWhereNull('paid_to_system');
-                              });
-                          if (!empty($allPaidJobIds)) {
-                              $sub->whereNotIn('job_id', $allPaidJobIds);
-                          }
-                      });
+                        ->orWhere(function ($sub) use ($allPaidJobIds) {
+                            $sub->where('status', 'completed')
+                                ->where(function ($p) {
+                                    $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                });
+                            if (!empty($allPaidJobIds)) {
+                                $sub->whereNotIn('job_id', $allPaidJobIds);
+                            }
+                        });
                 })
                 ->latest()
                 ->limit(4)
@@ -1078,23 +1105,53 @@ class GeneralContoller extends Controller
     }
 
 
-    public function view_all_post_requests()
+    public function view_all_post_requests(Request $request)
     {
         try {
-            $serviceCategories = $this->getProviderServiceCategories(auth()->user());
+            $user = auth()->user();
+            $serviceCategories = $this->getProviderServiceCategories($user);
 
-            $post_requests = JobRequestModel::with('user', 'images', 'category')
+            $lat = $request->input('latitude') ?? optional($user->providerProfile)->latitude ?? $user->latitude;
+            $lng = $request->input('longitude') ?? optional($user->providerProfile)->longitude ?? $user->longitude;
+
+            $postRequestsQuery = JobRequestModel::with('user', 'images', 'category')
                 ->where('status', 'pending')
                 ->where('provider_id', null)
-                ->whereIn('category_id', $serviceCategories)
-                ->latest()
-                ->get();
+                ->whereIn('category_id', $serviceCategories);
 
-            foreach ($post_requests as $request) {
-                if ($request->images) {
-                    foreach ($request->images as $image) {
+            if ($lat && $lng) {
+                $postRequestsQuery->whereNotNull('latitude')
+                    ->whereNotNull('longitude')
+                    ->whereRaw(
+                        '(6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))) <= 5',
+                        [$lat, $lng, $lat]
+                    )
+                    ->select('jobss.*')
+                    ->selectRaw(
+                        'ROUND((6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))), 2) AS distance',
+                        [$lat, $lng, $lat]
+                    )
+                    ->orderBy('distance', 'asc');
+            } else {
+                $postRequestsQuery->latest();
+            }
+
+            $post_requests = $postRequestsQuery->get();
+
+            foreach ($post_requests as $job) {
+                if (isset($job->distance)) {
+                    $job->distance_in_km = (float) $job->distance;
+                    $job->distance_text = $job->distance . ' km';
+                }
+
+                if ($job->images) {
+                    foreach ($job->images as $image) {
                         $image->path = asset('uploads/job_gallery/' . $image->path);
                     }
+                }
+
+                if ($job->category && $job->category->path && !str_starts_with($job->category->path, 'http')) {
+                    $job->category->path = asset('uploads/service_category/' . $job->category->path);
                 }
             }
 
@@ -1308,12 +1365,12 @@ class GeneralContoller extends Controller
             $capturedJobIds = Payment::whereIn('status', ['captured', 'paid'])
                 ->where(function ($q) use ($providerId) {
                     $q->where('provider_id', $providerId)
-                      ->orWhereIn('job_id', function ($jQ) use ($providerId) {
-                          $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
-                      })
-                      ->orWhereIn('job_id', function ($oQ) use ($providerId) {
-                          $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
-                      });
+                        ->orWhereIn('job_id', function ($jQ) use ($providerId) {
+                            $jQ->select('id')->from('jobss')->where('provider_id', $providerId);
+                        })
+                        ->orWhereIn('job_id', function ($oQ) use ($providerId) {
+                            $oQ->select('job_id')->from('orders')->where('provider_id', $providerId);
+                        });
                 })
                 ->pluck('job_id')
                 ->filter()
@@ -1353,7 +1410,7 @@ class GeneralContoller extends Controller
                 $netAmount = $financials['net_amount'];
                 $subtotal = $financials['customer_total'];
 
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1 
+                $isPaid = (int) ($order->paid_to_system ?? 0) === 1
                     || in_array($order->job_id, $allPaidJobIds)
                     || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
 
@@ -1410,25 +1467,25 @@ class GeneralContoller extends Controller
                 if ($statusFilter === 'ongoing') {
                     $query->where(function ($q) use ($allPaidJobIds) {
                         $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
-                          ->orWhere(function ($sub) use ($allPaidJobIds) {
-                              $sub->where('status', 'completed')
-                                  ->where(function ($p) {
-                                      $p->where('paid_to_system', '!=', 1)
-                                        ->orWhereNull('paid_to_system');
-                                  });
-                              if (!empty($allPaidJobIds)) {
-                                  $sub->whereNotIn('job_id', $allPaidJobIds);
-                              }
-                          });
+                            ->orWhere(function ($sub) use ($allPaidJobIds) {
+                                $sub->where('status', 'completed')
+                                    ->where(function ($p) {
+                                        $p->where('paid_to_system', '!=', 1)
+                                            ->orWhereNull('paid_to_system');
+                                    });
+                                if (!empty($allPaidJobIds)) {
+                                    $sub->whereNotIn('job_id', $allPaidJobIds);
+                                }
+                            });
                     });
                 } elseif ($statusFilter === 'completed') {
                     $query->where('status', 'completed')
-                          ->where(function ($q) use ($allPaidJobIds) {
-                              $q->where('paid_to_system', 1);
-                              if (!empty($allPaidJobIds)) {
-                                  $q->orWhereIn('job_id', $allPaidJobIds);
-                              }
-                          });
+                        ->where(function ($q) use ($allPaidJobIds) {
+                            $q->where('paid_to_system', 1);
+                            if (!empty($allPaidJobIds)) {
+                                $q->orWhereIn('job_id', $allPaidJobIds);
+                            }
+                        });
                 } elseif ($statusFilter === 'scheduled' || $statusFilter === 'pending') {
                     $query->whereIn('status', ['pending', 'open', 'accepted']);
                 } elseif ($statusFilter === 'cancelled') {
@@ -1473,25 +1530,25 @@ class GeneralContoller extends Controller
                 if ($key === 'ongoing_orders') {
                     $query->where(function ($q) use ($allPaidJobIds) {
                         $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
-                          ->orWhere(function ($sub) use ($allPaidJobIds) {
-                              $sub->where('status', 'completed')
-                                  ->where(function ($p) {
-                                      $p->where('paid_to_system', '!=', 1)
-                                        ->orWhereNull('paid_to_system');
-                                  });
-                              if (!empty($allPaidJobIds)) {
-                                  $sub->whereNotIn('job_id', $allPaidJobIds);
-                              }
-                          });
+                            ->orWhere(function ($sub) use ($allPaidJobIds) {
+                                $sub->where('status', 'completed')
+                                    ->where(function ($p) {
+                                        $p->where('paid_to_system', '!=', 1)
+                                            ->orWhereNull('paid_to_system');
+                                    });
+                                if (!empty($allPaidJobIds)) {
+                                    $sub->whereNotIn('job_id', $allPaidJobIds);
+                                }
+                            });
                     });
                 } elseif ($key === 'completed_orders') {
                     $query->where('status', 'completed')
-                          ->where(function ($q) use ($allPaidJobIds) {
-                              $q->where('paid_to_system', 1);
-                              if (!empty($allPaidJobIds)) {
-                                  $q->orWhereIn('job_id', $allPaidJobIds);
-                              }
-                          });
+                        ->where(function ($q) use ($allPaidJobIds) {
+                            $q->where('paid_to_system', 1);
+                            if (!empty($allPaidJobIds)) {
+                                $q->orWhereIn('job_id', $allPaidJobIds);
+                            }
+                        });
                 } else {
                     $query->whereIn('status', (array) $statusList);
                 }
@@ -2011,34 +2068,43 @@ class GeneralContoller extends Controller
     }
 
     public function my_bids(Request $request)
-{
-    try {
-        $user = auth()->user();
+    {
+        try {
+            $user = auth()->user();
 
-        $bids = BidModel::with(['job.category', 'job.user', 'order'])
-            ->where('provider_id', $user->id)
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        if ($bids->isEmpty()) {
-            return $this->notFound('No bids found for this provider.');
-        }
-
-        foreach ($bids as $bid) {
-            if ($bid->job && $bid->job->category) {
-                $bid->job->category->path = $bid->job->category->path
-                    ? asset('uploads/service_category/' . $bid->job->category->path)
-                    : asset('assets/img/default.jpg');
+            $bids = BidModel::with([
+                'job.category',
+                'job.user',
+                'order'
+            ])
+                ->where('provider_id', $user->id)
+                ->orderByDesc('created_at')
+                ->get();
+            if ($bids->isEmpty()) {
+                return $this->success([], 'No bids found.');
             }
+
+            foreach ($bids as $bid) {
+                if ($bid->job?->category) {
+                    $bid->job->category->path = $bid->job->category->path
+                        ? asset('uploads/service_category/' . $bid->job->category->path)
+                        : asset('assets/img/default.jpg');
+                }
+            }
+
+            return $this->success(
+                $bids,
+                'My bids fetched successfully.'
+            );
+        } catch (\Exception $e) {
+            Log::error('Error in my_bids: ' . $e->getMessage());
+
+            return $this->error(
+                'Failed to load my bids.',
+                500
+            );
         }
-
-        return $this->success($bids, 'My bids fetched successfully.');
-
-    } catch (\Exception $e) {
-        Log::error('Error in my_bids: ' . $e->getMessage());
-        return $this->error('Failed to load my bids.', 500);
     }
-}
 
     private function resolveCategoryIds($raw): array
     {

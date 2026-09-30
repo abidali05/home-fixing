@@ -213,16 +213,30 @@ class HiringController extends Controller
 
             DB::commit();
 
-            $providers = User::query()
-                ->whereHas('providerProfile', function ($q) use ($jobRequest) {
+            $jobLat = $jobRequest->latitude ? (float) $jobRequest->latitude : null;
+            $jobLng = $jobRequest->longitude ? (float) $jobRequest->longitude : null;
+
+            $providersQuery = User::query()
+                ->where('role', 1)
+                ->whereHas('providerProfile', function ($q) use ($jobRequest, $jobLat, $jobLng) {
                     $categoryId = (int) $jobRequest->category_id;
 
                     $q->where(function ($sub) use ($categoryId) {
                         $sub->whereJsonContains('service_category', $categoryId)
                             ->orWhereJsonContains('service_category', (string) $categoryId);
                     });
-                })
-                ->get();
+
+                    if ($jobLat && $jobLng) {
+                        $q->whereNotNull('latitude')
+                            ->whereNotNull('longitude')
+                            ->whereRaw(
+                                '(6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))) <= 5',
+                                [$jobLat, $jobLng, $jobLat]
+                            );
+                    }
+                });
+
+            $providers = $providersQuery->get();
 
             Notification::send($providers, (new JobPostedNotification($jobRequest))->afterCommit());
             return $this->success($jobRequest, 'Request Submitted successfully.');

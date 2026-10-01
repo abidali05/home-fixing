@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\BankAccount;
 use App\Models\ProviderProfile;
 use App\Services\Banking\IbanApiService;
+use App\Services\Payment\TapMarketplaceService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class ProviderBankAccountController extends Controller
@@ -162,6 +164,18 @@ class ProviderBankAccountController extends Controller
             'bank_location' => $account->bank_location,
         ]);
 
+        // Auto-onboard to Tap Marketplace for split payments
+        try {
+            app(TapMarketplaceService::class)->onboardRetailer($user, 'provider', [
+                'iban' => $account->iban,
+                'account_title' => $account->account_title,
+                'bank_name' => $account->bank_name,
+            ]);
+            $account->refresh();
+        } catch (\Throwable $e) {
+            Log::warning("Tap Marketplace auto-onboarding error for provider #{$user->id}: " . $e->getMessage());
+        }
+
         return response()->json([
             'status' => 200,
             'message' => 'Bank Account added successfully.',
@@ -297,6 +311,44 @@ class ProviderBankAccountController extends Controller
                 'total_withdrawn' => round($totalWithdrawn, 2),
                 'currency' => 'SAR'
             ]
+        ]);
+    }
+
+    /**
+     * Explicitly onboard provider to Tap Marketplace (or refresh destination/KYC)
+     */
+    public function tapOnboard(Request $request, TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $res = $marketplaceService->onboardRetailer($user, 'provider', $request->all());
+
+        return response()->json([
+            'status' => $res['success'] ? 200 : 400,
+            'message' => $res['message'],
+            'data' => $res['data']
+        ], $res['success'] ? 200 : 400);
+    }
+
+    /**
+     * Get Tap Marketplace account and payout status for provider
+     */
+    public function tapStatus(TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $status = $marketplaceService->getRetailerStatus($user, 'provider');
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Tap Marketplace account status fetched.',
+            'data' => $status
         ]);
     }
 }

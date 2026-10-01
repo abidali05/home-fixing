@@ -62,4 +62,59 @@ class ProviderProfile extends Model
     {
         return $this->belongsTo(ServiceCategoryModel::class, 'service_category');
     }
+
+    public function referredBy()
+    {
+        return $this->belongsTo(User::class, 'referred_by_id');
+    }
+
+    public function referredProviders()
+    {
+        return $this->hasMany(ProviderProfile::class, 'referred_by_id', 'user_id');
+    }
+
+    protected $appends = [
+        'referred_by',
+        'total_referrals',
+    ];
+
+    public function getReferredByAttribute()
+    {
+        if (!$this->referred_by_id) {
+            return null;
+        }
+
+        $referrer = $this->relationLoaded('referredBy')
+            ? $this->getRelation('referredBy')
+            : $this->referredBy()->first();
+
+        if (!$referrer) {
+            return null;
+        }
+
+        return [
+            'id' => $referrer->id,
+            'name' => $referrer->name,
+            'user_code' => $referrer->user_code,
+            'referral_code' => optional($referrer->providerProfile)->referral_code,
+        ];
+    }
+
+    public function getTotalReferralsAttribute(): int
+    {
+        if (!$this->user_id) {
+            return 0;
+        }
+
+        return self::where('referred_by_id', $this->user_id)->count();
+    }
+
+    public static function generateUniqueReferralCode(): string
+    {
+        do {
+            $code = 'REF-' . strtoupper(\Illuminate\Support\Str::random(6));
+        } while (self::where('referral_code', $code)->exists());
+
+        return $code;
+    }
 }

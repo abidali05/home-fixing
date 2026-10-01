@@ -305,3 +305,286 @@ button.admin-icon-btn {
         white-space: nowrap;
     }
 }
+
+/* ==========================================================================
+   Modern & Fixed Sidebar System
+   ========================================================================== */
+
+/* Suppress broken FontAwesome pseudo-element box icons */
+.navbar-vertical .navbar-nav .nav-link[data-bs-toggle=collapse]:after,
+.navbar-vertical .navbar-nav .nav-link:after,
+#sidenav-main .nav-link:after,
+.nav-link[data-bs-toggle=collapse]:after,
+.dropdown-toggle::after,
+#userProfileDropdown::after,
+#topHeaderNotificationsBell::after {
+    display: none !important;
+    content: none !important;
+}
+
+#sidenav-main.sidenav {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 260px !important;
+    max-width: 260px !important;
+    height: 100vh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    z-index: 1040 !important;
+    background: linear-gradient(180deg, #faf8ff 0%, #f5f0fe 100%) !important;
+    box-shadow: 0 0 24px rgba(79, 35, 150, 0.09) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    transition: transform 0.3s ease, left 0.3s ease !important;
+    border-right: 1px solid rgba(79, 35, 150, 0.1) !important;
+}
+
+/* Sidenav Header */
+#sidenav-main .sidenav-header {
+    height: auto !important;
+    min-height: 68px !important;
+    /* margin: 16px 14px 14px 14px !important; */
+    padding: 0.75rem 1.25rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 16px !important;
+    background: linear-gradient(135deg, #4F2396 0%, #682eb8 100%) !important;
+    box-shadow: 0 8px 22px rgba(79, 35, 150, 0.22) !important;
+    flex-shrink: 0 !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+#sidenav-main .navbar-brand {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    text-decoration: none !important;
+}
+
+#sidenav-main .navbar-brand-img {
+    max-height: 46px !important;
+    max-width: 100% !important;
+    width: auto !important;
+    object-fit: contain !important;
+    filter: none !important;
+    border-radius: 6px !important;
+}
+
+#sidenav-main .navbar-brand span {
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    color: #4F2396 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+#sidenav-main .sidenav-header .dropdown {
+    margin: 0 !important;
+}
+
+/* Scrollable Container */
+#sidenav-main #sidenav-collapse-main {
+    flex: 1 1 auto !important;
+    /* overflow-y: auto !important; */
+    overflow-x: hidden !important;
+    padding: 0.75rem 0.5rem !important;
+    height: calc(100vh - 72px) !important;
+}
+
+#sidenav-main #sidenav-collapse-main::-webkit-scrollbar {
+    width: 4px;
+}
+
+#sidenav-main #sidenav-collapse-main::-webkit-scrollbar-thumb {
+    background: rgba(79, 35, 150, 0.2);
+    border-radius: 4px;
+}
+
+/* Nav Base & Lists */
+#sidenav-main .navbar-nav,
+#sidenav-main .nav {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    list-style: none !important;
+}
+
+#sidenav-main .navbar-nav > .nav-item {
+    width: 100% !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* Top-level Nav Links */
+#sidenav-main .navbar-nav > .nav-item > .nav-link {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 0.6rem 0.85rem !important;
+    margin: 0 !important;
+    border-radius: 8px !important;
+    color: #4a3266 !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    border-left: 3px solid transparent !important;
+    transition: all 0.2s ease-in-out !important;
+    white-space: nowrap !important;
+}
+
+#sidenav-main .navbar-nav > .nav-item > .nav-link:hover {
+    background-color: rgba(79, 35, 150, 0.06) !important;
+    color: #4F2396 !important;
+}
+
+#sidenav-main .navbar-nav > .nav-item > .nav-link.active {
+    background-color: rgba(79, 35, 150, 0.1) !important;
+    color: #4F2396 !important;
+    border-left-color: #4F2396 !important;
+    font-weight: 600 !important;
+}
+
+#sidenav-main .navbar-nav > .nav-item > .nav-link .icon {
+    width: 28px !important;
+    height: 28px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-right: 0.6rem !important;
+    flex-shrink: 0 !important;
+    font-size: 1rem !important;
+}
+
+#sidenav-main .navbar-nav > .nav-item > .nav-link.active .icon i {
+    color: #4F2396 !important;
+}
+
+/* Chevron Rotation */
+#sidenav-main .sidebar-chevron {
+    font-size: 0.75rem !important;
+    transition: transform 0.25s ease-in-out !important;
+    color: #94a3b8 !important;
+    margin-left: 0.5rem !important;
+    flex-shrink: 0 !important;
+}
+
+#sidenav-main .nav-link[aria-expanded="true"] .sidebar-chevron {
+    transform: rotate(180deg) !important;
+    color: #4F2396 !important;
+}
+
+/* Nested Accordion Submenus */
+#sidenav-main .collapse-submenu {
+    padding-left: 0 !important;
+}
+
+#sidenav-main .collapse-submenu ul.nav {
+    display: flex !important;
+    flex-direction: column !important;
+    margin: 0.25rem 0 0.5rem 1.6rem !important;
+    padding-left: 0.65rem !important;
+    border-left: 2px solid #e2e8f0 !important;
+    list-style: none !important;
+}
+
+#sidenav-main .collapse-submenu ul.nav .nav-item {
+    margin-bottom: 0.15rem !important;
+    width: 100% !important;
+}
+
+#sidenav-main .collapse-submenu ul.nav .nav-link {
+    display: block !important;
+    padding: 0.45rem 0.75rem !important;
+    margin: 0 !important;
+    font-size: 0.825rem !important;
+    color: #64748b !important;
+    font-weight: 400 !important;
+    border-radius: 6px !important;
+    text-decoration: none !important;
+    transition: all 0.2s ease !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    border-left: none !important;
+}
+
+#sidenav-main .collapse-submenu ul.nav .nav-link:hover {
+    color: #4F2396 !important;
+    background-color: rgba(79, 35, 150, 0.05) !important;
+    transform: translateX(3px) !important;
+}
+
+#sidenav-main .collapse-submenu ul.nav .nav-link.active {
+    color: #4F2396 !important;
+    background-color: rgba(79, 35, 150, 0.1) !important;
+    font-weight: 600 !important;
+}
+
+/* Main Content Alignment & Page Width Calculation */
+@media (min-width: 992px) {
+    .main-content {
+        margin-left: 260px !important;
+        width: calc(100% - 260px) !important;
+        max-width: calc(100% - 260px) !important;
+        transition: margin-left 0.3s ease, width 0.3s ease !important;
+        min-height: 100vh;
+    }
+}
+
+@media (max-width: 991.98px) {
+    .main-content {
+        margin-left: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    body:not(.g-sidenav-pinned) #sidenav-main {
+        transform: translateX(-100%) !important;
+    }
+
+    body.g-sidenav-pinned #sidenav-main {
+        transform: translateX(0) !important;
+    }
+}
+
+/* Sidenav Notification Dropdown Positioning & Styling Fix */
+#sidenav-main .sidenav-header {
+    position: relative !important;
+}
+
+#adminNotificationDropdown {
+    position: absolute !important;
+    top: 62px !important;
+    left: 10px !important;
+    right: 10px !important;
+    width: 240px !important;
+    min-width: 240px !important;
+    max-width: 240px !important;
+    transform: none !important;
+    margin: 0 !important;
+    box-shadow: 0 16px 36px rgba(79, 35, 150, 0.14) !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(79, 35, 150, 0.15) !important;
+    background: #ffffff !important;
+    z-index: 1070 !important;
+    max-height: 380px !important;
+    overflow-y: auto !important;
+}
+
+#adminNotificationDropdown .dropdown-item {
+    border-radius: 10px !important;
+    transition: all 0.2s ease !important;
+    white-space: normal !important;
+}
+
+#adminNotificationDropdown .dropdown-item:hover {
+    background-color: #f1f5f9 !important;
+}
+

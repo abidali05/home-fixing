@@ -3,16 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Privacy;
-use Illuminate\Http\Request;
 
 class PrivacyController extends Controller
 {
-    public function index(Request $request)
+    public function index(int $role)
     {
-        $user = $request->user();
-
-        $role = $user->role ?? null;
-
         $content = Privacy::where('role', $role)->value('content');
 
         return response()->json([

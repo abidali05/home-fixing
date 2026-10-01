@@ -15,7 +15,8 @@ class BidRejectedNotification extends Notification implements ShouldQueue
 
     public function __construct(
         private readonly JobRequestModel $job,
-        private readonly User $customer
+        private readonly User $customer,
+        private readonly ?string $customMessage = null
     ) {
         $this->onQueue('notifications');
     }
@@ -34,7 +35,7 @@ class BidRejectedNotification extends Notification implements ShouldQueue
         return [
             'type' => 'bid_rejected',
             'title' => 'Bid Rejected',
-            'message' => $this->customer->name . ' rejected your bid request.',
+            'message' => $this->customMessage ?? ($this->customer->name . ' rejected your bid request.'),
             'data' => [
                 'job_id' => (int) $this->job->id,
                 'customer_id' => (int) $this->customer->id,

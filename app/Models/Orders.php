@@ -32,14 +32,7 @@ class Orders extends Model
 
         // 1. Determine rates: prefer snapshotted order values over global settings
         $customerAppFee = $this->customer_app_fee !== null ? (float) $this->customer_app_fee : (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlFeeSetting = $this->azhl_fee !== null ? (float) $this->azhl_fee : (float) ($settings->azhl_fee ?? $settings->azhl_percentage ?? 5.00);
-        $azhlPctSetting = $this->azhl_percentage !== null ? (float) $this->azhl_percentage : (float) ($settings->azhl_percentage ?? 5.00);
-        $gatewayFeePct = ($this->gateway_fee_percentage !== null && (float) $this->gateway_fee_percentage > 0)
-            ? (float) $this->gateway_fee_percentage
-            : (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-        $gatewayVatPct = ($this->gateway_vat_percentage !== null && (float) $this->gateway_vat_percentage > 0)
-            ? (float) $this->gateway_vat_percentage
-            : (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+        $azhlPctSetting = $this->azhl_percentage !== null ? (float) $this->azhl_percentage : (float) ($settings->azhl_percentage ?? 10.00);
 
         // 2. Base repair price
         $repairPrice = (float) ($this->price ?? 0);
@@ -50,36 +43,29 @@ class Orders extends Model
             }
         }
 
-        if ($repairPrice > 103) {
-            $approxSubtotal = $repairPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
-            $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
-            $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
-        }
-
         // 3. Extra charges (applicable unless explicitly rejected)
         $extraAmount = (float) ($this->extra_amount ?? 0);
         $applicableExtra = ($this->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
         $finalBase = $repairPrice + $applicableExtra;
         $subtotal = $finalBase + $customerAppFee;
 
-        // 4. Gateway Fees & VAT (No fixed fee)
-        $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
-        $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-        $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+        // 4. Taxes & Gateway Fees removed (Set to 0)
+        $totalGatewayFee = 0.00;
+        $gatewayVat = 0.00;
 
-        // 5. Provider Net Payout
-        $azhlFee = $azhlFeeSetting;
-        $netAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
+        // 5. Provider Net Payout: Final Base minus 1 percentage (Azhl Commission)
+        $azhlFee = round($finalBase * ($azhlPctSetting / 100), 2);
+        $netAmount = max(0, round($finalBase - $azhlFee, 2));
 
         // 6. Assign snapshotted fields on Order
         $this->price = number_format($repairPrice, 2, '.', '');
         $this->customer_app_fee = number_format($customerAppFee, 2, '.', '');
         $this->azhl_percentage = number_format($azhlPctSetting, 2, '.', '');
         $this->azhl_fee = number_format($azhlFee, 2, '.', '');
-        $this->gateway_fee_percentage = number_format($gatewayFeePct, 2, '.', '');
-        $this->gateway_vat_percentage = number_format($gatewayVatPct, 2, '.', '');
-        $this->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
-        $this->gateway_vat = number_format($gatewayVat, 2, '.', '');
+        $this->gateway_fee_percentage = '0.00';
+        $this->gateway_vat_percentage = '0.00';
+        $this->gateway_fee = '0.00';
+        $this->gateway_vat = '0.00';
         $this->net_amount = number_format($netAmount, 2, '.', '');
         $this->total_amount = number_format($subtotal, 2, '.', '');
 
@@ -95,8 +81,8 @@ class Orders extends Model
             'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),
-            'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
-            'gateway_vat' => (float) number_format($gatewayVat, 2, '.', ''),
+            'gateway_fee' => 0.00,
+            'gateway_vat' => 0.00,
             'customer_total' => (float) number_format($subtotal, 2, '.', ''),
             'azhl_percentage' => (float) number_format($azhlPctSetting, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),

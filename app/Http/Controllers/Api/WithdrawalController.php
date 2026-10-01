@@ -31,26 +31,20 @@ class WithdrawalController extends Controller
         $settings = SystemSettingModel::first();
 
         $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
-        $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
-        $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+        $azhlPct = (float) ($settings->azhl_percentage ?? 10.00);
 
         $applicableExtra = ($extraStatus !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
         $finalBase = $repairPrice + $applicableExtra;
         $subtotal = $finalBase + $customerAppFee;
 
-        // 2. Gateway Fee Subtotal + VAT (Fixed fee removed/0.00)
-        $gatewaySubtotal = $subtotal * ($gatewayFeePct / 100);
-        $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-        $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-        // 3. Customer Total (Base + 3 SAR)
+        // Taxes & Gateway Fees removed (0.00)
+        $totalGatewayFee = 0.00;
+        $gatewayVat = 0.00;
         $customerTotal = $subtotal;
 
-        // 4. Net Amount for Technician / Provider (Final Base minus fixed provider fee minus gateway fee)
-        $azhlFee = $azhlFixedFee;
-        $netProviderAmount = max(0, $finalBase - $azhlFee - $totalGatewayFee);
+        // Provider Net: Final Base minus 1 percentage (Azhl Commission)
+        $azhlFee = round($finalBase * ($azhlPct / 100), 2);
+        $netProviderAmount = max(0, round($finalBase - $azhlFee, 2));
 
         return [
             'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
@@ -60,9 +54,10 @@ class WithdrawalController extends Controller
             'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),
-            'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
+            'gateway_fee' => 0.00,
+            'gateway_vat' => 0.00,
             'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
-            'azhl_percentage' => (float) number_format($azhlFixedFee, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlPct, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
             'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
         ];

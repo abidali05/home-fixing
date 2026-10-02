@@ -19,6 +19,7 @@ class BankAccount extends Model
         'bank_name',
         'swift_code',
         'bank_location',
+        'tap_destination_id',
         'is_default',
     ];
 

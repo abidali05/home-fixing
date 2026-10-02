@@ -101,22 +101,29 @@ class TapPaymentService
                 ->latest()
                 ->first();
 
-            $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
-            if (!empty($iban)) {
-                try {
-                    $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
-                        'iban' => $iban,
-                        'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
-                        'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
-                    ]);
-                    $destinationId = $onboardResult['data']['destination_id'] ?? null;
-                    if (empty($destinationId)) {
-                        $provider->refresh();
-                        $destinationId = optional($provider->providerProfile)->tap_destination_id;
+            $destinationId = $bankAccount?->tap_destination_id;
+
+            if (empty($destinationId)) {
+                $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
+                if (!empty($iban)) {
+                    try {
+                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
+                            'iban' => $iban,
+                            'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
+                            'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
+                        ]);
+                        $destinationId = $onboardResult['data']['destination_id'] ?? null;
+                        if (empty($destinationId)) {
+                            $provider->refresh();
+                            $destinationId = optional($provider->providerProfile)->tap_destination_id;
+                        }
+                        if ($destinationId && $bankAccount) {
+                            $bankAccount->update(['tap_destination_id' => $destinationId]);
+                        }
+                        Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
+                    } catch (\Throwable $e) {
+                        Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
                     }
-                    Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
-                } catch (\Throwable $e) {
-                    Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
                 }
             }
         }

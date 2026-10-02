@@ -166,11 +166,15 @@ class MarketplaceBankAccountController extends Controller
 
         // Auto-onboard to Tap Marketplace for split payments
         try {
-            app(TapMarketplaceService::class)->onboardRetailer($user, 'marketplace', [
+            $onboard = app(TapMarketplaceService::class)->onboardRetailer($user, 'marketplace', [
                 'iban' => $account->iban,
                 'account_title' => $account->account_title,
                 'bank_name' => $account->bank_name,
             ]);
+            $destId = $onboard['data']['destination_id'] ?? optional($user->marketplaceProfile)->tap_destination_id;
+            if ($destId) {
+                $account->update(['tap_destination_id' => $destId]);
+            }
             $account->refresh();
         } catch (\Throwable $e) {
             Log::warning("Tap Marketplace auto-onboarding error for seller #{$user->id}: " . $e->getMessage());

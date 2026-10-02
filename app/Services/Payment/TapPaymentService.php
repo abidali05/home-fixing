@@ -4,7 +4,7 @@ namespace App\Services\Payment;
 
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
-use App\Models\Bid;
+use App\Models\BidModel;
 use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
@@ -137,7 +137,7 @@ class TapPaymentService
 
             // If order not created yet (order is created on capture in HireProviderService), calculate from Bid / Payment amount!
             if ($providerShare <= 0) {
-                $bid = $payment->bid ?: ($payment->bid_id ? Bid::find($payment->bid_id) : null);
+                $bid = $payment->bid ?: ($payment->bid_id ? BidModel::find($payment->bid_id) : null);
                 $settings = SystemSettingModel::first();
                 $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
                 $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);

@@ -23,6 +23,8 @@ class Payment extends Model
         'gateway',
         'status',
         'tap_charge_id',
+        'tap_destination_id',
+        'tap_split_amount',
         'gateway_response',
     ];
 

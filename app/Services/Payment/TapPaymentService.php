@@ -229,37 +229,82 @@ class TapPaymentService
         // -------------------------------------------------------------
         // TAP MARKETPLACE: Instant Split for Marketplace Seller Shop
         // -------------------------------------------------------------
-        $sellerDestinationId = null;
-        $sellerShare = 0.00;
+        $settings = \App\Models\Admin\SystemSettingModel::first();
+        $commissionPct = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+
+        $destinationsList = [];
+        $totalSplit = 0.00;
+        $primaryDestinationId = null;
 
         if ($order && $order->shop_id) {
             $shop = User::find($order->shop_id);
             $sellerDestinationId = optional($shop?->marketplaceProfile)->tap_destination_id;
-
-            $settings = \App\Models\Admin\SystemSettingModel::first();
-            $azhlPct = (float) ($settings->azhl_percentage ?? 10.00);
             $orderBase = (float) ($order->subtotal ?? $order->total_amount ?? 0);
-            $commission = round($orderBase * ($azhlPct / 100), 2);
+            $commission = round($orderBase * ($commissionPct / 100), 2);
             $sellerShare = max(0, round($orderBase - $commission, 2));
-        }
 
-        if (!empty($sellerDestinationId) && $sellerShare > 0 && $sellerShare < (float) $payment->amount) {
-            $payload['destinations'] = [
-                'destination' => [
-                    [
-                        'id' => $sellerDestinationId,
+            if (!empty($sellerDestinationId) && $sellerShare > 0) {
+                $destinationsList[] = [
+                    'id' => $sellerDestinationId,
+                    'amount' => (float) number_format($sellerShare, 2, '.', ''),
+                    'currency' => strtoupper($payment->currency ?: 'SAR'),
+                ];
+                $totalSplit += $sellerShare;
+                $primaryDestinationId = $sellerDestinationId;
+            }
+        } elseif (!$order && $payment->user_id) {
+            // Cart Checkout: group items by seller shop
+            $cartItems = Cart::with(['product.user.marketplaceProfile'])
+                ->where('user_id', $payment->user_id)
+                ->get();
+
+            $shopTotals = [];
+            foreach ($cartItems as $ci) {
+                $sellerId = optional($ci->product)->user_id;
+                if ($sellerId) {
+                    $itemPrice = (float) ($ci->product->sale_price ?: $ci->product->price);
+                    $sub = $itemPrice * (int) ($ci->quantity ?? 1);
+                    if (!isset($shopTotals[$sellerId])) {
+                        $shopTotals[$sellerId] = [
+                            'seller' => $ci->product->user,
+                            'subtotal' => 0.0,
+                        ];
+                    }
+                    $shopTotals[$sellerId]['subtotal'] += $sub;
+                }
+            }
+
+            foreach ($shopTotals as $sellerId => $data) {
+                $destId = optional($data['seller']?->marketplaceProfile)->tap_destination_id;
+                $shopSubtotal = (float) $data['subtotal'];
+                $commission = round($shopSubtotal * ($commissionPct / 100), 2);
+                $sellerShare = max(0, round($shopSubtotal - $commission, 2));
+
+                if (!empty($destId) && $sellerShare > 0) {
+                    $destinationsList[] = [
+                        'id' => $destId,
                         'amount' => (float) number_format($sellerShare, 2, '.', ''),
                         'currency' => strtoupper($payment->currency ?: 'SAR'),
-                    ]
-                ]
+                    ];
+                    $totalSplit += $sellerShare;
+                    if (!$primaryDestinationId) {
+                        $primaryDestinationId = $destId;
+                    }
+                }
+            }
+        }
+
+        if (!empty($destinationsList) && $totalSplit > 0 && $totalSplit < (float) $payment->amount) {
+            $payload['destinations'] = [
+                'destination' => $destinationsList
             ];
 
             $payment->update([
-                'tap_destination_id' => $sellerDestinationId,
-                'tap_split_amount' => $sellerShare,
+                'tap_destination_id' => $primaryDestinationId,
+                'tap_split_amount' => $totalSplit,
             ]);
 
-            Log::info("TapPaymentService: Added split destination for Seller Shop #{$order->shop_id} (Dest: {$sellerDestinationId}, Amount: {$sellerShare} SAR)");
+            Log::info("TapPaymentService: Added split destinations for Marketplace checkout (Destinations: " . count($destinationsList) . ", Total Split: {$totalSplit} SAR)");
         }
 
         Log::info("TapPaymentService: Initiating marketplace charge request for payment #{$payment->id}", [

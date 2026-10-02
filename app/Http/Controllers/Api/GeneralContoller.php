@@ -54,6 +54,7 @@ class GeneralContoller extends Controller
                 'azhl_fee' => number_format((float) ($data->azhl_fee ?? 5.00), 2, '.', ''),
                 'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
                 'marketplace_customer_app_fee' => number_format((float) ($data->marketplace_customer_app_fee ?? 3.00), 2, '.', ''),
+                'marketplace_commission_percentage' => number_format((float) ($data->marketplace_commission_percentage ?? 10.00), 2, '.', ''),
                 'marketplace_vat_percentage' => '0.00',
                 'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
                 'payment_gateway_fixed_fee' => number_format((float) ($data->payment_gateway_fixed_fee ?? 0.00), 2, '.', ''),

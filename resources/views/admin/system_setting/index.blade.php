@@ -177,30 +177,44 @@
                             </div>
                         </div>
 
-                        {{-- 2. Marketplace Customer App Fee Settings --}}
+                        {{-- 2. Marketplace Platform & Commission Fees --}}
                         <div class="card settings-card mb-4 border-start border-4 border-success">
                             <div class="settings-card-header d-flex justify-content-between align-items-center">
                                 <h6 class="settings-card-title">
                                     <span class="settings-icon-wrapper icon-marketplace"><i class="bi bi-cart-check-fill"></i></span>
-                                    Marketplace Customer App Fee Configuration
+                                    Marketplace Platform & Seller Commission Fees
                                 </h6>
-                                <span class="badge-vat" style="background: rgba(16, 185, 129, 0.12); color: #059669;"><i class="bi bi-shield-check me-1"></i>Fixed App Fee</span>
+                                <span class="badge-vat" style="background: rgba(16, 185, 129, 0.12); color: #059669;"><i class="bi bi-shield-check me-1"></i>Marketplace Fees</span>
                             </div>
                             <div class="card-body p-4">
                                 <div class="row g-3">
-                                    <div class="col-md-12">
+                                    <div class="col-md-6">
                                         <label for="marketplace_customer_app_fee" class="form-label">Marketplace Customer App Fee (SAR)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" class="form-control form-control-lg fw-bold text-success @error('marketplace_customer_app_fee') is-invalid @enderror"
+                                            <input type="number" step="0.01" min="0" class="form-control @error('marketplace_customer_app_fee') is-invalid @enderror"
                                                 name="marketplace_customer_app_fee" id="marketplace_customer_app_fee"
                                                 value="{{ old('marketplace_customer_app_fee', $settings->marketplace_customer_app_fee ?? 3.00) }}" placeholder="3.00" required>
                                             <span class="input-group-text font-weight-bold bg-success-soft text-success">SAR</span>
                                         </div>
                                         <div class="helper-text mt-2">
                                             <i class="bi bi-info-circle me-1 text-success"></i>
-                                            <strong>Marketplace Fee Rule:</strong> This fixed Customer App Fee is added to the customer's total at cart checkout / payment initiation (e.g. 3.00 SAR). Percentage-based product VAT is no longer applied.
+                                            Added to buyer's cart checkout total (e.g. 3.00 SAR).
                                         </div>
                                         @error('marketplace_customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="marketplace_commission_percentage" class="form-label">Marketplace Seller Commission Fee (%)</label>
+                                        <div class="input-group">
+                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('marketplace_commission_percentage') is-invalid @enderror"
+                                                name="marketplace_commission_percentage" id="marketplace_commission_percentage"
+                                                value="{{ old('marketplace_commission_percentage', $settings->marketplace_commission_percentage ?? 10.00) }}" placeholder="10.00" required>
+                                            <span class="input-group-text font-weight-bold bg-success-soft text-success">%</span>
+                                        </div>
+                                        <div class="helper-text mt-2">
+                                            <i class="bi bi-info-circle me-1 text-success"></i>
+                                            Percentage deducted from seller product subtotal as Azhl commission (e.g. 10.00%).
+                                        </div>
+                                        @error('marketplace_commission_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
                             </div>
@@ -338,6 +352,10 @@
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-cart-fill text-success me-1"></i> Marketplace App Fee:</span>
                                         <strong class="text-success fw-bold">{{ number_format($settings->marketplace_customer_app_fee ?? 3.00, 2) }} SAR</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                                        <span class="text-muted"><i class="bi bi-shop text-success me-1"></i> Marketplace Commission:</span>
+                                        <strong class="text-dark fw-bold">{{ number_format($settings->marketplace_commission_percentage ?? 10.00, 2) }}%</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-person-workspace text-warning me-1"></i> Customer App Fee:</span>

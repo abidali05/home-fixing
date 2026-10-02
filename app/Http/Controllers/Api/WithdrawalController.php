@@ -64,36 +64,38 @@ class WithdrawalController extends Controller
     }
 
     /**
-     * Calculate marketplace order financials based on single 15% VAT and azhl_percentage commission
+     * Calculate marketplace order financials based on marketplace_commission_percentage
      */
     private function calculateMarketplaceFinancials($productSubtotal): array
     {
         $settings = SystemSettingModel::first();
         $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+        $commissionPct = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
 
-        $vatAmount = 0.00;
-        $totalWithVat = (float) $productSubtotal;
+        $subtotal = (float) $productSubtotal;
+        $customerTotal = round($subtotal + $marketplaceCustomerAppFee, 2);
 
-        // In marketplace, seller gets the full product subtotal without provider commission deductions.
-        $azhlFee = 0.0;
-        $netAmount = (float) $productSubtotal;
+        // Seller Net: Product subtotal minus marketplace commission percentage
+        $azhlFee = round($subtotal * ($commissionPct / 100), 2);
+        $netAmount = max(0, round($subtotal - $azhlFee, 2));
 
         return [
-            'products_subtotal' => $productSubtotal,
-            'subtotal' => $productSubtotal,
+            'products_subtotal' => $subtotal,
+            'subtotal' => $subtotal,
             'marketplace_vat_percentage' => 0.00,
             'total_product_vat' => 0.00,
             'vat_amount' => 0.00,
             'tax_amount' => 0.00,
-            'products_total_with_vat' => $totalWithVat,
-            'customer_paid_with_tax' => $totalWithVat,
-            'gross_amount' => $productSubtotal,
-            'customer_total' => $productSubtotal,
-            'total_amount' => $productSubtotal,
+            'products_total_with_vat' => $subtotal,
+            'customer_paid_with_tax' => $customerTotal,
+            'gross_amount' => $subtotal,
+            'customer_total' => $customerTotal,
+            'total_amount' => $customerTotal,
             'customer_app_fee' => $marketplaceCustomerAppFee,
             'marketplace_customer_app_fee' => $marketplaceCustomerAppFee,
             'gateway_fee' => 0.0,
-            'azhl_percentage' => 0.0,
+            'azhl_percentage' => $commissionPct,
+            'marketplace_commission_percentage' => $commissionPct,
             'azhl_fee' => $azhlFee,
             'net_amount' => $netAmount,
             'currency' => 'SAR',

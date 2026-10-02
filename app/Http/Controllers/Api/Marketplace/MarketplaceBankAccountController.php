@@ -274,31 +274,43 @@ class MarketplaceBankAccountController extends Controller
         }
 
         $settings = \App\Models\Admin\SystemSettingModel::first();
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $commissionPercentage = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
 
-        // Captured Payments for Seller's Marketplace Orders
-        $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
-            ->pluck('marketplace_order_id')
-            ->unique()
-            ->filter();
-
-        $capturedPayments = \App\Models\Payment::whereIn('marketplace_order_id', $orderIds)
-            ->where('status', 'captured')
+        // Captured Seller Orders: calculate from base product items
+        $capturedItems = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
+            ->whereHas('marketplaceOrder.payment', fn($q) => $q->where('status', 'captured'))
             ->get();
 
-        $grossEarnings = (float) $capturedPayments->sum('amount');
-        $azhlCommission = $grossEarnings * ($azhlPercentage / 100.00);
-        $netEarnings = max(0, $grossEarnings - $azhlCommission);
+        $grossEarnings = 0.0;
+        foreach ($capturedItems as $it) {
+            $val = (float) ($it->total_price ?? 0);
+            if ($val <= 0) {
+                $val = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+            }
+            $grossEarnings += $val;
+        }
 
-        // Pending Payments / Earnings
-        $pendingPayments = \App\Models\Payment::whereIn('marketplace_order_id', $orderIds)
-            ->whereIn('status', ['pending', 'processing', 'initiated'])
-            ->sum('amount');
+        $azhlCommission = round($grossEarnings * ($commissionPercentage / 100.00), 2);
+        $netEarnings = max(0, round($grossEarnings - $azhlCommission, 2));
+
+        // Pending Seller Items
+        $pendingItems = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
+            ->whereHas('marketplaceOrder.payment', fn($q) => $q->whereIn('status', ['pending', 'processing', 'initiated']))
+            ->get();
+
+        $pendingPayments = 0.0;
+        foreach ($pendingItems as $it) {
+            $val = (float) ($it->total_price ?? 0);
+            if ($val <= 0) {
+                $val = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+            }
+            $pendingPayments += $val;
+        }
 
         // Total Withdrawals
         $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'marketplace')
-            ->whereIn('status', ['approved', 'paid'])
+            ->whereIn('status', ['approved', 'paid', 'completed'])
             ->sum('amount');
 
         $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
@@ -315,7 +327,8 @@ class MarketplaceBankAccountController extends Controller
                 'currency' => 'SAR',
                 'gross_total_earnings' => round($grossEarnings, 2),
                 'net_total_earnings' => round($netEarnings, 2),
-                'azhl_commission_percentage' => $azhlPercentage,
+                'azhl_commission_percentage' => $commissionPercentage,
+                'marketplace_commission_percentage' => $commissionPercentage,
                 'azhl_commission_amount' => round($azhlCommission, 2),
                 'available_for_withdraw' => round($availableForWithdraw, 2),
                 'pending_amount' => round((float) $pendingPayments, 2),

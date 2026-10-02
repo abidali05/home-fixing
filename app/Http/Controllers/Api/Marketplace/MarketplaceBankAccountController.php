@@ -311,11 +311,25 @@ class MarketplaceBankAccountController extends Controller
             $pendingPayments += $val;
         }
 
-        // Total Withdrawals
-        $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // Total Withdrawals (Manual + Tap Auto Split)
+        $manualWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'marketplace')
             ->whereIn('status', ['approved', 'paid', 'completed'])
             ->sum('amount');
+
+        $sellerDestinationId = optional($user->marketplaceProfile)->tap_destination_id;
+        $autoTransferred = (float) \App\Models\Payment::where('status', 'captured')
+            ->whereNotNull('tap_destination_id')
+            ->where('tap_split_amount', '>', 0)
+            ->where(function ($q) use ($user, $sellerDestinationId) {
+                $q->whereHas('marketplaceOrder.items', fn($iq) => $iq->where('shop_id', $user->id));
+                if ($sellerDestinationId) {
+                    $q->orWhere('tap_destination_id', $sellerDestinationId);
+                }
+            })
+            ->sum('tap_split_amount');
+
+        $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
         $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'marketplace')

@@ -239,7 +239,7 @@ class WithdrawalController extends Controller
                 ->whereNotNull('tap_destination_id')
                 ->where('tap_split_amount', '>', 0)
                 ->where(function ($q) use ($userId) {
-                    $q->whereHas('marketplaceOrder', function ($mq) use ($userId) {
+                    $q->whereHas('marketplaceOrder.items', function ($mq) use ($userId) {
                         $mq->where('shop_id', $userId);
                     });
                 })
@@ -709,7 +709,7 @@ class WithdrawalController extends Controller
                     ->whereNotNull('tap_destination_id')
                     ->where('tap_split_amount', '>', 0)
                     ->where(function ($q) use ($user) {
-                        $q->whereHas('marketplaceOrder', function ($mq) use ($user) {
+                        $q->whereHas('marketplaceOrder.items', function ($mq) use ($user) {
                             $mq->where('shop_id', $user->id);
                         });
                     })

@@ -2,7 +2,9 @@
 
 namespace App\Services\Payment;
 
+use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
+use App\Models\Bid;
 use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
@@ -132,6 +134,18 @@ class TapPaymentService
             $order = Orders::where('job_id', $payment->job_id)->first();
             $financials = $order ? $order->calculateAndSyncFinancials(false) : null;
             $providerShare = $financials ? (float) $financials['net_amount'] : 0.00;
+
+            // If order not created yet (order is created on capture in HireProviderService), calculate from Bid / Payment amount!
+            if ($providerShare <= 0) {
+                $bid = $payment->bid ?: ($payment->bid_id ? Bid::find($payment->bid_id) : null);
+                $settings = SystemSettingModel::first();
+                $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+                $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+
+                $bidPrice = $bid ? (float) $bid->price : max(0, (float) $payment->amount - $customerAppFee);
+                $commission = round($bidPrice * ($azhlPercentage / 100), 2);
+                $providerShare = max(0, round($bidPrice - $commission, 2));
+            }
 
             if ($providerShare > 0 && $providerShare < (float) $payment->amount) {
                 $payload['destinations'] = [

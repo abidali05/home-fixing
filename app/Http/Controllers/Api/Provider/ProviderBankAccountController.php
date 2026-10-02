@@ -286,11 +286,19 @@ class ProviderBankAccountController extends Controller
         // 2. Total Earnings: Net provider credits from completed orders + referral rewards
         $totalEarnings = (float) $user->total_earnings;
 
-        // 3. Total Withdrawn: Sum of withdrawals where status = completed only
-        $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // 3. Total Withdrawn: Sum of completed manual withdrawals + auto-transfers via Tap
+        $manualWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
             ->where('status', 'completed')
             ->sum('amount');
+
+        $autoTransferred = (float) \App\Models\Payment::where('provider_id', $user->id)
+            ->where('status', 'captured')
+            ->whereNotNull('tap_destination_id')
+            ->where('tap_split_amount', '>', 0)
+            ->sum('tap_split_amount');
+
+        $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
         // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
         $reservedAmount = (float) \App\Models\Withdrawal::where('user_id', $user->id)

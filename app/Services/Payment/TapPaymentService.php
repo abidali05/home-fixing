@@ -2,6 +2,7 @@
 
 namespace App\Services\Payment;
 
+use App\Models\BankAccount;
 use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
@@ -10,6 +11,7 @@ use App\Models\Payment;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Job\HireProviderService;
+use App\Services\Payment\TapMarketplaceService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -91,6 +93,33 @@ class TapPaymentService
         // -------------------------------------------------------------
         $provider = $payment->provider_id ? User::find($payment->provider_id) : null;
         $destinationId = optional($provider?->providerProfile)->tap_destination_id;
+
+        // Auto-Onboard: If provider has bank account or profile IBAN but no tap_destination_id yet, onboard immediately!
+        if (empty($destinationId) && $provider) {
+            $bankAccount = BankAccount::where('user_id', $provider->id)
+                ->where('account_type', 'provider')
+                ->latest()
+                ->first();
+
+            $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
+            if (!empty($iban)) {
+                try {
+                    $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
+                        'iban' => $iban,
+                        'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
+                        'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
+                    ]);
+                    $destinationId = $onboardResult['data']['destination_id'] ?? null;
+                    if (empty($destinationId)) {
+                        $provider->refresh();
+                        $destinationId = optional($provider->providerProfile)->tap_destination_id;
+                    }
+                    Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
+                } catch (\Throwable $e) {
+                    Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
+                }
+            }
+        }
 
         if (!empty($destinationId)) {
             $order = Orders::where('job_id', $payment->job_id)->first();
@@ -239,6 +268,33 @@ class TapPaymentService
         if ($order && $order->shop_id) {
             $shop = User::find($order->shop_id);
             $sellerDestinationId = optional($shop?->marketplaceProfile)->tap_destination_id;
+
+            // Auto-Onboard: If seller has bank account but no tap_destination_id yet, onboard immediately!
+            if (empty($sellerDestinationId) && $shop) {
+                $bankAccount = BankAccount::where('user_id', $shop->id)
+                    ->where('account_type', 'marketplace')
+                    ->latest()
+                    ->first();
+                $iban = $bankAccount?->iban ?: optional($shop->marketplaceProfile)->iban;
+                if (!empty($iban)) {
+                    try {
+                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($shop, 'marketplace', [
+                            'iban' => $iban,
+                            'account_title' => $bankAccount?->account_title ?: optional($shop->marketplaceProfile)->account_title ?: $shop->name,
+                            'bank_name' => $bankAccount?->bank_name ?: optional($shop->marketplaceProfile)->bank_name ?: 'Saudi Bank',
+                        ]);
+                        $sellerDestinationId = $onboardResult['data']['destination_id'] ?? null;
+                        if (empty($sellerDestinationId)) {
+                            $shop->refresh();
+                            $sellerDestinationId = optional($shop->marketplaceProfile)->tap_destination_id;
+                        }
+                        Log::info("TapPaymentService: Auto-onboarded shop #{$shop->id} with Destination ID: {$sellerDestinationId}");
+                    } catch (\Throwable $e) {
+                        Log::warning("TapPaymentService: Auto-onboard failed for shop #{$shop->id}: " . $e->getMessage());
+                    }
+                }
+            }
+
             $orderBase = (float) ($order->subtotal ?? $order->total_amount ?? 0);
             $commission = round($orderBase * ($commissionPct / 100), 2);
             $sellerShare = max(0, round($orderBase - $commission, 2));
@@ -276,6 +332,34 @@ class TapPaymentService
 
             foreach ($shopTotals as $sellerId => $data) {
                 $destId = optional($data['seller']?->marketplaceProfile)->tap_destination_id;
+
+                // Auto-onboard cart seller if missing
+                if (empty($destId) && !empty($data['seller'])) {
+                    $sellerUser = $data['seller'];
+                    $bankAccount = BankAccount::where('user_id', $sellerUser->id)
+                        ->where('account_type', 'marketplace')
+                        ->latest()
+                        ->first();
+                    $iban = $bankAccount?->iban ?: optional($sellerUser->marketplaceProfile)->iban;
+                    if (!empty($iban)) {
+                        try {
+                            $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($sellerUser, 'marketplace', [
+                                'iban' => $iban,
+                                'account_title' => $bankAccount?->account_title ?: optional($sellerUser->marketplaceProfile)->account_title ?: $sellerUser->name,
+                                'bank_name' => $bankAccount?->bank_name ?: optional($sellerUser->marketplaceProfile)->bank_name ?: 'Saudi Bank',
+                            ]);
+                            $destId = $onboardResult['data']['destination_id'] ?? null;
+                            if (empty($destId)) {
+                                $sellerUser->refresh();
+                                $destId = optional($sellerUser->marketplaceProfile)->tap_destination_id;
+                            }
+                            Log::info("TapPaymentService: Auto-onboarded cart seller #{$sellerUser->id} with Destination ID: {$destId}");
+                        } catch (\Throwable $e) {
+                            Log::warning("TapPaymentService: Auto-onboard failed for cart seller #{$sellerUser->id}: " . $e->getMessage());
+                        }
+                    }
+                }
+
                 $shopSubtotal = (float) $data['subtotal'];
                 $commission = round($shopSubtotal * ($commissionPct / 100), 2);
                 $sellerShare = max(0, round($shopSubtotal - $commission, 2));

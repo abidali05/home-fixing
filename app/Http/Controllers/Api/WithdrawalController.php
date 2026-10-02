@@ -170,11 +170,19 @@ class WithdrawalController extends Controller
 
             $totalEarnings = $orderEarnings + $referralEarnings;
 
-            // 4. Total Withdrawn: Sum of completed withdrawals
-            $totalWithdrawn = (float) Withdrawal::where('user_id', $userId)
+            // 4. Total Withdrawn: Sum of completed manual withdrawals + completed Tap auto-splits!
+            $manualWithdrawn = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
                 ->sum('amount');
+
+            $autoTransferred = (float) Payment::where('provider_id', $userId)
+                ->where('status', 'captured')
+                ->whereNotNull('tap_destination_id')
+                ->where('tap_split_amount', '>', 0)
+                ->sum('tap_split_amount');
+
+            $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
             // 5. Reserved Funds: Active withdrawal requests currently requested or accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $userId)
@@ -222,10 +230,22 @@ class WithdrawalController extends Controller
             $referralEarnings = (float) ReferralReward::where('referrer_id', $userId)->sum('reward_amount');
             $totalEarnings = $orderEarnings + $referralEarnings;
 
-            $totalWithdrawn = (float) Withdrawal::where('user_id', $userId)
+            $manualWithdrawn = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'marketplace')
                 ->where('status', 'completed')
                 ->sum('amount');
+
+            $autoTransferred = (float) Payment::where('status', 'captured')
+                ->whereNotNull('tap_destination_id')
+                ->where('tap_split_amount', '>', 0)
+                ->where(function ($q) use ($userId) {
+                    $q->whereHas('marketplaceOrder', function ($mq) use ($userId) {
+                        $mq->where('shop_id', $userId);
+                    });
+                })
+                ->sum('tap_split_amount');
+
+            $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
             $reservedAmount = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'marketplace')
@@ -652,6 +672,71 @@ class WithdrawalController extends Controller
                         'rejection_reason' => $status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
                     ]
                 ]);
+            }
+
+            // Include Tap Auto-Split direct payouts
+            if ($accountType === 'provider') {
+                $autoSplitPayments = Payment::where('provider_id', $user->id)
+                    ->where('status', 'captured')
+                    ->whereNotNull('tap_destination_id')
+                    ->where('tap_split_amount', '>', 0)
+                    ->get();
+
+                foreach ($autoSplitPayments as $ap) {
+                    $transactions->push([
+                        'id' => (int) (900000 + $ap->id),
+                        'type' => 'withdraw',
+                        'label' => 'Auto-Payout (Tap)',
+                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'currency' => strtoupper($ap->currency ?: 'SAR'),
+                        'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'credit' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $ap->id,
+                            'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
+                            'bank_name' => 'Bank Account (Tap Auto-Transfer)',
+                            'status' => 'completed',
+                            'requested_at' => $ap->created_at ? $ap->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'accepted_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ]
+                    ]);
+                }
+            } else {
+                $autoSplitPayments = Payment::where('status', 'captured')
+                    ->whereNotNull('tap_destination_id')
+                    ->where('tap_split_amount', '>', 0)
+                    ->where(function ($q) use ($user) {
+                        $q->whereHas('marketplaceOrder', function ($mq) use ($user) {
+                            $mq->where('shop_id', $user->id);
+                        });
+                    })
+                    ->get();
+
+                foreach ($autoSplitPayments as $ap) {
+                    $transactions->push([
+                        'id' => (int) (900000 + $ap->id),
+                        'type' => 'withdraw',
+                        'label' => 'Auto-Payout (Tap)',
+                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'currency' => strtoupper($ap->currency ?: 'SAR'),
+                        'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'credit' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $ap->id,
+                            'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
+                            'bank_name' => 'Bank Account (Tap Auto-Transfer)',
+                            'status' => 'completed',
+                            'requested_at' => $ap->created_at ? $ap->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'accepted_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ]
+                    ]);
+                }
             }
         }
 

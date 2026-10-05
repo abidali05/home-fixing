@@ -17,6 +17,7 @@ use App\Services\Payment\TapMarketplaceService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class TapPaymentService
@@ -535,11 +536,14 @@ class TapPaymentService
     public function convertCartToMarketplaceOrder(Payment $payment): ?MarketplaceOrder
     {
         if ($payment->marketplace_order_id) {
-            return MarketplaceOrder::find($payment->marketplace_order_id);
+            $existing = MarketplaceOrder::find($payment->marketplace_order_id);
+            if ($existing) {
+                return $existing;
+            }
         }
 
         $userId = $payment->user_id;
-        $user = User::find($userId);
+        $user = $payment->user ?: User::find($userId);
         if (!$user) {
             return null;
         }
@@ -549,11 +553,6 @@ class TapPaymentService
         $cartItems = Cart::with('product')
             ->where('user_id', $userId)
             ->get();
-
-        if ($cartItems->isEmpty() && empty($meta['cart_items'])) {
-            Log::warning("convertCartToMarketplaceOrder: No cart items found for user {$userId}");
-            return null;
-        }
 
         return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
             $settings = \App\Models\Admin\SystemSettingModel::first();
@@ -565,43 +564,68 @@ class TapPaymentService
             $taxAmount = 0.00;
             $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $customerAppFee));
 
-            $order = MarketplaceOrder::create([
+            $orderData = [
                 'user_id' => $user->id,
                 'order_number' => 'ORD-' . now()->format('ymd') . Str::upper(Str::random(4)),
                 'shipping_address' => $meta['shipping_address'] ?? ($user->address ?? 'Default Address'),
                 'subtotal' => $subtotal,
                 'shipping_cost' => $shippingCost,
-                'tax_amount' => $taxAmount,
-                'customer_app_fee' => $customerAppFee,
                 'discount_price' => 0,
                 'total_amount' => $totalAmount,
                 'payment_method' => 'tap',
-                'payment_status' => 'paid',
                 'notes' => $meta['notes'] ?? null,
                 'status' => 'accept',
-            ]);
+            ];
+
+            if (Schema::hasColumn('marketplace_orders', 'customer_app_fee')) {
+                $orderData['customer_app_fee'] = $customerAppFee;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'tax_amount')) {
+                $orderData['tax_amount'] = $taxAmount;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'payment_status')) {
+                $orderData['payment_status'] = 'paid';
+            }
+
+            $order = MarketplaceOrder::create($orderData);
 
             if ($cartItems->isNotEmpty()) {
-                $productIds = $cartItems->pluck('product_id')->unique()->values();
+                $productIds = $cartItems->pluck('product_id')->filter()->unique()->values();
                 $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
 
                 foreach ($cartItems as $cartItem) {
                     $product = $products->get($cartItem->product_id);
-                    if ($product) {
-                        MarketplaceOrderItem::create([
-                            'marketplace_order_id' => $order->id,
-                            'product_id' => $product->id,
-                            'shop_id' => !empty($product->user_id) ? $product->user_id : null,
-                            'product_name' => $product->product_name,
-                            'quantity' => $cartItem->quantity,
-                            'base_price' => $cartItem->base_price,
-                            'total_price' => $cartItem->total_price,
-                        ]);
-                    }
+                    $price = $product ? (float) ($product->sale_price ?: $product->price) : (float) ($cartItem->base_price ?? 0);
+                    $qty = (int) ($cartItem->quantity ?? 1);
+                    $total = (float) ($cartItem->total_price ?: ($price * $qty));
+
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'shop_id' => !empty($product?->user_id) ? $product->user_id : null,
+                        'product_name' => $product?->product_name ?? ('Product #' . $cartItem->product_id),
+                        'quantity' => $qty,
+                        'base_price' => $price,
+                        'total_price' => $total,
+                    ]);
                 }
 
                 // Clear customer cart after order is successfully placed & paid!
                 Cart::where('user_id', $user->id)->delete();
+            } elseif (!empty($meta['cart_items']) && is_array($meta['cart_items'])) {
+                foreach ($meta['cart_items'] as $itemMeta) {
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => (int) ($itemMeta['product_id'] ?? 0),
+                        'shop_id' => !empty($itemMeta['shop_id']) ? (int) $itemMeta['shop_id'] : null,
+                        'product_name' => $itemMeta['product_name'] ?? 'Marketplace Item',
+                        'quantity' => (int) ($itemMeta['quantity'] ?? 1),
+                        'base_price' => (float) ($itemMeta['base_price'] ?? 0),
+                        'total_price' => (float) ($itemMeta['total_price'] ?? 0),
+                    ]);
+                }
             }
 
             $payment->update([

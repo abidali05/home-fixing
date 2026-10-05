@@ -63,15 +63,27 @@ class MarketplacePaymentController extends Controller
             $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 
             $productsSubtotal = 0.0;
+            $cartItemsData = [];
 
             foreach ($cartItems as $ci) {
                 $price = 0.0;
                 if ($ci->product) {
                     $price = (float) ($ci->product->sale_price ?: $ci->product->price);
+                } else {
+                    $price = (float) ($ci->base_price ?? 0.0);
                 }
                 $qty = (int) ($ci->quantity ?? 1);
                 $sub = $price * $qty;
                 $productsSubtotal += $sub;
+
+                $cartItemsData[] = [
+                    'product_id' => (int) $ci->product_id,
+                    'shop_id' => optional($ci->product)->user_id,
+                    'product_name' => optional($ci->product)->product_name ?? ('Product #' . $ci->product_id),
+                    'quantity' => $qty,
+                    'base_price' => $price,
+                    'total_price' => $sub,
+                ];
             }
 
             $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
@@ -105,6 +117,7 @@ class MarketplacePaymentController extends Controller
                 'subtotal' => $productsSubtotal,
                 'notes' => $request->input('notes'),
                 'cart_items_count' => $cartItems->count(),
+                'cart_items' => $cartItemsData,
             ], $breakdown);
 
             // Create Payment session for Cart Checkout
@@ -225,6 +238,9 @@ class MarketplacePaymentController extends Controller
 
             if ($payment->status === 'captured') {
                 $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
+                if (!$order && !$payment->job_id) {
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+                }
                 return response()->json([
                     'success' => true,
                     'message' => 'Payment is already captured and order created.',
@@ -232,9 +248,12 @@ class MarketplacePaymentController extends Controller
                         'payment_id' => (int) $payment->id,
                         'marketplace_order_id' => $order ? (int) $order->id : null,
                         'order_number' => $order ? $order->order_number : null,
+                        'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
+                        'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
                         'status' => 'captured',
                         'tap_charge_id' => $payment->tap_charge_id,
                         'redirect_url' => null,
+                        'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
@@ -274,14 +293,17 @@ class MarketplacePaymentController extends Controller
 
             // If Payment is CAPTURED: Create Order from Cart & Clear Cart!
             if ($chargeStatus === 'CAPTURED') {
+                if (!$payment->marketplace_order_id && !$payment->job_id) {
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+                } else if ($payment->marketplace_order_id) {
+                    $order = MarketplaceOrder::find($payment->marketplace_order_id);
+                }
+
                 $payment->update([
                     'status' => 'captured',
                     'tap_charge_id' => $tapChargeId,
+                    'marketplace_order_id' => $order ? (int) $order->id : $payment->marketplace_order_id,
                 ]);
-
-                if (!$payment->marketplace_order_id) {
-                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
-                }
 
                 return response()->json([
                     'success' => true,
@@ -342,7 +364,11 @@ class MarketplacePaymentController extends Controller
                 }
             }
 
-            $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
+            if ($payment->status === 'captured' && !$payment->marketplace_order_id && !$payment->job_id) {
+                $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+            } else {
+                $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
+            }
 
             return response()->json([
                 'success' => true,

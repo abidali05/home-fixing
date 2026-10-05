@@ -295,7 +295,7 @@ class TapPaymentService
                     $itemPrice = (float) ($it->base_price ?: ($it->product ? ($it->product->sale_price ?: $it->product->price) : 0));
                     $sub = (float) ($it->total_price ?: ($itemPrice * (int) ($it->quantity ?? 1)));
                     if (!isset($shopTotals[$sellerId])) {
-                        $sellerUser = $it->shop ?: optional($it->product)->user ?: User::find($sellerId);
+                        $sellerUser = $it->shop ?: optional($it->product)->user ?: optional($it->product)->seller ?: User::find($sellerId);
                         $shopTotals[$sellerId] = [
                             'seller' => $sellerUser,
                             'subtotal' => 0.0,
@@ -317,7 +317,7 @@ class TapPaymentService
                     $sub = $itemPrice * (int) ($ci->quantity ?? 1);
                     if (!isset($shopTotals[$sellerId])) {
                         $shopTotals[$sellerId] = [
-                            'seller' => $ci->product->user,
+                            'seller' => optional($ci->product)->user ?: optional($ci->product)->seller ?: User::find($sellerId),
                             'subtotal' => 0.0,
                         ];
                     }

@@ -60,67 +60,64 @@ class MarketplacePaymentController extends Controller
             }
 
             $settings = \App\Models\Admin\SystemSettingModel::first();
-            $marketplaceVatPct = (float) ($settings->marketplace_vat_percentage ?? 15.00);
-            $customerAppFee = 0.0; // Reverted: Customer App Fee is NOT charged on Marketplace
-            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
-            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+            $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 
             $productsSubtotal = 0.0;
-            $totalProductVat = 0.0;
+            $cartItemsData = [];
 
             foreach ($cartItems as $ci) {
                 $price = 0.0;
                 if ($ci->product) {
                     $price = (float) ($ci->product->sale_price ?: $ci->product->price);
+                } else {
+                    $price = (float) ($ci->base_price ?? 0.0);
                 }
                 $qty = (int) ($ci->quantity ?? 1);
                 $sub = $price * $qty;
-                $vat = $sub * ($marketplaceVatPct / 100);
                 $productsSubtotal += $sub;
-                $totalProductVat += $vat;
+
+                $cartItemsData[] = [
+                    'product_id' => (int) $ci->product_id,
+                    'shop_id' => optional($ci->product)->user_id,
+                    'product_name' => optional($ci->product)->product_name ?? ('Product #' . $ci->product_id),
+                    'quantity' => $qty,
+                    'base_price' => $price,
+                    'total_price' => $sub,
+                ];
             }
 
-            $productsTotalWithVat = $productsSubtotal + $totalProductVat;
             $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
-            $appFeeToApply = 0.0;
+            $customerAppFee = $cartItems->isNotEmpty() && $productsSubtotal > 0 ? $marketplaceCustomerAppFee : 0.0;
 
-            $baseSubtotal = $productsSubtotal;
-            $gatewaySubtotal = ($baseSubtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-            $totalAmount = max(0.1, round($productsTotalWithVat + $shippingCost + $totalGatewayFee, 2));
+            // Customer pays products_subtotal + customer_app_fee (plus shipping if any), without percentage VAT
+            $totalAmount = max(0.1, round($productsSubtotal + $shippingCost + $customerAppFee, 2));
 
             $breakdown = [
                 'products_subtotal' => number_format($productsSubtotal, 2, '.', ''),
-                'marketplace_vat_percentage' => number_format($marketplaceVatPct, 2, '.', ''),
-                'total_product_vat' => number_format($totalProductVat, 2, '.', ''),
-                'products_total_with_vat' => number_format($productsTotalWithVat, 2, '.', ''),
-                'customer_app_fee' => '0.00',
-                'subtotal' => number_format($baseSubtotal, 2, '.', ''),
+                'marketplace_vat_percentage' => '0.00',
+                'total_product_vat' => '0.00',
+                'products_total_with_vat' => number_format($productsSubtotal, 2, '.', ''),
+                'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'marketplace_customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                'subtotal' => number_format($productsSubtotal, 2, '.', ''),
                 'shipping_cost' => number_format($shippingCost, 2, '.', ''),
-                'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
-                'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'fixed_transaction_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'payment_gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                'gateway_fee_subtotal' => number_format($gatewaySubtotal, 2, '.', ''),
-                'gateway_vat_percentage' => number_format($gatewayVatPct, 2, '.', ''),
-                'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
-                'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
                 'total_payable_by_customer' => number_format($totalAmount, 2, '.', ''),
                 'grand_total' => number_format($totalAmount, 2, '.', ''),
                 'total_amount' => number_format($totalAmount, 2, '.', ''),
+                'total' => number_format($totalAmount, 2, '.', ''),
                 'currency' => strtoupper(optional($settings)->currency ?? 'SAR'),
             ];
 
             $checkoutMetadata = array_merge([
                 'shipping_address' => $request->input('shipping_address') ?: $user->address,
                 'shipping_cost' => $shippingCost,
-                'tax_amount' => $totalProductVat,
+                'tax_amount' => 0.00,
+                'customer_app_fee' => $customerAppFee,
+                'marketplace_customer_app_fee' => $customerAppFee,
                 'subtotal' => $productsSubtotal,
                 'notes' => $request->input('notes'),
                 'cart_items_count' => $cartItems->count(),
+                'cart_items' => $cartItemsData,
             ], $breakdown);
 
             // Create Payment session for Cart Checkout
@@ -241,6 +238,9 @@ class MarketplacePaymentController extends Controller
 
             if ($payment->status === 'captured') {
                 $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
+                if (!$order && !$payment->job_id) {
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+                }
                 return response()->json([
                     'success' => true,
                     'message' => 'Payment is already captured and order created.',
@@ -248,9 +248,12 @@ class MarketplacePaymentController extends Controller
                         'payment_id' => (int) $payment->id,
                         'marketplace_order_id' => $order ? (int) $order->id : null,
                         'order_number' => $order ? $order->order_number : null,
+                        'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
+                        'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
                         'status' => 'captured',
                         'tap_charge_id' => $payment->tap_charge_id,
                         'redirect_url' => null,
+                        'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
@@ -290,14 +293,17 @@ class MarketplacePaymentController extends Controller
 
             // If Payment is CAPTURED: Create Order from Cart & Clear Cart!
             if ($chargeStatus === 'CAPTURED') {
+                if (!$payment->marketplace_order_id && !$payment->job_id) {
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+                } else if ($payment->marketplace_order_id) {
+                    $order = MarketplaceOrder::find($payment->marketplace_order_id);
+                }
+
                 $payment->update([
                     'status' => 'captured',
                     'tap_charge_id' => $tapChargeId,
+                    'marketplace_order_id' => $order ? (int) $order->id : $payment->marketplace_order_id,
                 ]);
-
-                if (!$payment->marketplace_order_id) {
-                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
-                }
 
                 return response()->json([
                     'success' => true,
@@ -358,7 +364,11 @@ class MarketplacePaymentController extends Controller
                 }
             }
 
-            $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
+            if ($payment->status === 'captured' && !$payment->marketplace_order_id && !$payment->job_id) {
+                $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+            } else {
+                $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
+            }
 
             return response()->json([
                 'success' => true,

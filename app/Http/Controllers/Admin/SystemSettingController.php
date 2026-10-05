@@ -33,9 +33,10 @@ class SystemSettingController extends Controller
             'azhl_percentage' => 'nullable|numeric|min:0|max:100',
             'azhl_fee' => 'nullable|numeric|min:0',
             'customer_app_fee' => 'nullable|numeric|min:0',
+            'marketplace_customer_app_fee' => 'nullable|numeric|min:0',
+            'marketplace_commission_percentage' => 'nullable|numeric|min:0|max:100',
             'marketplace_vat_percentage' => 'nullable|numeric|min:0|max:100',
             'payment_gateway_fee_percentage' => 'nullable|numeric|min:0|max:100',
-            'payment_gateway_fixed_fee' => 'nullable|numeric|min:0',
             'payment_gateway_vat_percentage' => 'nullable|numeric|min:0|max:100',
             'referral_amount' => 'nullable|numeric|min:0',
         ]);
@@ -48,12 +49,16 @@ class SystemSettingController extends Controller
         $settings->system_name = $request->system_name;
         $settings->currency = $request->currency;
         $settings->payment_method = $request->payment_method;
-        $settings->azhl_percentage = $request->input('azhl_percentage', 10.00);
-        $settings->azhl_fee = $request->input('azhl_fee', 5.00);
+        $settings->azhl_percentage = $request->input('azhl_percentage', $settings->azhl_percentage ?? 10.00);
+        if ($request->has('azhl_fee')) {
+            $settings->azhl_fee = $request->input('azhl_fee');
+        }
         $settings->customer_app_fee = $request->input('customer_app_fee', 3.00);
-        $settings->marketplace_vat_percentage = $request->input('marketplace_vat_percentage', 15.00);
+        $settings->marketplace_customer_app_fee = $request->input('marketplace_customer_app_fee', 3.00);
+        $settings->marketplace_commission_percentage = $request->input('marketplace_commission_percentage', $settings->marketplace_commission_percentage ?? 10.00);
+        $settings->marketplace_vat_percentage = 0.00;
         $settings->payment_gateway_fee_percentage = $request->input('payment_gateway_fee_percentage', 2.50);
-        $settings->payment_gateway_fixed_fee = $request->input('payment_gateway_fixed_fee', 1.00);
+        $settings->payment_gateway_fixed_fee = 0.00;
         $settings->payment_gateway_vat_percentage = $request->input('payment_gateway_vat_percentage', 15.00);
         $settings->referral_amount = $request->input('referral_amount', 10.00);
 

@@ -9,6 +9,7 @@ use App\Models\BidModel;
 use App\Models\JobRequestImages;
 use App\Models\JobRequestModel;
 use App\Models\Orders;
+use App\Models\OrderTracking;
 use App\Models\User;
 use App\Notifications\BidAcceptedNotification;
 use App\Notifications\BidRejectedNotification;
@@ -212,16 +213,30 @@ class HiringController extends Controller
 
             DB::commit();
 
-            $providers = User::query()
-                ->whereHas('providerProfile', function ($q) use ($jobRequest) {
+            $jobLat = $jobRequest->latitude ? (float) $jobRequest->latitude : null;
+            $jobLng = $jobRequest->longitude ? (float) $jobRequest->longitude : null;
+
+            $providersQuery = User::query()
+                ->where('role', 1)
+                ->whereHas('providerProfile', function ($q) use ($jobRequest, $jobLat, $jobLng) {
                     $categoryId = (int) $jobRequest->category_id;
 
                     $q->where(function ($sub) use ($categoryId) {
                         $sub->whereJsonContains('service_category', $categoryId)
                             ->orWhereJsonContains('service_category', (string) $categoryId);
                     });
-                })
-                ->get();
+
+                    if ($jobLat && $jobLng) {
+                        $q->whereNotNull('latitude')
+                            ->whereNotNull('longitude')
+                            ->whereRaw(
+                                '(6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))) <= 5',
+                                [$jobLat, $jobLng, $jobLat]
+                            );
+                    }
+                });
+
+            $providers = $providersQuery->get();
 
             Notification::send($providers, (new JobPostedNotification($jobRequest))->afterCommit());
             return $this->success($jobRequest, 'Request Submitted successfully.');
@@ -282,9 +297,18 @@ class HiringController extends Controller
                 }
                 $request->setAttribute('hired_provider', $provider);
                 $request->setAttribute('order_status', $order->status);
+                $request->setAttribute('extra_amount', number_format((float) ($order->extra_amount ?? 0), 2, '.', ''));
+                $request->setAttribute('extra_amount_reason', $order->extra_amount_reason);
+                $request->setAttribute('extra_amount_status', (string) ($order->extra_amount_status ?: 'none'));
+                $request->setAttribute('total_amount', number_format((float) ($order->total_amount ?: ($order->price + ($order->extra_amount_status !== 'rejected' ? $order->extra_amount : 0))), 2, '.', ''));
+                $request->setAttribute('order', $order);
             } else {
                 $request->setAttribute('hired_provider', null);
                 $request->setAttribute('order_status', null);
+                $request->setAttribute('extra_amount', '0.00');
+                $request->setAttribute('extra_amount_reason', null);
+                $request->setAttribute('extra_amount_status', 'none');
+                $request->setAttribute('total_amount', '0.00');
             }
 
             return $this->success($request);
@@ -300,33 +324,25 @@ class HiringController extends Controller
     {
         try {
             $settings = SystemSettingModel::first();
-
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
-            $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
 
             $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
 
             foreach ($bids as $bid) {
                 $repairPrice = (float) ($bid->price ?? 0);
-                $subtotal = $repairPrice + $customerAppFee;
+                $totalPayable = $repairPrice + $customerAppFee;
 
-                $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-                $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-                $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-
-                $totalPayableByCustomer = $repairPrice + $customerAppFee + $totalGatewayFee;
+                $bid->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                $bid->total_price = number_format($totalPayable, 2, '.', '');
+                $bid->total_payable_by_customer = number_format($totalPayable, 2, '.', '');
 
                 $bid->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'subtotal' => number_format($subtotal, 2, '.', ''),
-                    'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
-                    'gateway_fixed_fee' => number_format($gatewayFixedFee, 2, '.', ''),
-                    'gateway_vat' => number_format($gatewayVat, 2, '.', ''),
-                    'total_gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
-                    'total_payable_by_customer' => number_format($totalPayableByCustomer, 2, '.', ''),
+                    'subtotal' => number_format($totalPayable, 2, '.', ''),
+                    'total_payable_by_customer' => number_format($totalPayable, 2, '.', ''),
+                    'total_amount' => number_format($totalPayable, 2, '.', ''),
+                    'total' => number_format($totalPayable, 2, '.', ''),
                 ];
             }
 
@@ -431,14 +447,35 @@ class HiringController extends Controller
             $order = Orders::where('job_id', $job->id)->first();
 
             if (!$order) {
-                DB::rollBack();
-                return $this->error('Order not found for this job.', 404);
+                $order = new Orders();
+                $order->user_id = $job->user_id ?? $customer->id;
+                $order->job_id = $job->id;
+                $order->source = 'bid';
+                $order->address = $job->address ?? '';
+                $order->details = $job->description ?? '';
+                $order->paid_to_system = 0;
             }
 
             $order->provider_id = $bid->provider_id;
             $order->price = $bid->price;
             $order->status = 'pending'; // or whatever status you want after bid acceptance
+            $order->calculateAndSyncFinancials(false);
             $order->save();
+
+            // Create or update initial tracking entity with 'pending' status
+            $tracking = OrderTracking::where('order_id', $order->id)
+                ->where('status', 'pending')
+                ->first();
+
+            if (!$tracking) {
+                $tracking = new OrderTracking();
+                $tracking->order_id = $order->id;
+                $tracking->status = 'pending';
+            }
+
+            $tracking->latitude = $request->latitude ?? $order->latitude ?? $job->latitude ?? null;
+            $tracking->longitude = $request->longitude ?? $order->longitude ?? $job->longitude ?? null;
+            $tracking->save();
 
             DB::commit();
 

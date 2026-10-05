@@ -5,31 +5,18 @@ namespace App\Http\Controllers\Api\Provider;
 use App\Http\Controllers\Controller;
 use App\Models\BankAccount;
 use App\Models\ProviderProfile;
+use App\Services\Banking\IbanApiService;
+use App\Services\Payment\TapMarketplaceService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class ProviderBankAccountController extends Controller
 {
     /**
-     * Known Saudi Bank Mapping helper by IBAN 2-digit bank code.
+     * Validate IBAN and return bank metadata using IBAN API service
      */
-    private array $saudiBanks = [
-        '10' => ['name' => 'Saudi National Bank (SNB)', 'swift' => 'NCBKSAJE', 'location' => 'JEDDAH, Saudi Arabia'],
-        '20' => ['name' => 'Al Rajhi Bank', 'swift' => 'RJHISARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '15' => ['name' => 'Bank AlBilad', 'swift' => 'BLADSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '05' => ['name' => 'Alinma Bank', 'swift' => 'INMASARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '50' => ['name' => 'Saudi Awwal Bank (SABB)', 'swift' => 'SABBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '55' => ['name' => 'Banque Saudi Fransi', 'swift' => 'BSFRSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '65' => ['name' => 'Saudi Investment Bank (SAIB)', 'swift' => 'SAIBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '80' => ['name' => 'Arab National Bank (ANB)', 'swift' => 'ARNBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '60' => ['name' => 'Bank AlJazira', 'swift' => 'BJAZSARI', 'location' => 'JEDDAH, Saudi Arabia'],
-        '45' => ['name' => 'Saudi British Bank', 'swift' => 'SABBKS22', 'location' => 'RIYADH, Saudi Arabia'],
-    ];
-
-    /**
-     * Validate Saudi IBAN and return bank metadata
-     */
-    public function validateIban(Request $request)
+    public function validateIban(Request $request, IbanApiService $ibanService)
     {
         $validator = Validator::make($request->all(), [
             'iban' => 'required|string',
@@ -43,31 +30,24 @@ class ProviderBankAccountController extends Controller
             ], 422);
         }
 
-        $iban = strtoupper(str_replace(' ', '', $request->iban));
+        $result = $ibanService->verify($request->iban);
 
-        if (!str_starts_with($iban, 'SA') || strlen($iban) !== 24) {
+        if (!$result['valid']) {
             return response()->json([
                 'status' => 400,
-                'message' => 'Invalid Saudi IBAN format. Must start with SA followed by 22 digits.',
+                'message' => $result['message'],
                 'data' => null
             ], 400);
         }
 
-        $bankCode = substr($iban, 4, 2);
-        $bankInfo = $this->saudiBanks[$bankCode] ?? [
-            'name' => 'Saudi Commercial Bank',
-            'swift' => 'SAUDBANK',
-            'location' => 'Saudi Arabia',
-        ];
-
         return response()->json([
             'status' => 200,
-            'message' => 'IBAN verified successfully.',
+            'message' => $result['message'],
             'data' => [
-                'iban' => $iban,
-                'bank_name' => $bankInfo['name'],
-                'swift_code' => $bankInfo['swift'],
-                'bank_location' => $bankInfo['location'],
+                'iban' => $result['data']['iban'],
+                'bank_name' => $result['data']['bank_name'],
+                'swift_code' => $result['data']['swift_code'],
+                'bank_location' => $result['data']['bank_location'],
             ]
         ]);
     }
@@ -184,6 +164,22 @@ class ProviderBankAccountController extends Controller
             'bank_location' => $account->bank_location,
         ]);
 
+        // Auto-onboard to Tap Marketplace for split payments
+        try {
+            $onboard = app(TapMarketplaceService::class)->onboardRetailer($user, 'provider', [
+                'iban' => $account->iban,
+                'account_title' => $account->account_title,
+                'bank_name' => $account->bank_name,
+            ]);
+            $destId = $onboard['data']['destination_id'] ?? optional($user->providerProfile)->tap_destination_id;
+            if ($destId) {
+                $account->update(['tap_destination_id' => $destId]);
+            }
+            $account->refresh();
+        } catch (\Throwable $e) {
+            Log::warning("Tap Marketplace auto-onboarding error for provider #{$user->id}: " . $e->getMessage());
+        }
+
         return response()->json([
             'status' => 200,
             'message' => 'Bank Account added successfully.',
@@ -282,7 +278,7 @@ class ProviderBankAccountController extends Controller
         }
 
         $settings = \App\Models\Admin\SystemSettingModel::first();
-        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
         // 1. Pending Amount: Gross value of active/held provider orders
         $pendingAmount = (float) \App\Models\Payment::where('provider_id', $user->id)
@@ -291,26 +287,22 @@ class ProviderBankAccountController extends Controller
             })
             ->sum('amount');
 
-        // 2. Total Earnings: Sum of net provider credits from completed orders (gross - fixed azhl_fee)
-        $completedPayments = \App\Models\Payment::where('provider_id', $user->id)
-            ->where('status', 'captured')
-            ->whereHas('job', function ($q) {
-                $q->whereIn('status', ['completed', 'accepted', 'finished']);
-            })
-            ->get();
+        // 2. Total Earnings: Net provider credits from completed orders + referral rewards
+        $totalEarnings = (float) $user->total_earnings;
 
-        $totalEarnings = 0.0;
-        foreach ($completedPayments as $payment) {
-            $gross = (float) $payment->amount;
-            $net = max(0, $gross - $azhlFeePerOrder);
-            $totalEarnings += $net;
-        }
-
-        // 3. Total Withdrawn: Sum of withdrawals where status = completed only
-        $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // 3. Total Withdrawn: Sum of completed manual withdrawals + auto-transfers via Tap
+        $manualWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'provider')
             ->where('status', 'completed')
             ->sum('amount');
+
+        $autoTransferred = (float) \App\Models\Payment::where('provider_id', $user->id)
+            ->where('status', 'captured')
+            ->whereNotNull('tap_destination_id')
+            ->where('tap_split_amount', '>', 0)
+            ->sum('tap_split_amount');
+
+        $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
         // 4. Reserved Funds: Active withdrawal requests currently requested or accepted
         $reservedAmount = (float) \App\Models\Withdrawal::where('user_id', $user->id)
@@ -331,6 +323,44 @@ class ProviderBankAccountController extends Controller
                 'total_withdrawn' => round($totalWithdrawn, 2),
                 'currency' => 'SAR'
             ]
+        ]);
+    }
+
+    /**
+     * Explicitly onboard provider to Tap Marketplace (or refresh destination/KYC)
+     */
+    public function tapOnboard(Request $request, TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $res = $marketplaceService->onboardRetailer($user, 'provider', $request->all());
+
+        return response()->json([
+            'status' => $res['success'] ? 200 : 400,
+            'message' => $res['message'],
+            'data' => $res['data']
+        ], $res['success'] ? 200 : 400);
+    }
+
+    /**
+     * Get Tap Marketplace account and payout status for provider
+     */
+    public function tapStatus(TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $status = $marketplaceService->getRetailerStatus($user, 'provider');
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Tap Marketplace account status fetched.',
+            'data' => $status
         ]);
     }
 }

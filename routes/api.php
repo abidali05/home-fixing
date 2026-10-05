@@ -146,6 +146,9 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('provider/bank-accounts/{id}/update', [ProviderBankAccountController::class, 'updateBankAccount']);
         Route::put('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'updateBankAccount']);
         Route::delete('provider/bank-accounts/{id}', [ProviderBankAccountController::class, 'deleteBankAccount']);
+        Route::post('provider/bank-accounts/{id}/delete', [ProviderBankAccountController::class, 'deleteBankAccount']);
+        Route::post('provider/tap-onboard', [ProviderBankAccountController::class, 'tapOnboard']);
+        Route::get('provider/tap-status', [ProviderBankAccountController::class, 'tapStatus']);
     });
 
     Route::post('update-order-status/{id}', [GeneralContoller::class, 'update_order_status']);
@@ -188,6 +191,8 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::put('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'updateBankAccount']);
     Route::delete('marketplace/bank-accounts/{id}', [MarketplaceBankAccountController::class, 'deleteBankAccount']);
     Route::post('marketplace/bank-accounts/{id}/delete', [MarketplaceBankAccountController::class, 'deleteBankAccount']);
+    Route::post('marketplace/tap-onboard', [MarketplaceBankAccountController::class, 'tapOnboard']);
+    Route::get('marketplace/tap-status', [MarketplaceBankAccountController::class, 'tapStatus']);
     // ================================================================== Marketplace Routes End=================================================================
 
 
@@ -244,6 +249,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
     // Order Cancellation & Refund Specification Routes
     Route::post('orders/{order_id}/cancel', [OrderCancellationController::class, 'cancelOrder']);
+    Route::post('orders/{order_id}/extra-amount-action', [OrdersController::class, 'extraAmountAction']);
 
     // Customer Bank Account Routes (Max 3 Limit)
     Route::get('customer/bank-accounts', [CustomerBankAccountController::class, 'getBankAccounts']);

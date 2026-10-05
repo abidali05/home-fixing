@@ -177,30 +177,44 @@
                             </div>
                         </div>
 
-                        {{-- 2. Marketplace Product VAT Settings --}}
+                        {{-- 2. Marketplace Platform & Commission Fees --}}
                         <div class="card settings-card mb-4 border-start border-4 border-success">
                             <div class="settings-card-header d-flex justify-content-between align-items-center">
                                 <h6 class="settings-card-title">
                                     <span class="settings-icon-wrapper icon-marketplace"><i class="bi bi-cart-check-fill"></i></span>
-                                    Marketplace Product VAT & Tax Configuration
+                                    Marketplace Platform & Seller Commission Fees
                                 </h6>
-                                <span class="badge-vat"><i class="bi bi-shield-check me-1"></i>15% Product VAT</span>
+                                <span class="badge-vat" style="background: rgba(16, 185, 129, 0.12); color: #059669;"><i class="bi bi-shield-check me-1"></i>Marketplace Fees</span>
                             </div>
                             <div class="card-body p-4">
                                 <div class="row g-3">
-                                    <div class="col-md-12">
-                                        <label for="marketplace_vat_percentage" class="form-label">Marketplace Product VAT Tax (%)</label>
+                                    <div class="col-md-6">
+                                        <label for="marketplace_customer_app_fee" class="form-label">Marketplace Customer App Fee (SAR)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" max="100" class="form-control form-control-lg fw-bold text-success @error('marketplace_vat_percentage') is-invalid @enderror"
-                                                name="marketplace_vat_percentage" id="marketplace_vat_percentage"
-                                                value="{{ old('marketplace_vat_percentage', $settings->marketplace_vat_percentage ?? 15.00) }}" placeholder="15.00" required>
+                                            <input type="number" step="0.01" min="0" class="form-control @error('marketplace_customer_app_fee') is-invalid @enderror"
+                                                name="marketplace_customer_app_fee" id="marketplace_customer_app_fee"
+                                                value="{{ old('marketplace_customer_app_fee', $settings->marketplace_customer_app_fee ?? 3.00) }}" placeholder="3.00" required>
+                                            <span class="input-group-text font-weight-bold bg-success-soft text-success">SAR</span>
+                                        </div>
+                                        <div class="helper-text mt-2">
+                                            <i class="bi bi-info-circle me-1 text-success"></i>
+                                            Added to buyer's cart checkout total (e.g. 3.00 SAR).
+                                        </div>
+                                        @error('marketplace_customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="marketplace_commission_percentage" class="form-label">Marketplace Seller Commission Fee (%)</label>
+                                        <div class="input-group">
+                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('marketplace_commission_percentage') is-invalid @enderror"
+                                                name="marketplace_commission_percentage" id="marketplace_commission_percentage"
+                                                value="{{ old('marketplace_commission_percentage', $settings->marketplace_commission_percentage ?? 10.00) }}" placeholder="10.00" required>
                                             <span class="input-group-text font-weight-bold bg-success-soft text-success">%</span>
                                         </div>
                                         <div class="helper-text mt-2">
                                             <i class="bi bi-info-circle me-1 text-success"></i>
-                                            <strong>Product VAT Rule:</strong> This 15% VAT tax applies to Marketplace product prices multiplied by quantity (e.g. 1 unit of 100 SAR product = 15 SAR VAT, 2 units of 100 SAR = 30 SAR VAT).
+                                            Percentage deducted from seller product subtotal as Azhl commission (e.g. 10.00%).
                                         </div>
-                                        @error('marketplace_vat_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                        @error('marketplace_commission_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
                             </div>
@@ -228,15 +242,15 @@
                                         @error('customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                     <div class="col-md-6">
-                                        <label for="azhl_fee" class="form-label">Provider Commission Fee (SAR)</label>
+                                        <label for="azhl_percentage" class="form-label">Provider Commission Fee (%)</label>
                                         <div class="input-group">
-                                            <input type="number" step="0.01" min="0" class="form-control @error('azhl_fee') is-invalid @enderror"
-                                                name="azhl_fee" id="azhl_fee"
-                                                value="{{ old('azhl_fee', $settings->azhl_fee ?? 5.00) }}" placeholder="5.00" required>
-                                            <span class="input-group-text">SAR</span>
+                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('azhl_percentage') is-invalid @enderror"
+                                                name="azhl_percentage" id="azhl_percentage"
+                                                value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 10.00) }}" placeholder="10.00" required>
+                                            <span class="input-group-text">%</span>
                                         </div>
-                                        <div class="helper-text">Commission fee deducted from service provider net earnings per order (e.g. 5.00 SAR).</div>
-                                        @error('azhl_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                        <div class="helper-text">Percentage commission deducted from service provider base earnings per order (e.g. 10.00%).</div>
+                                        @error('azhl_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
                                 </div>
                             </div>
@@ -252,7 +266,7 @@
                             </div>
                             <div class="card-body p-4">
                                 <div class="row g-3">
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <label for="payment_gateway_fee_percentage" class="form-label">Gateway Fee (%)</label>
                                         <div class="input-group">
                                             <input type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_fee_percentage') is-invalid @enderror"
@@ -264,19 +278,7 @@
                                         @error('payment_gateway_fee_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                     </div>
 
-                                    <div class="col-md-4">
-                                        <label for="payment_gateway_fixed_fee" class="form-label">Fixed Transaction Fee (SAR)</label>
-                                        <div class="input-group">
-                                            <input type="number" step="0.01" min="0" class="form-control @error('payment_gateway_fixed_fee') is-invalid @enderror"
-                                                name="payment_gateway_fixed_fee" id="payment_gateway_fixed_fee"
-                                                value="{{ old('payment_gateway_fixed_fee', $settings->payment_gateway_fixed_fee ?? 1.00) }}" placeholder="1.00" required>
-                                            <span class="input-group-text">SAR</span>
-                                        </div>
-                                        <div class="helper-text">Fixed fee per online checkout (e.g. 1.00 SAR).</div>
-                                        @error('payment_gateway_fixed_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
-                                    </div>
-
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <label for="payment_gateway_vat_percentage" class="form-label">Gateway Fee VAT (%)</label>
                                         <div class="input-group">
                                             <input type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_vat_percentage') is-invalid @enderror"
@@ -334,17 +336,26 @@
                             </div>
                             <div class="card-body p-4">
                                 <div class="preview-box text-center mb-4">
-                                    <img id="logoPreview"
-                                        src="{{ !empty($settings->logo) ? asset('uploads/system_settings/' . $settings->logo) : 'https://via.placeholder.com/150x160?text=System+Logo' }}"
-                                        class="img-fluid rounded p-2 bg-white shadow-sm mb-3" style="max-height: 120px; object-fit: contain;">
+                                    <div class="d-inline-flex align-items-center justify-content-center p-3 mb-3" 
+                                         style="background: linear-gradient(135deg, #4F2396 0%, #682eb8 100%); border-radius: 16px; box-shadow: 0 8px 22px rgba(79, 35, 150, 0.25); border: 1px solid rgba(255, 255, 255, 0.15); min-width: 140px; min-height: 70px;">
+                                        <img id="logoPreview"
+                                            src="{{ (!empty($settings->logo) && file_exists(public_path('uploads/system_settings/' . $settings->logo))) ? asset('uploads/system_settings/' . $settings->logo) : asset('uploads/system_settings/Logo1.png') }}"
+                                            class="img-fluid"
+                                            alt="{{ $settings->system_name ?? 'Azhl' }} Logo"
+                                            style="max-height: 54px; width: auto; object-fit: contain;">
+                                    </div>
                                     <h6 class="fw-bold mb-1" id="previewSystemName">{{ $settings->system_name ?? 'Azhl' }}</h6>
                                     <span class="badge bg-primary px-3 py-2 text-xs" id="previewCurrency">{{ $settings->currency ?? 'SAR' }}</span>
                                 </div>
 
                                 <ul class="list-group list-group-flush text-xs">
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                                        <span class="text-muted"><i class="bi bi-cart-fill text-success me-1"></i> Marketplace Product VAT:</span>
-                                        <strong class="text-success fw-bold">{{ $settings->marketplace_vat_percentage ?? 15.00 }}%</strong>
+                                        <span class="text-muted"><i class="bi bi-cart-fill text-success me-1"></i> Marketplace App Fee:</span>
+                                        <strong class="text-success fw-bold">{{ number_format($settings->marketplace_customer_app_fee ?? 3.00, 2) }} SAR</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                                        <span class="text-muted"><i class="bi bi-shop text-success me-1"></i> Marketplace Commission:</span>
+                                        <strong class="text-dark fw-bold">{{ number_format($settings->marketplace_commission_percentage ?? 10.00, 2) }}%</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-person-workspace text-warning me-1"></i> Customer App Fee:</span>
@@ -352,11 +363,11 @@
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-briefcase-fill text-warning me-1"></i> Provider Commission:</span>
-                                        <strong class="text-dark">{{ number_format($settings->azhl_fee ?? 5.00, 2) }} SAR</strong>
+                                        <strong class="text-dark">{{ number_format($settings->azhl_percentage ?? 10.00, 2) }}%</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-credit-card-fill text-primary me-1"></i> Gateway Fee:</span>
-                                        <strong class="text-dark">{{ $settings->payment_gateway_fee_percentage ?? 2.50 }}% + {{ number_format($settings->payment_gateway_fixed_fee ?? 1.00, 2) }} SAR</strong>
+                                        <strong class="text-dark">{{ $settings->payment_gateway_fee_percentage ?? 2.50 }}%</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                                         <span class="text-muted"><i class="bi bi-percent text-primary me-1"></i> Gateway VAT:</span>

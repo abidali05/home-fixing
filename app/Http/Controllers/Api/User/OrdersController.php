@@ -52,7 +52,7 @@ class OrdersController extends Controller
                 ->keyBy('order_id');
 
             $capturedJobIds = Payment::where('user_id', $user->id)
-                ->where('status', 'captured')
+                ->whereIn('status', ['captured', 'paid'])
                 ->pluck('job_id')
                 ->filter()
                 ->toArray();
@@ -67,9 +67,37 @@ class OrdersController extends Controller
                 }
 
                 $query = Orders::with(['job.category', 'provider'])
-                    ->where('user_id', $user->id)
-                    ->whereIn('status', (array) $statusArray)
-                    ->orderBy('id', 'DESC');
+                    ->where('user_id', $user->id);
+
+                if ($key === 'ongoing_orders') {
+                    // Ongoing orders: normal active statuses + completed orders whose payment is still pending
+                    $query->where(function ($q) use ($capturedJobIds) {
+                        $q->whereIn('status', ['arrived', 'on_the_way', 'working', 'provider_completed'])
+                          ->orWhere(function ($sub) use ($capturedJobIds) {
+                              $sub->where('status', 'completed')
+                                  ->where(function ($p) {
+                                      $p->where('paid_to_system', '!=', 1)
+                                        ->orWhereNull('paid_to_system');
+                                  });
+                              if (!empty($capturedJobIds)) {
+                                  $sub->whereNotIn('job_id', $capturedJobIds);
+                              }
+                          });
+                    });
+                } elseif ($key === 'completed_orders') {
+                    // Completed orders: status must be completed AND payment must be paid
+                    $query->where('status', 'completed')
+                          ->where(function ($q) use ($capturedJobIds) {
+                              $q->where('paid_to_system', 1);
+                              if (!empty($capturedJobIds)) {
+                                  $q->orWhereIn('job_id', $capturedJobIds);
+                              }
+                          });
+                } else {
+                    $query->whereIn('status', (array) $statusArray);
+                }
+
+                $query->orderBy('id', 'DESC');
 
                 $categoryTotal = $query->count();
                 $totalCount += $categoryTotal;
@@ -85,6 +113,19 @@ class OrdersController extends Controller
                             ? asset('uploads/service_category/' . $category->path)
                             : asset('assets/img/default.jpg');
                     }
+
+                    $extraAmount = (float) ($order->extra_amount ?? 0);
+                    $applicableExtra = ($order->extra_amount_status !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+                    $orderPrice = (float) ($order->price ?? 0);
+                    $total = (float) ($order->total_amount ?: ($orderPrice + $applicableExtra));
+
+                    $order->extra_amount = number_format($extraAmount, 2, '.', '');
+                    $order->extra_amount_reason = $order->extra_amount_reason;
+                    $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
+                    $order->total_amount = number_format($total, 2, '.', '');
+                    $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
+                    $order->is_paid = $isPaid;
+                    $order->payment_status = $isPaid ? 'paid' : 'pending';
 
                     // For cancelled_orders: Attach refund status lifecycle details
                     if ($key === 'cancelled_orders' || strtolower($order->status) === 'cancelled') {
@@ -179,36 +220,30 @@ class OrdersController extends Controller
                 ->first();
 
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+            $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
             $job = $order->job;
             $categoryName = optional(optional($job)->category)->name ?: 'General Service';
             $orderTitle = optional($job)->title ?: $categoryName;
 
-            $repairPrice = (float) ($order->price ?? 0);
-            if (!empty($order->job_id)) {
-                $acceptedBid = \App\Models\BidModel::where('job_id', $order->job_id)->whereIn('status', ['accepted', 'completed', 'hired', 'cancelled'])->first();
-                if ($acceptedBid && (float) $acceptedBid->price > 0) {
-                    $repairPrice = (float) $acceptedBid->price;
-                }
-            }
-
-            if ($repairPrice > 103) {
-                $approxSubtotal = ($repairPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
-                $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
-                $repairPrice = abs($estimatedRepair - round($estimatedRepair)) < 0.1 ? (float) round($estimatedRepair) : (float) round($estimatedRepair, 2);
-            }
-
-            $subtotal = $repairPrice + $customerAppFee;
-            $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-            $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-            $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
-            $totalPayableByCustomer = $payment ? (float) $payment->amount : ($repairPrice + $customerAppFee + $totalGatewayFee);
-            $netProviderEarning = max(0, $repairPrice - $azhlFee);
+            $financials = $order->calculateAndSyncFinancials(true);
+            $repairPrice = $financials['repair_price'];
+            $extraAmount = $financials['extra_amount'];
+            $acceptedExtra = $financials['accepted_extra'];
+            $finalBase = $financials['final_base_price'];
+            $customerAppFee = $financials['customer_app_fee'];
+            $totalGatewayFee = $financials['gateway_fee'];
+            $gatewayVat = $financials['gateway_vat'];
+            $subtotal = $financials['subtotal'];
+            $totalPayableByCustomer = $payment ? (float) $payment->amount : $subtotal;
+            $azhlFee = $financials['azhl_fee'];
+            $netProviderEarning = $financials['net_amount'];
+            $gatewayFeePct = $order->gateway_fee_percentage !== null ? (float) $order->gateway_fee_percentage : $gatewayFeePct;
+            $gatewayVatPct = $order->gateway_vat_percentage !== null ? (float) $order->gateway_vat_percentage : $gatewayVatPct;
 
             $receiptData = [
                 'receipt_no' => 'SRV-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
@@ -229,6 +264,12 @@ class OrdersController extends Controller
                 ],
                 'financial_breakdown' => [
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
+                    'bid_price' => number_format($repairPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'extra_amount_reason' => $order->extra_amount_reason,
+                    'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                    'accepted_extra' => number_format($acceptedExtra, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'subtotal' => number_format($subtotal, 2, '.', ''),
                     'gateway_fee_percentage' => number_format($gatewayFeePct, 2, '.', ''),
@@ -241,6 +282,10 @@ class OrdersController extends Controller
                 ],
                 'amount' => number_format($totalPayableByCustomer, 2, '.', ''),
                 'repair_price' => number_format($repairPrice, 2, '.', ''),
+                'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                'extra_amount_reason' => $order->extra_amount_reason,
+                'extra_amount_status' => (string) ($order->extra_amount_status ?: 'none'),
+                'total_amount' => number_format($subtotal, 2, '.', ''),
                 'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                 'gateway_fee' => number_format($totalGatewayFee, 2, '.', ''),
                 'azhl_system_fee' => number_format($azhlFee, 2, '.', ''),
@@ -277,14 +322,23 @@ class OrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
             }
 
-            $order = MarketplaceOrder::with(['items.product', 'customer'])->find($id);
+            $order = MarketplaceOrder::with(['items.product', 'customer'])
+                ->where('id', $id)
+                ->orWhere('order_number', $id)
+                ->first();
 
             if (!$order) {
                 return response()->json(['success' => false, 'message' => 'Marketplace Order not found.'], 404);
             }
 
-            // Authorization check
-            if ((int) $order->user_id !== (int) $user->id && (int) $user->role !== 0) {
+            // Authorization check: Customer who placed order, Seller who owns items in this order, or Admin
+            $isCustomer = (int) $order->user_id === (int) $user->id;
+            $isSeller = $order->items->contains(function ($item) use ($user) {
+                return (int) optional($item->product)->user_id === (int) $user->id;
+            });
+            $isAdmin = in_array((string) $user->role, ['admin', 'superadmin']) || \Illuminate\Support\Facades\Auth::guard('admin')->check();
+
+            if (!$isCustomer && !$isSeller && !$isAdmin) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized access to this marketplace order receipt.'], 403);
             }
 
@@ -307,6 +361,8 @@ class OrdersController extends Controller
                 'subtotal' => round((float) ($order->subtotal ?? 0), 2),
                 'shipping_cost' => round((float) ($order->shipping_cost ?? 0), 2),
                 'tax_amount' => round((float) ($order->tax_amount ?? 0), 2),
+                'customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
+                'marketplace_customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
                 'discount_price' => round((float) ($order->discount_price ?? 0), 2),
                 'total_amount' => round((float) ($order->total_amount ?? 0), 2),
                 'currency' => 'SAR',
@@ -381,14 +437,14 @@ class OrdersController extends Controller
 
             $provider = User::find($request->provider_id);
             if ($provider) {
-                $reviews = Reviews::where('provider_id', $request->provider_id)->get();
-                $avgRating = round($reviews->avg('rating'), 1);
+                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'rating')) {
+                    $reviews = Reviews::where('provider_id', $request->provider_id)->get();
+                    $avgRating = round($reviews->avg('rating'), 1);
 
-                $provider->rating = $avgRating;
-                $provider->save();
-            }
+                    $provider->rating = $avgRating;
+                    $provider->save();
+                }
 
-            if ($provider) {
                 try {
                     $provider->notify(new ProviderFeedbackReceivedNotification($review));
                 } catch (\Throwable $notificationException) {
@@ -402,7 +458,111 @@ class OrdersController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Error submitting feedback: ' . $e->getMessage());
-            return $this->error('Failed to submit feedback', 500);
+            return $this->error('Failed to submit feedback: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Customer Extra Amount Decision API
+     * POST /api/orders/{order_id}/extra-amount-action
+     */
+    public function extraAmountAction($order_id, Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Unauthenticated.'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'action' => 'required|in:accept,reject',
+                'rejection_reason' => 'nullable|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $order = Orders::find($order_id);
+            if (!$order) {
+                return response()->json(['status' => false, 'message' => 'Order not found.'], 404);
+            }
+
+            // Ownership check: must be customer who owns this order
+            if ((int) $order->user_id !== (int) $user->id) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized. Only the customer can decide on extra charges.'], 403);
+            }
+
+            // Status guard: Decision allowed only if extra_amount_status is 'pending'
+            if ($order->extra_amount_status !== 'pending') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Decision not allowed. Extra amount status is currently ' . ($order->extra_amount_status ?: 'none') . '.'
+                ], 400);
+            }
+
+            $action = strtolower($request->action);
+            $originalPrice = (float) ($order->price ?? 0);
+            $extraAmount = (float) ($order->extra_amount ?? 0);
+
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+
+            if ($action === 'accept') {
+                $order->extra_amount_status = 'accepted';
+            } else {
+                $order->extra_amount_status = 'rejected';
+                if ($request->filled('rejection_reason')) {
+                    $order->extra_amount_reason = ($order->extra_amount_reason ? ($order->extra_amount_reason . ' | Rejection: ' . $request->rejection_reason) : $request->rejection_reason);
+                }
+            }
+
+            $order->calculateAndSyncFinancials(false);
+            $order->save();
+
+            $finalBase = (float) $order->price + ($order->extra_amount_status !== 'rejected' ? (float) $order->extra_amount : 0.00);
+            $finalTotal = (float) $order->total_amount;
+            $customerAppFee = (float) $order->customer_app_fee;
+
+            // Notify Provider via FCM EXTRA_PAYMENT_RESPONSE
+            $provider = User::find($order->provider_id);
+            if ($provider) {
+                try {
+                    $decisionStr = $action === 'accept' ? 'accepted' : 'rejected';
+                    $provider->notify((new \App\Notifications\ExtraPaymentDecisionNotification(
+                        $order,
+                        $user,
+                        $decisionStr,
+                        $extraAmount
+                    ))->afterCommit());
+                } catch (\Throwable $notifEx) {
+                    Log::error('Failed to send extra payment decision notification: ' . $notifEx->getMessage());
+                }
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Extra charge decision recorded successfully.',
+                'data' => [
+                    'order_id' => (int) $order->id,
+                    'extra_amount_status' => (string) $order->extra_amount_status,
+                    'original_amount' => number_format($originalPrice, 2, '.', ''),
+                    'base_price' => number_format($originalPrice, 2, '.', ''),
+                    'extra_amount' => number_format($extraAmount, 2, '.', ''),
+                    'final_base_price' => number_format($finalBase, 2, '.', ''),
+                    'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'final_total' => number_format($finalTotal, 2, '.', ''),
+                    'total_amount' => number_format($finalTotal, 2, '.', ''),
+                ]
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('Error in extraAmountAction: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json(['status' => false, 'message' => 'Failed to process extra amount action: ' . $e->getMessage()], 500);
         }
     }
 }

@@ -5,31 +5,18 @@ namespace App\Http\Controllers\Api\Marketplace;
 use App\Http\Controllers\Controller;
 use App\Models\BankAccount;
 use App\Models\MarketplaceProfile;
+use App\Services\Banking\IbanApiService;
+use App\Services\Payment\TapMarketplaceService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class MarketplaceBankAccountController extends Controller
 {
     /**
-     * Known Saudi Bank Mapping helper by IBAN 2-digit bank code.
+     * Validate Saudi IBAN and return bank metadata for Marketplace Seller using IBAN API service
      */
-    private array $saudiBanks = [
-        '10' => ['name' => 'Saudi National Bank (SNB)', 'swift' => 'NCBKSAJE', 'location' => 'JEDDAH, Saudi Arabia'],
-        '20' => ['name' => 'Al Rajhi Bank', 'swift' => 'RJHISARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '15' => ['name' => 'Bank AlBilad', 'swift' => 'BLADSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '05' => ['name' => 'Alinma Bank', 'swift' => 'INMASARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '50' => ['name' => 'Saudi Awwal Bank (SABB)', 'swift' => 'SABBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '55' => ['name' => 'Banque Saudi Fransi', 'swift' => 'BSFRSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '65' => ['name' => 'Saudi Investment Bank (SAIB)', 'swift' => 'SAIBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '80' => ['name' => 'Arab National Bank (ANB)', 'swift' => 'ARNBSARI', 'location' => 'RIYADH, Saudi Arabia'],
-        '60' => ['name' => 'Bank AlJazira', 'swift' => 'BJAZSARI', 'location' => 'JEDDAH, Saudi Arabia'],
-        '45' => ['name' => 'Saudi British Bank', 'swift' => 'SABBKS22', 'location' => 'RIYADH, Saudi Arabia'],
-    ];
-
-    /**
-     * Validate Saudi IBAN and return bank metadata for Marketplace Seller
-     */
-    public function validateIban(Request $request)
+    public function validateIban(Request $request, IbanApiService $ibanService)
     {
         $validator = Validator::make($request->all(), [
             'iban' => 'required|string',
@@ -43,31 +30,24 @@ class MarketplaceBankAccountController extends Controller
             ], 422);
         }
 
-        $iban = strtoupper(str_replace(' ', '', $request->iban));
+        $result = $ibanService->verify($request->iban);
 
-        if (!str_starts_with($iban, 'SA') || strlen($iban) !== 24) {
+        if (!$result['valid']) {
             return response()->json([
                 'status' => 400,
-                'message' => 'Invalid Saudi IBAN format. Must start with SA followed by 22 digits.',
+                'message' => $result['message'],
                 'data' => null
             ], 400);
         }
 
-        $bankCode = substr($iban, 4, 2);
-        $bankInfo = $this->saudiBanks[$bankCode] ?? [
-            'name' => 'Saudi Commercial Bank',
-            'swift' => 'SAUDBANK',
-            'location' => 'Saudi Arabia',
-        ];
-
         return response()->json([
             'status' => 200,
-            'message' => 'IBAN verified successfully.',
+            'message' => $result['message'],
             'data' => [
-                'iban' => $iban,
-                'bank_name' => $bankInfo['name'],
-                'swift_code' => $bankInfo['swift'],
-                'bank_location' => $bankInfo['location'],
+                'iban' => $result['data']['iban'],
+                'bank_name' => $result['data']['bank_name'],
+                'swift_code' => $result['data']['swift_code'],
+                'bank_location' => $result['data']['bank_location'],
             ]
         ]);
     }
@@ -184,6 +164,22 @@ class MarketplaceBankAccountController extends Controller
             'bank_location' => $account->bank_location,
         ]);
 
+        // Auto-onboard to Tap Marketplace for split payments
+        try {
+            $onboard = app(TapMarketplaceService::class)->onboardRetailer($user, 'marketplace', [
+                'iban' => $account->iban,
+                'account_title' => $account->account_title,
+                'bank_name' => $account->bank_name,
+            ]);
+            $destId = $onboard['data']['destination_id'] ?? optional($user->marketplaceProfile)->tap_destination_id;
+            if ($destId) {
+                $account->update(['tap_destination_id' => $destId]);
+            }
+            $account->refresh();
+        } catch (\Throwable $e) {
+            Log::warning("Tap Marketplace auto-onboarding error for seller #{$user->id}: " . $e->getMessage());
+        }
+
         return response()->json([
             'status' => 200,
             'message' => 'Bank Account added successfully.',
@@ -282,32 +278,58 @@ class MarketplaceBankAccountController extends Controller
         }
 
         $settings = \App\Models\Admin\SystemSettingModel::first();
-        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+        $commissionPercentage = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
 
-        // Captured Payments for Seller's Marketplace Orders
-        $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
-            ->pluck('marketplace_order_id')
-            ->unique()
-            ->filter();
-
-        $capturedPayments = \App\Models\Payment::whereIn('marketplace_order_id', $orderIds)
-            ->where('status', 'captured')
+        // Captured Seller Orders: calculate from base product items
+        $capturedItems = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
+            ->whereHas('marketplaceOrder.payment', fn($q) => $q->where('status', 'captured'))
             ->get();
 
-        $grossEarnings = (float) $capturedPayments->sum('amount');
-        $azhlCommission = $grossEarnings * ($azhlPercentage / 100.00);
-        $netEarnings = max(0, $grossEarnings - $azhlCommission);
+        $grossEarnings = 0.0;
+        foreach ($capturedItems as $it) {
+            $val = (float) ($it->total_price ?? 0);
+            if ($val <= 0) {
+                $val = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+            }
+            $grossEarnings += $val;
+        }
 
-        // Pending Payments / Earnings
-        $pendingPayments = \App\Models\Payment::whereIn('marketplace_order_id', $orderIds)
-            ->whereIn('status', ['pending', 'processing', 'initiated'])
-            ->sum('amount');
+        $azhlCommission = round($grossEarnings * ($commissionPercentage / 100.00), 2);
+        $netEarnings = max(0, round($grossEarnings - $azhlCommission, 2));
 
-        // Total Withdrawals
-        $totalWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
+        // Pending Seller Items
+        $pendingItems = \App\Models\MarketplaceOrderItem::where('shop_id', $user->id)
+            ->whereHas('marketplaceOrder.payment', fn($q) => $q->whereIn('status', ['pending', 'processing', 'initiated']))
+            ->get();
+
+        $pendingPayments = 0.0;
+        foreach ($pendingItems as $it) {
+            $val = (float) ($it->total_price ?? 0);
+            if ($val <= 0) {
+                $val = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+            }
+            $pendingPayments += $val;
+        }
+
+        // Total Withdrawals (Manual + Tap Auto Split)
+        $manualWithdrawn = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'marketplace')
-            ->whereIn('status', ['approved', 'paid'])
+            ->whereIn('status', ['approved', 'paid', 'completed'])
             ->sum('amount');
+
+        $sellerDestinationId = optional($user->marketplaceProfile)->tap_destination_id;
+        $autoTransferred = (float) \App\Models\Payment::where('status', 'captured')
+            ->whereNotNull('tap_destination_id')
+            ->where('tap_split_amount', '>', 0)
+            ->where(function ($q) use ($user, $sellerDestinationId) {
+                $q->whereHas('marketplaceOrder.items', fn($iq) => $iq->where('shop_id', $user->id));
+                if ($sellerDestinationId) {
+                    $q->orWhere('tap_destination_id', $sellerDestinationId);
+                }
+            })
+            ->sum('tap_split_amount');
+
+        $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
         $pendingWithdrawals = (float) \App\Models\Withdrawal::where('user_id', $user->id)
             ->where('account_type', 'marketplace')
@@ -323,13 +345,52 @@ class MarketplaceBankAccountController extends Controller
                 'currency' => 'SAR',
                 'gross_total_earnings' => round($grossEarnings, 2),
                 'net_total_earnings' => round($netEarnings, 2),
-                'azhl_commission_percentage' => $azhlPercentage,
+                'azhl_commission_percentage' => $commissionPercentage,
+                'marketplace_commission_percentage' => $commissionPercentage,
                 'azhl_commission_amount' => round($azhlCommission, 2),
                 'available_for_withdraw' => round($availableForWithdraw, 2),
                 'pending_amount' => round((float) $pendingPayments, 2),
                 'total_withdraw' => round($totalWithdrawn, 2),
                 'pending_withdraw_request' => round($pendingWithdrawals, 2),
             ]
+        ]);
+    }
+
+    /**
+     * Explicitly onboard marketplace seller to Tap Marketplace (or refresh destination/KYC)
+     */
+    public function tapOnboard(Request $request, TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $res = $marketplaceService->onboardRetailer($user, 'marketplace', $request->all());
+
+        return response()->json([
+            'status' => $res['success'] ? 200 : 400,
+            'message' => $res['message'],
+            'data' => $res['data']
+        ], $res['success'] ? 200 : 400);
+    }
+
+    /**
+     * Get Tap Marketplace account and payout status for seller
+     */
+    public function tapStatus(TapMarketplaceService $marketplaceService)
+    {
+        $user = auth('sanctum')->user();
+        if (!$user) {
+            return response()->json(['status' => 401, 'message' => 'Unauthorized.'], 401);
+        }
+
+        $status = $marketplaceService->getRetailerStatus($user, 'marketplace');
+
+        return response()->json([
+            'status' => 200,
+            'message' => 'Tap Marketplace account status fetched.',
+            'data' => $status
         ]);
     }
 }

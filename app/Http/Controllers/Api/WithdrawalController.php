@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BankAccount;
 use App\Models\MarketplaceOrder;
+use App\Models\MarketplaceOrderItem;
 use App\Models\Orders;
 use App\Models\Payment;
 use App\Models\ProviderProfile;
@@ -21,39 +22,83 @@ class WithdrawalController extends Controller
     /**
      * Helper to calculate dynamic fees & net provider earnings based on System Settings
      */
-    private function calculateOrderFinancials(float $repairPrice): array
+    private function calculateOrderFinancials(float $repairPrice, float $extraAmount = 0.0, string $extraStatus = 'none', $order = null): array
     {
+        if ($order instanceof Orders) {
+            return $order->calculateAndSyncFinancials(true);
+        }
+
         $settings = SystemSettingModel::first();
 
-        $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
-        $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-        $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
-        $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
+        $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+        $azhlPct = (float) ($settings->azhl_percentage ?? 10.00);
 
-        // 1. Subtotal for customer before gateway fee
-        $subtotal = $repairPrice + $customerAppFee;
+        $applicableExtra = ($extraStatus !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
+        $finalBase = $repairPrice + $applicableExtra;
+        $subtotal = $finalBase + $customerAppFee;
 
-        // 2. Gateway Fee Subtotal + VAT
-        $gatewaySubtotal = ($subtotal * ($gatewayFeePct / 100)) + $gatewayFixedFee;
-        $gatewayVat = $gatewaySubtotal * ($gatewayVatPct / 100);
-        $totalGatewayFee = $gatewaySubtotal + $gatewayVat;
+        // Taxes & Gateway Fees removed (0.00)
+        $totalGatewayFee = 0.00;
+        $gatewayVat = 0.00;
+        $customerTotal = $subtotal;
 
-        // 3. Total Amount paid by Customer at Checkout
-        $customerTotal = $repairPrice + $customerAppFee + $totalGatewayFee;
-
-        // 4. Net Amount for Technician / Provider (Repair Price minus Provider Commission Fee)
-        // Provider receives exact 95.00 SAR for a 100.00 SAR repair price!
-        $netProviderAmount = max(0, $repairPrice - $azhlFee);
+        // Provider Net: Final Base minus 1 percentage (Azhl Commission)
+        $azhlFee = round($finalBase * ($azhlPct / 100), 2);
+        $netProviderAmount = max(0, round($finalBase - $azhlFee, 2));
 
         return [
             'repair_price' => (float) number_format($repairPrice, 2, '.', ''),
+            'extra_amount' => (float) number_format($extraAmount, 2, '.', ''),
+            'extra_amount_status' => $extraStatus,
+            'accepted_extra' => (float) number_format($applicableExtra, 2, '.', ''),
+            'final_base_price' => (float) number_format($finalBase, 2, '.', ''),
             'customer_app_fee' => (float) number_format($customerAppFee, 2, '.', ''),
             'subtotal' => (float) number_format($subtotal, 2, '.', ''),
-            'gateway_fee' => (float) number_format($totalGatewayFee, 2, '.', ''),
+            'gateway_fee' => 0.00,
+            'gateway_vat' => 0.00,
             'customer_total' => (float) number_format($customerTotal, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlPct, 2, '.', ''),
             'azhl_fee' => (float) number_format($azhlFee, 2, '.', ''),
             'net_amount' => (float) number_format($netProviderAmount, 2, '.', ''),
+        ];
+    }
+
+    /**
+     * Calculate marketplace order financials based on marketplace_commission_percentage
+     */
+    private function calculateMarketplaceFinancials($productSubtotal): array
+    {
+        $settings = SystemSettingModel::first();
+        $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+        $commissionPct = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+
+        $subtotal = (float) $productSubtotal;
+        $customerTotal = round($subtotal + $marketplaceCustomerAppFee, 2);
+
+        // Seller Net: Product subtotal minus marketplace commission percentage
+        $azhlFee = round($subtotal * ($commissionPct / 100), 2);
+        $netAmount = max(0, round($subtotal - $azhlFee, 2));
+
+        return [
+            'products_subtotal' => $subtotal,
+            'subtotal' => $subtotal,
+            'marketplace_vat_percentage' => 0.00,
+            'total_product_vat' => 0.00,
+            'vat_amount' => 0.00,
+            'tax_amount' => 0.00,
+            'products_total_with_vat' => $subtotal,
+            'customer_paid_with_tax' => $customerTotal,
+            'gross_amount' => $subtotal,
+            'customer_total' => $customerTotal,
+            'total_amount' => $customerTotal,
+            'customer_app_fee' => $marketplaceCustomerAppFee,
+            'marketplace_customer_app_fee' => $marketplaceCustomerAppFee,
+            'gateway_fee' => 0.0,
+            'azhl_percentage' => $commissionPct,
+            'marketplace_commission_percentage' => $commissionPct,
+            'azhl_fee' => $azhlFee,
+            'net_amount' => $netAmount,
+            'currency' => 'SAR',
         ];
     }
 
@@ -72,12 +117,12 @@ class WithdrawalController extends Controller
 
         if ($rawPrice > 103) {
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
-            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 1.00);
+            $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
 
-            $approxSubtotal = ($rawPrice - $gatewayFixedFee * (1 + $gatewayVatPct / 100)) / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
+            $approxSubtotal = $rawPrice / (1 + ($gatewayFeePct / 100) * (1 + $gatewayVatPct / 100));
             $estimatedRepair = max(0, $approxSubtotal - $customerAppFee);
 
             if (abs($estimatedRepair - round($estimatedRepair)) < 0.1) {
@@ -104,7 +149,7 @@ class WithdrawalController extends Controller
             $pendingAmount = 0.0;
             foreach ($pendingOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice);
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
                 $pendingAmount += $financials['net_amount'];
             }
 
@@ -116,7 +161,7 @@ class WithdrawalController extends Controller
             $orderEarnings = 0.0;
             foreach ($completedOrders as $ord) {
                 $repairPrice = $this->extractRepairPrice($ord);
-                $financials = $this->calculateOrderFinancials($repairPrice);
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
                 $orderEarnings += $financials['net_amount'];
             }
 
@@ -125,11 +170,19 @@ class WithdrawalController extends Controller
 
             $totalEarnings = $orderEarnings + $referralEarnings;
 
-            // 4. Total Withdrawn: Sum of completed withdrawals
-            $totalWithdrawn = (float) Withdrawal::where('user_id', $userId)
+            // 4. Total Withdrawn: Sum of completed manual withdrawals + completed Tap auto-splits!
+            $manualWithdrawn = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
                 ->sum('amount');
+
+            $autoTransferred = (float) Payment::where('provider_id', $userId)
+                ->where('status', 'captured')
+                ->whereNotNull('tap_destination_id')
+                ->where('tap_split_amount', '>', 0)
+                ->sum('tap_split_amount');
+
+            $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
             // 5. Reserved Funds: Active withdrawal requests currently requested or accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $userId)
@@ -138,39 +191,61 @@ class WithdrawalController extends Controller
                 ->sum('amount');
         } else {
             // Marketplace Seller Calculations
-            $orderIds = \App\Models\MarketplaceOrderItem::where('shop_id', $userId)
-                ->pluck('marketplace_order_id')
-                ->unique()
-                ->filter();
-
-            $pendingPayments = Payment::whereIn('marketplace_order_id', $orderIds)
-                ->whereIn('status', ['pending', 'processing', 'initiated'])
+            $sellerItems = MarketplaceOrderItem::with('order')
+                ->where(function ($q) use ($userId) {
+                    $q->where('shop_id', $userId)
+                      ->orWhereHas('product', fn($p) => $p->where('user_id', $userId));
+                })
                 ->get();
 
             $pendingAmount = 0.0;
-            foreach ($pendingPayments as $p) {
-                $gross = (float) ($p->amount ?? 0);
-                $pendingAmount += max(0, $gross - $azhlFeePerOrder);
-            }
-
-            $completedPayments = Payment::whereIn('marketplace_order_id', $orderIds)
-                ->where('status', 'captured')
-                ->get();
-
             $orderEarnings = 0.0;
-            foreach ($completedPayments as $p) {
-                $gross = (float) ($p->amount ?? 0);
-                $net = max(0, $gross - $azhlFeePerOrder);
-                $orderEarnings += $net;
+
+            foreach ($sellerItems as $item) {
+                $order = $item->order;
+                if (!$order) {
+                    continue;
+                }
+
+                $orderStatus = strtolower($order->status ?: 'pending');
+                if (in_array($orderStatus, ['cancelled', 'cancel', 'reject', 'rejected'])) {
+                    continue;
+                }
+
+                $itemSubtotal = (float) ($item->total_price ?? 0);
+                if ($itemSubtotal <= 0) {
+                    $itemSubtotal = (float) ($item->base_price ?? 0) * (int) ($item->quantity ?? 1);
+                }
+
+                $financials = $this->calculateMarketplaceFinancials($itemSubtotal);
+                $net = $financials['net_amount'];
+
+                if ($orderStatus === 'completed') {
+                    $orderEarnings += $net;
+                } else {
+                    $pendingAmount += $net;
+                }
             }
 
             $referralEarnings = (float) ReferralReward::where('referrer_id', $userId)->sum('reward_amount');
             $totalEarnings = $orderEarnings + $referralEarnings;
 
-            $totalWithdrawn = (float) Withdrawal::where('user_id', $userId)
+            $manualWithdrawn = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'marketplace')
                 ->where('status', 'completed')
                 ->sum('amount');
+
+            $autoTransferred = (float) Payment::where('status', 'captured')
+                ->whereNotNull('tap_destination_id')
+                ->where('tap_split_amount', '>', 0)
+                ->where(function ($q) use ($userId) {
+                    $q->whereHas('marketplaceOrder.items', function ($mq) use ($userId) {
+                        $mq->where('shop_id', $userId);
+                    });
+                })
+                ->sum('tap_split_amount');
+
+            $totalWithdrawn = $manualWithdrawn + $autoTransferred;
 
             $reservedAmount = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'marketplace')
@@ -374,7 +449,7 @@ class WithdrawalController extends Controller
         }
 
         $settings = SystemSettingModel::first();
-        $azhlFeePerOrder = (float) ($settings->azhl_fee ?? 5.00);
+        $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
         $transactions = collect();
 
@@ -387,8 +462,8 @@ class WithdrawalController extends Controller
 
                 foreach ($providerOrders as $ord) {
                     $repairPrice = $this->extractRepairPrice($ord);
-                    $financials = $this->calculateOrderFinancials($repairPrice);
-                    $gross = $financials['repair_price'];
+                    $financials = $this->calculateOrderFinancials($repairPrice, (float) ($ord->extra_amount ?? 0), (string) ($ord->extra_amount_status ?? 'none'), $ord);
+                    $gross = $financials['final_base_price'];
                     $azhlFee = $financials['azhl_fee'];
                     $gatewayFee = $financials['gateway_fee'];
                     $net = $financials['net_amount'];
@@ -410,11 +485,18 @@ class WithdrawalController extends Controller
                         'order_no' => 'ORD-' . str_pad($ord->id, 6, '0', STR_PAD_LEFT),
                         'order_title' => optional($job)->title ?: (optional(optional($job)->category)->name ?: 'AC Repair Service'),
                         'order_status' => $orderStatus,
+                        'repair_price' => number_format($repairPrice, 2, '.', ''),
+                        'extra_amount' => number_format((float) ($ord->extra_amount ?? 0), 2, '.', ''),
+                        'extra_amount_reason' => $ord->extra_amount_reason,
+                        'extra_amount_status' => (string) ($ord->extra_amount_status ?: 'none'),
+                        'accepted_extra' => number_format($financials['accepted_extra'], 2, '.', ''),
                         'gross_amount' => number_format($gross, 2, '.', ''),
+                        'final_base_price' => number_format($gross, 2, '.', ''),
                         'azhl_fee' => number_format($azhlFee, 2, '.', ''),
                         'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
                         'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
                         'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'total_amount' => number_format($financials['customer_total'], 2, '.', ''),
                         'referral_fee' => '0.00',
                         'net_amount' => number_format($net, 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($ord->updated_at ? $ord->updated_at->toIso8601String() : null) : null,
@@ -466,20 +548,47 @@ class WithdrawalController extends Controller
             } else {
                 $marketplaceOrders = MarketplaceOrder::with(['items.product', 'payment'])
                     ->whereHas('items', function ($query) use ($user) {
-                        $query->where('shop_id', $user->id);
+                        $query->where('shop_id', $user->id)
+                              ->orWhereHas('product', fn($p) => $p->where('user_id', $user->id));
                     })
                     ->get();
 
                 foreach ($marketplaceOrders as $mktOrder) {
-                    $item = $mktOrder->items->firstWhere('shop_id', $user->id);
-                    $product = $item?->product;
-                    $grossPrice = (float) ($item?->total_price ?? ($mktOrder->total_amount ?? 0));
-                    $financials = $this->calculateOrderFinancials($grossPrice);
+                    $sellerItems = $mktOrder->items->filter(function ($it) use ($user) {
+                        return (int) $it->shop_id === (int) $user->id
+                            || (int) optional($it->product)->user_id === (int) $user->id;
+                    });
 
-                    $gross = $financials['repair_price'];
-                    $azhlFee = $financials['azhl_fee'];
-                    $gatewayFee = $financials['gateway_fee'];
-                    $net = $financials['net_amount'];
+                    if ($sellerItems->isEmpty()) {
+                        continue;
+                    }
+
+                    $subtotal = 0.0;
+                    foreach ($sellerItems as $it) {
+                        $itemTotal = (float) ($it->total_price ?? 0);
+                        if ($itemTotal <= 0) {
+                            $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+                        }
+                        $subtotal += $itemTotal;
+                    }
+
+                    $isAllOrderItems = $sellerItems->count() === $mktOrder->items->count();
+                    if ($isAllOrderItems && (float) $mktOrder->subtotal > 0) {
+                        $subtotal = (float) $mktOrder->subtotal;
+                    }
+
+                    $financials = $this->calculateMarketplaceFinancials($subtotal);
+
+                    if ($isAllOrderItems && (float) $mktOrder->tax_amount > 0) {
+                        $financials['total_product_vat'] = (float) $mktOrder->tax_amount;
+                        $financials['vat_amount'] = (float) $mktOrder->tax_amount;
+                        $financials['tax_amount'] = (float) $mktOrder->tax_amount;
+                    }
+                    if ($isAllOrderItems && (float) $mktOrder->total_amount > 0) {
+                        $financials['products_total_with_vat'] = (float) $mktOrder->total_amount;
+                        $financials['customer_paid_with_tax'] = (float) $mktOrder->total_amount;
+                    }
+
                     $orderStatus = strtolower($mktOrder->status ?: 'pending');
 
                     $type = 'credit';
@@ -492,18 +601,28 @@ class WithdrawalController extends Controller
                         $label = 'Credit';
                     }
 
+                    $titles = $sellerItems->map(fn($it) => $it->product_name ?: optional($it->product)->product_name)->filter()->unique()->join(', ');
+
                     $orderPayload = [
                         'order_id' => (int) $mktOrder->id,
                         'order_no' => $mktOrder->order_number ? '#' . $mktOrder->order_number : ('ORD-' . str_pad($mktOrder->id, 6, '0', STR_PAD_LEFT)),
-                        'order_title' => $item?->product_name ?: ($product?->product_name ?: 'Marketplace Product Order'),
+                        'order_title' => $titles ?: 'Marketplace Product Order',
                         'order_status' => $orderStatus,
-                        'gross_amount' => number_format($gross, 2, '.', ''),
-                        'azhl_fee' => number_format($azhlFee, 2, '.', ''),
-                        'gateway_fee' => number_format($gatewayFee, 2, '.', ''),
-                        'customer_app_fee' => number_format($financials['customer_app_fee'], 2, '.', ''),
+                        'subtotal' => number_format($financials['products_subtotal'], 2, '.', ''),
+                        'products_subtotal' => number_format($financials['products_subtotal'], 2, '.', ''),
+                        'marketplace_vat_percentage' => number_format($financials['marketplace_vat_percentage'], 2, '.', ''),
+                        'total_product_vat' => number_format($financials['total_product_vat'], 2, '.', ''),
+                        'vat_amount' => number_format($financials['vat_amount'], 2, '.', ''),
+                        'products_total_with_vat' => number_format($financials['products_total_with_vat'], 2, '.', ''),
+                        'gross_amount' => number_format($financials['gross_amount'], 2, '.', ''),
                         'customer_total' => number_format($financials['customer_total'], 2, '.', ''),
+                        'total_amount' => number_format($financials['total_amount'], 2, '.', ''),
+                        'azhl_percentage' => number_format($financials['azhl_percentage'], 2, '.', ''),
+                        'azhl_fee' => number_format($financials['azhl_fee'], 2, '.', ''),
+                        'customer_app_fee' => '0.00',
+                        'gateway_fee' => '0.00',
                         'referral_fee' => '0.00',
-                        'net_amount' => number_format($net, 2, '.', ''),
+                        'net_amount' => number_format($financials['net_amount'], 2, '.', ''),
                         'completed_at' => $orderStatus === 'completed' ? ($mktOrder->updated_at ? $mktOrder->updated_at->toIso8601String() : null) : null,
                     ];
 
@@ -511,7 +630,7 @@ class WithdrawalController extends Controller
                         'id' => (int) $mktOrder->id,
                         'type' => $type,
                         'label' => $label,
-                        'amount' => number_format($net, 2, '.', ''),
+                        'amount' => number_format($financials['net_amount'], 2, '.', ''),
                         'currency' => 'SAR',
                         'created_at' => $mktOrder->created_at ? $mktOrder->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => $type === 'cancelled' ? null : $orderPayload,
@@ -553,6 +672,71 @@ class WithdrawalController extends Controller
                         'rejection_reason' => $status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
                     ]
                 ]);
+            }
+
+            // Include Tap Auto-Split direct payouts
+            if ($accountType === 'provider') {
+                $autoSplitPayments = Payment::where('provider_id', $user->id)
+                    ->where('status', 'captured')
+                    ->whereNotNull('tap_destination_id')
+                    ->where('tap_split_amount', '>', 0)
+                    ->get();
+
+                foreach ($autoSplitPayments as $ap) {
+                    $transactions->push([
+                        'id' => (int) (900000 + $ap->id),
+                        'type' => 'withdraw',
+                        'label' => 'Auto-Payout (Tap)',
+                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'currency' => strtoupper($ap->currency ?: 'SAR'),
+                        'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'credit' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $ap->id,
+                            'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
+                            'bank_name' => 'Bank Account (Tap Auto-Transfer)',
+                            'status' => 'completed',
+                            'requested_at' => $ap->created_at ? $ap->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'accepted_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ]
+                    ]);
+                }
+            } else {
+                $autoSplitPayments = Payment::where('status', 'captured')
+                    ->whereNotNull('tap_destination_id')
+                    ->where('tap_split_amount', '>', 0)
+                    ->where(function ($q) use ($user) {
+                        $q->whereHas('marketplaceOrder.items', function ($mq) use ($user) {
+                            $mq->where('shop_id', $user->id);
+                        });
+                    })
+                    ->get();
+
+                foreach ($autoSplitPayments as $ap) {
+                    $transactions->push([
+                        'id' => (int) (900000 + $ap->id),
+                        'type' => 'withdraw',
+                        'label' => 'Auto-Payout (Tap)',
+                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'currency' => strtoupper($ap->currency ?: 'SAR'),
+                        'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                        'credit' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $ap->id,
+                            'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
+                            'bank_name' => 'Bank Account (Tap Auto-Transfer)',
+                            'status' => 'completed',
+                            'requested_at' => $ap->created_at ? $ap->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'accepted_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ]
+                    ]);
+                }
             }
         }
 

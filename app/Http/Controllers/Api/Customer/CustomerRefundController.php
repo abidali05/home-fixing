@@ -74,7 +74,7 @@ class CustomerRefundController extends Controller
 
             // 3. Calculate Azhl System Fee & Net Customer Refund
             $settings = SystemSettingModel::first();
-            $azhlFee = (float) ($settings->azhl_fee ?? 5.00);
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
 
             if ($serviceOrder) {
                 $payment = Payment::where('job_id', $serviceOrder->job_id)
@@ -116,6 +116,7 @@ class CustomerRefundController extends Controller
                 ], 200);
             }
 
+            $azhlFee = round($paidAmount * ($azhlPercentage / 100), 2);
             $refundAmount = max(0, $paidAmount - $azhlFee);
 
             // 4. Resolve Customer Bank Account

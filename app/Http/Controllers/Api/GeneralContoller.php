@@ -52,8 +52,8 @@ class GeneralContoller extends Controller
                 'payment_method' => (string) ($data->payment_method ?? 'applepay'),
                 'azhl_percentage' => number_format((float) ($data->azhl_percentage ?? 10.00), 2, '.', ''),
                 'azhl_fee' => number_format((float) ($data->azhl_fee ?? 5.00), 2, '.', ''),
-                'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 3.00), 2, '.', ''),
-                'marketplace_customer_app_fee' => number_format((float) ($data->marketplace_customer_app_fee ?? 3.00), 2, '.', ''),
+                'customer_app_fee' => number_format((float) ($data->customer_app_fee ?? 0.00), 2, '.', ''),
+                'marketplace_customer_app_fee' => number_format((float) ($data->marketplace_customer_app_fee ?? 0.00), 2, '.', ''),
                 'marketplace_commission_percentage' => number_format((float) ($data->marketplace_commission_percentage ?? 10.00), 2, '.', ''),
                 'marketplace_vat_percentage' => '0.00',
                 'payment_gateway_fee_percentage' => number_format((float) ($data->payment_gateway_fee_percentage ?? 2.50), 2, '.', ''),
@@ -1387,7 +1387,7 @@ class GeneralContoller extends Controller
 
             $settings = SystemSettingModel::first();
             $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = $settings && $settings->customer_app_fee !== null ? (float) $settings->customer_app_fee : 0.00;
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);
@@ -1658,7 +1658,7 @@ class GeneralContoller extends Controller
             }
 
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = $settings && $settings->customer_app_fee !== null ? (float) $settings->customer_app_fee : 0.00;
 
             if ($order) {
                 $repairPrice = (float) ($order->price ?? 0);
@@ -1732,7 +1732,7 @@ class GeneralContoller extends Controller
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
                     'system_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'subtotal' => number_format($total, 2, '.', ''),
+                    'subtotal' => number_format($finalBase, 2, '.', ''),
                     'total_payable_by_customer' => number_format($total, 2, '.', ''),
                     'total_amount' => number_format($total, 2, '.', ''),
                     'total' => number_format($total, 2, '.', ''),
@@ -1931,7 +1931,7 @@ class GeneralContoller extends Controller
             }
 
             $settings = \App\Models\Admin\SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = $settings && $settings->customer_app_fee !== null ? (float) $settings->customer_app_fee : 0.00;
             $applicableExtra = ($order->extra_amount_status !== 'rejected' && (float) ($order->extra_amount ?? 0) > 0) ? (float) $order->extra_amount : 0.00;
             $finalBasePrice = (float) ($order->price ?? 0) + $applicableExtra;
             $totalAmount = $finalBasePrice + $customerAppFee;

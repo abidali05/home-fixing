@@ -73,7 +73,7 @@ class PaymentController extends Controller
 
             // 3. Calculate total payable amount by customer (Base Price + Accepted Extra + Customer App Fee 3 SAR)
             $settings = \App\Models\Admin\SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
 
             $bidPrice = (float) ($bid->price ?? 0);
             $extraAmount = 0.00;

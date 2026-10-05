@@ -30,9 +30,13 @@ class Orders extends Model
     {
         $settings = \App\Models\Admin\SystemSettingModel::first();
 
-        // 1. Determine rates: prefer snapshotted order values over global settings
-        $customerAppFee = $this->customer_app_fee !== null ? (float) $this->customer_app_fee : (float) ($settings->customer_app_fee ?? 3.00);
-        $azhlPctSetting = $this->azhl_percentage !== null ? (float) $this->azhl_percentage : (float) ($settings->azhl_percentage ?? 10.00);
+        // 1. Determine rates: live settings in system_settings take priority, fallback to order snapshot or 0.00
+        $customerAppFee = ($settings && $settings->customer_app_fee !== null)
+            ? (float) $settings->customer_app_fee
+            : ($this->customer_app_fee !== null ? (float) $this->customer_app_fee : 0.00);
+        $azhlPctSetting = ($settings && $settings->azhl_percentage !== null)
+            ? (float) $settings->azhl_percentage
+            : ($this->azhl_percentage !== null ? (float) $this->azhl_percentage : 10.00);
 
         // 2. Base repair price
         $repairPrice = (float) ($this->price ?? 0);

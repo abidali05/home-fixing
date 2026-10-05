@@ -324,7 +324,7 @@ class HiringController extends Controller
     {
         try {
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
 
             $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
 

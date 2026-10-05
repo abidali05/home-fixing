@@ -30,7 +30,7 @@ class WithdrawalController extends Controller
 
         $settings = SystemSettingModel::first();
 
-        $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+        $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
         $azhlPct = (float) ($settings->azhl_percentage ?? 10.00);
 
         $applicableExtra = ($extraStatus !== 'rejected' && $extraAmount > 0) ? $extraAmount : 0.00;
@@ -117,7 +117,7 @@ class WithdrawalController extends Controller
 
         if ($rawPrice > 103) {
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
             $gatewayVatPct = (float) ($settings->payment_gateway_vat_percentage ?? 15.00);

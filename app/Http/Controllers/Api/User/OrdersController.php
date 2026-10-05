@@ -220,7 +220,7 @@ class OrdersController extends Controller
                 ->first();
 
             $settings = SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
             $azhlFixedFee = (float) ($settings->azhl_percentage ?? 5.00); // Fixed SAR provider fee
             $gatewayFeePct = (float) ($settings->payment_gateway_fee_percentage ?? 2.50);
             $gatewayFixedFee = (float) ($settings->payment_gateway_fixed_fee ?? 0.00);
@@ -510,7 +510,7 @@ class OrdersController extends Controller
             $extraAmount = (float) ($order->extra_amount ?? 0);
 
             $settings = \App\Models\Admin\SystemSettingModel::first();
-            $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
 
             if ($action === 'accept') {
                 $order->extra_amount_status = 'accepted';

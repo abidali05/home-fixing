@@ -140,7 +140,7 @@ class TapPaymentService
                 $bid = $payment->bid ?: ($payment->bid_id ? BidModel::find($payment->bid_id) : null);
                 $settings = SystemSettingModel::first();
                 $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
-                $customerAppFee = (float) ($settings->customer_app_fee ?? 3.00);
+                $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
 
                 $bidPrice = $bid ? (float) $bid->price : max(0, (float) $payment->amount - $customerAppFee);
                 $commission = round($bidPrice * ($azhlPercentage / 100), 2);

@@ -2852,7 +2852,7 @@ class AuthController extends Controller
                 ->sum('total_price');
 
             $recentOrders = MarketplaceOrder::with(['items.product'])
-                ->where('status', 'pending')
+                ->whereIn('status', ['pending', 'accept', 'reject', 'processing'])
                 ->whereHas('items', function ($query) use ($user) {
                     $query->where('shop_id', $user->id)
                           ->orWhereHas('product', fn($p) => $p->where('user_id', $user->id));

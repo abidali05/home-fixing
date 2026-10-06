@@ -2742,31 +2742,71 @@ class AuthController extends Controller
                 ->latest()
                 ->get();
 
-            $orders->transform(function ($order) use ($user) {
-                $order->items = $order->items
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $commissionPercentage = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+
+            $orders->transform(function ($order) use ($user, $commissionPercentage) {
+                $sellerItems = $order->items
                     ->where('shop_id', $user->id)
-                    ->values()
-                    ->map(function ($item) {
-                        if ($item->product) {
-                            $item->product->banner_image = !empty($item->product->banner_image)
-                                ? asset('storage/' . $item->product->banner_image)
-                                : asset('assets/img/default.jpg');
+                    ->values();
 
-                            $images = $item->product->product_images;
+                $sellerSubtotal = 0.0;
+                foreach ($sellerItems as $it) {
+                    $itemTotal = (float) ($it->total_price ?? 0);
+                    if ($itemTotal <= 0) {
+                        $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+                    }
+                    $sellerSubtotal += $itemTotal;
+                }
 
-                            if (is_string($images)) {
-                                $images = array_filter(explode(',', $images));
-                            }
+                $azhlCommission = round($sellerSubtotal * ($commissionPercentage / 100.0), 2);
+                $sellerNet = max(0, round($sellerSubtotal - $azhlCommission, 2));
 
-                            $item->product->product_images = collect($images ?: [])
-                                ->map(function ($image) {
-                                    return asset('storage/' . $image);
-                                })
-                                ->values();
+                $order->items = $sellerItems->map(function ($item) {
+                    if ($item->product) {
+                        $item->product->banner_image = !empty($item->product->banner_image)
+                            ? asset('storage/' . $item->product->banner_image)
+                            : asset('assets/img/default.jpg');
+
+                        $images = $item->product->product_images;
+
+                        if (is_string($images)) {
+                            $images = array_filter(explode(',', $images));
                         }
 
-                        return $item;
-                    });
+                        $item->product->product_images = collect($images ?: [])
+                            ->map(function ($image) {
+                                return asset('storage/' . $image);
+                            })
+                            ->values();
+                    }
+
+                    return $item;
+                });
+
+                $order->customer_paid_total = number_format((float) $order->total_amount, 2, '.', '');
+                $order->subtotal = number_format($sellerSubtotal, 2, '.', '');
+                $order->total_amount = number_format($sellerSubtotal, 2, '.', '');
+                $order->customer_app_fee = '0.00';
+                $order->marketplace_customer_app_fee = '0.00';
+                $order->azhl_commission_percentage = number_format($commissionPercentage, 2, '.', '');
+                $order->azhl_commission = number_format($azhlCommission, 2, '.', '');
+                $order->azhl_fee = number_format($azhlCommission, 2, '.', '');
+                $order->net_amount = number_format($sellerNet, 2, '.', '');
+                $order->seller_earning = number_format($sellerNet, 2, '.', '');
+
+                $order->payment_breakdown = [
+                    'subtotal' => number_format($sellerSubtotal, 2, '.', ''),
+                    'products_subtotal' => number_format($sellerSubtotal, 2, '.', ''),
+                    'azhl_commission_percentage' => number_format($commissionPercentage, 2, '.', ''),
+                    'azhl_commission' => number_format($azhlCommission, 2, '.', ''),
+                    'azhl_fee' => number_format($azhlCommission, 2, '.', ''),
+                    'seller_earning' => number_format($sellerNet, 2, '.', ''),
+                    'net_amount' => number_format($sellerNet, 2, '.', ''),
+                    'customer_app_fee' => '0.00',
+                    'customer_paid_total' => number_format((float) $order->customer_paid_total, 2, '.', ''),
+                    'total_amount' => number_format($sellerSubtotal, 2, '.', ''),
+                ];
 
                 return $order;
             });
@@ -2826,6 +2866,21 @@ class AuthController extends Controller
                             || (int) optional($it->product)->user_id === (int) $user->id;
                     }) ?: $order->items->first();
                     $product = $item?->product;
+                    $sellerItems = $order->items->filter(function ($it) use ($user) {
+                        return (int) $it->shop_id === (int) $user->id
+                            || (int) optional($it->product)->user_id === (int) $user->id;
+                    });
+                    $sellerSubtotal = 0.0;
+                    foreach ($sellerItems as $it) {
+                        $itemTotal = (float) ($it->total_price ?? 0);
+                        if ($itemTotal <= 0) {
+                            $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+                        }
+                        $sellerSubtotal += $itemTotal;
+                    }
+                    if ($sellerSubtotal <= 0 && $order->items->isNotEmpty()) {
+                        $sellerSubtotal = (float) ($order->subtotal ?? $order->total_amount ?? 0);
+                    }
 
                     return [
                         'image' => !empty($product?->banner_image)
@@ -2838,7 +2893,7 @@ class AuthController extends Controller
                         'time' => Carbon::parse($order->created_at)->format('h:i A'),
                         'created_at' => $order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'order_id' => $order?->id,
-                        'total_amount' => (float) ($order?->total_amount ?? 0),
+                        'total_amount' => round((float) $sellerSubtotal, 2),
                     ];
                 })
                 ->values();
@@ -2875,30 +2930,71 @@ class AuthController extends Controller
                 return $this->error('Order not found.', 404);
             }
 
-            $order->items = $order->items
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $commissionPercentage = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+
+            $sellerItems = $order->items
                 ->where('shop_id', $user->id)
-                ->values()
-                ->map(function ($item) {
-                    if ($item->product) {
-                        $item->product->banner_image = !empty($item->product->banner_image)
-                            ? asset('storage/' . $item->product->banner_image)
-                            : asset('assets/img/default.jpg');
+                ->values();
 
-                        $images = $item->product->product_images;
+            $sellerSubtotal = 0.0;
+            foreach ($sellerItems as $it) {
+                $itemTotal = (float) ($it->total_price ?? 0);
+                if ($itemTotal <= 0) {
+                    $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+                }
+                $sellerSubtotal += $itemTotal;
+            }
 
-                        if (is_string($images)) {
-                            $images = array_filter(explode(',', $images));
-                        }
+            $azhlCommission = round($sellerSubtotal * ($commissionPercentage / 100.0), 2);
+            $sellerNet = max(0, round($sellerSubtotal - $azhlCommission, 2));
 
-                        $item->product->product_images = collect($images ?: [])
-                            ->map(function ($image) {
-                                return asset('storage/' . $image);
-                            })
-                            ->values();
+            $order->items = $sellerItems->map(function ($item) {
+                if ($item->product) {
+                    $item->product->banner_image = !empty($item->product->banner_image)
+                        ? asset('storage/' . $item->product->banner_image)
+                        : asset('assets/img/default.jpg');
+
+                    $images = $item->product->product_images;
+
+                    if (is_string($images)) {
+                        $images = array_filter(explode(',', $images));
                     }
 
-                    return $item;
-                });
+                    $item->product->product_images = collect($images ?: [])
+                        ->map(function ($image) {
+                            return asset('storage/' . $image);
+                        })
+                        ->values();
+                }
+
+                return $item;
+            });
+
+            // Set financial fields for Seller context
+            $order->customer_paid_total = number_format((float) $order->total_amount, 2, '.', '');
+            $order->subtotal = number_format($sellerSubtotal, 2, '.', '');
+            $order->total_amount = number_format($sellerSubtotal, 2, '.', '');
+            $order->customer_app_fee = '0.00';
+            $order->marketplace_customer_app_fee = '0.00';
+            $order->azhl_commission_percentage = number_format($commissionPercentage, 2, '.', '');
+            $order->azhl_commission = number_format($azhlCommission, 2, '.', '');
+            $order->azhl_fee = number_format($azhlCommission, 2, '.', '');
+            $order->net_amount = number_format($sellerNet, 2, '.', '');
+            $order->seller_earning = number_format($sellerNet, 2, '.', '');
+
+            $order->payment_breakdown = [
+                'subtotal' => number_format($sellerSubtotal, 2, '.', ''),
+                'products_subtotal' => number_format($sellerSubtotal, 2, '.', ''),
+                'azhl_commission_percentage' => number_format($commissionPercentage, 2, '.', ''),
+                'azhl_commission' => number_format($azhlCommission, 2, '.', ''),
+                'azhl_fee' => number_format($azhlCommission, 2, '.', ''),
+                'seller_earning' => number_format($sellerNet, 2, '.', ''),
+                'net_amount' => number_format($sellerNet, 2, '.', ''),
+                'customer_app_fee' => '0.00',
+                'customer_paid_total' => number_format((float) $order->customer_paid_total, 2, '.', ''),
+                'total_amount' => number_format($sellerSubtotal, 2, '.', ''),
+            ];
 
             return $this->success($order, 'Marketplace order detail fetched successfully');
         } catch (\Throwable $e) {

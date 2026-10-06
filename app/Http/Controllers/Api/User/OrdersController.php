@@ -347,6 +347,38 @@ class OrdersController extends Controller
                 ->latest()
                 ->first();
 
+            $items = $order->items;
+            $subtotal = round((float) ($order->subtotal ?? 0), 2);
+            $appFee = round((float) ($order->customer_app_fee ?? 0), 2);
+            $totalAmount = round((float) ($order->total_amount ?? 0), 2);
+            $azhlCommission = null;
+            $sellerEarning = null;
+
+            if ($isSeller && !$isCustomer && !$isAdmin) {
+                $items = $order->items->filter(function ($item) use ($user) {
+                    return (int) optional($item->product)->user_id === (int) $user->id
+                        || (int) $item->shop_id === (int) $user->id;
+                })->values();
+
+                $sellerSubtotal = 0.0;
+                foreach ($items as $it) {
+                    $itemTotal = (float) ($it->total_price ?? 0);
+                    if ($itemTotal <= 0) {
+                        $itemTotal = (float) ($it->base_price ?? 0) * (int) ($it->quantity ?? 1);
+                    }
+                    $sellerSubtotal += $itemTotal;
+                }
+
+                $settings = \App\Models\Admin\SystemSettingModel::first();
+                $commissionPercentage = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+                $azhlCommission = round($sellerSubtotal * ($commissionPercentage / 100.0), 2);
+                $sellerEarning = max(0, round($sellerSubtotal - $azhlCommission, 2));
+
+                $subtotal = round($sellerSubtotal, 2);
+                $appFee = 0.0;
+                $totalAmount = round($sellerSubtotal, 2);
+            }
+
             $receiptData = [
                 'receipt_no' => 'MKT-' . str_pad($order->id, 6, '0', STR_PAD_LEFT),
                 'order_id' => (int) $order->id,
@@ -358,18 +390,18 @@ class OrdersController extends Controller
                     'phone' => optional($order->customer)->phone ?? $user->phone,
                 ],
                 'shipping_address' => $order->shipping_address ?: $user->address,
-                'subtotal' => round((float) ($order->subtotal ?? 0), 2),
+                'subtotal' => $subtotal,
                 'shipping_cost' => round((float) ($order->shipping_cost ?? 0), 2),
                 'tax_amount' => round((float) ($order->tax_amount ?? 0), 2),
-                'customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
-                'marketplace_customer_app_fee' => round((float) ($order->customer_app_fee ?? 0), 2),
+                'customer_app_fee' => $appFee,
+                'marketplace_customer_app_fee' => $appFee,
                 'discount_price' => round((float) ($order->discount_price ?? 0), 2),
-                'total_amount' => round((float) ($order->total_amount ?? 0), 2),
+                'total_amount' => $totalAmount,
                 'currency' => 'SAR',
                 'payment_method' => $order->payment_method ?: 'tap',
                 'payment_status' => $payment ? $payment->status : 'captured',
                 'tap_charge_id' => optional($payment)->tap_charge_id,
-                'items' => $order->items->map(function ($item) {
+                'items' => $items->map(function ($item) {
                     return [
                         'item_id' => (int) $item->id,
                         'product_id' => (int) $item->product_id,
@@ -381,6 +413,12 @@ class OrdersController extends Controller
                 }),
                 'paid_at' => $payment && $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null),
             ];
+
+            if ($isSeller && !$isCustomer && !$isAdmin) {
+                $receiptData['azhl_commission'] = $azhlCommission;
+                $receiptData['seller_earning'] = $sellerEarning;
+                $receiptData['customer_paid_total'] = round((float) ($order->total_amount ?? 0), 2);
+            }
 
             return response()->json([
                 'success' => true,

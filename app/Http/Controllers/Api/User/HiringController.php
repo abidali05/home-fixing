@@ -27,6 +27,73 @@ use Illuminate\Support\Str;
 class HiringController extends Controller
 {
     /**
+     * Resolve file extension from custom file_name, file MIME or physical file.
+     */
+    private function resolveExtension($file, ?string $customFileName = null, ?string $filePath = null): string
+    {
+        if (!empty($customFileName)) {
+            $ext = strtolower(pathinfo($customFileName, PATHINFO_EXTENSION));
+            if (!empty($ext) && $ext !== 'bin') {
+                return $ext;
+            }
+        }
+
+        $mime = null;
+        if ($file instanceof \Illuminate\Http\UploadedFile) {
+            $ext = strtolower($file->getClientOriginalExtension());
+            if (!empty($ext) && $ext !== 'bin') {
+                return $ext;
+            }
+
+            $guessed = $file->guessExtension();
+            if (!empty($guessed) && $guessed !== 'bin') {
+                return $guessed;
+            }
+
+            $mime = $file->getMimeType() ?: $file->getClientMimeType();
+        }
+
+        if ($filePath && file_exists($filePath)) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo) {
+                $detectedMime = finfo_file($finfo, $filePath);
+                if ($detectedMime) {
+                    $mime = $detectedMime;
+                }
+                finfo_close($finfo);
+            }
+        }
+
+        $mimeMap = [
+            'video/mp4' => 'mp4',
+            'video/quicktime' => 'mov',
+            'video/x-msvideo' => 'avi',
+            'video/x-matroska' => 'mkv',
+            'video/webm' => 'webm',
+            'video/3gpp' => '3gp',
+            'video/ogg' => 'ogg',
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+        ];
+
+        if ($mime && isset($mimeMap[$mime])) {
+            return $mimeMap[$mime];
+        }
+
+        if ($mime && str_starts_with($mime, 'video/')) {
+            return 'mp4';
+        }
+
+        if ($mime && str_starts_with($mime, 'image/')) {
+            return 'jpg';
+        }
+
+        return 'mp4';
+    }
+
+    /**
      * Upload single media file or chunks for high-speed, reliable uploads.
      */
     public function upload_media(Request $request)
@@ -56,7 +123,7 @@ class HiringController extends Controller
 
             // Standard Single File Upload
             if (!$uploadId || $totalChunks <= 1 || $chunkIndex === null) {
-                $ext = $file->getClientOriginalExtension() ?: 'bin';
+                $ext = $this->resolveExtension($file, $request->input('file_name'));
                 $filename = time() . '_' . Str::random(10) . '.' . $ext;
                 $file->move($targetDir, $filename);
 
@@ -95,16 +162,9 @@ class HiringController extends Controller
                 ], 'Chunk ' . $chunkIndex . ' received successfully.');
             }
 
-            // All chunks received -> Merge into final file
-            $origName = $request->input('file_name', '');
-            $ext = pathinfo($origName, PATHINFO_EXTENSION);
-            if (!$ext) {
-                $ext = 'bin';
-            }
-
-            $finalFilename = time() . '_' . Str::random(10) . '.' . $ext;
-            $finalPath = $targetDir . '/' . $finalFilename;
-            $out = fopen($finalPath, 'wb');
+            // All chunks received -> Merge into temp file
+            $tempMerged = $tempDir . '/merged_temp';
+            $out = fopen($tempMerged, 'wb');
 
             for ($i = 0; $i < $totalChunks; $i++) {
                 $chunkPath = $tempDir . '/chunk_' . $i;
@@ -114,6 +174,13 @@ class HiringController extends Controller
                 @unlink($chunkPath);
             }
             fclose($out);
+
+            // Detect extension from custom file_name or physical merged file content
+            $ext = $this->resolveExtension($file, $request->input('file_name'), $tempMerged);
+            $finalFilename = time() . '_' . Str::random(10) . '.' . $ext;
+            $finalPath = $targetDir . '/' . $finalFilename;
+
+            rename($tempMerged, $finalPath);
             @rmdir($tempDir);
 
             return $this->success([

@@ -100,6 +100,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
     Route::get('track-order/{id}', [GeneralContoller::class, 'track_order']);
     Route::post('cancel-order/{id}', [GeneralContoller::class, 'cancel_order']);
+    Route::post('upload-media', [HiringController::class, 'upload_media']);
 
     // Customer Role (0) Routes
     Route::middleware('Role:0')->group(function () {

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendJobPostedNotifications;
 use App\Models\Admin\ServiceCategoryModel;
 use App\Models\Admin\SystemSettingModel;
 use App\Models\BidModel;
@@ -25,6 +26,108 @@ use Illuminate\Support\Str;
 
 class HiringController extends Controller
 {
+    /**
+     * Upload single media file or chunks for high-speed, reliable uploads.
+     */
+    public function upload_media(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'file' => 'required|file|max:51200', // max 50MB per file or chunk
+            'upload_id' => 'nullable|string|max:100',
+            'chunk_index' => 'nullable|integer|min:0',
+            'total_chunks' => 'nullable|integer|min:1',
+            'file_name' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors(), 'Validation failed.');
+        }
+
+        try {
+            $file = $request->file('file');
+            $uploadId = $request->input('upload_id');
+            $chunkIndex = $request->input('chunk_index');
+            $totalChunks = (int) $request->input('total_chunks', 1);
+
+            $targetDir = public_path('uploads/job_gallery');
+            if (!file_exists($targetDir)) {
+                mkdir($targetDir, 0777, true);
+            }
+
+            // Standard Single File Upload
+            if (!$uploadId || $totalChunks <= 1 || $chunkIndex === null) {
+                $ext = $file->getClientOriginalExtension() ?: 'bin';
+                $filename = time() . '_' . Str::random(10) . '.' . $ext;
+                $file->move($targetDir, $filename);
+
+                return $this->success([
+                    'file_name' => $filename,
+                    'file_url' => asset('uploads/job_gallery/' . $filename),
+                    'is_completed' => true,
+                ], 'Media uploaded successfully.');
+            }
+
+            // Chunked Upload Handling
+            $safeUploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', $uploadId);
+            $tempDir = storage_path('app/temp_chunks/' . $safeUploadId);
+            if (!file_exists($tempDir)) {
+                mkdir($tempDir, 0777, true);
+            }
+
+            $chunkFilename = 'chunk_' . $chunkIndex;
+            $file->move($tempDir, $chunkFilename);
+
+            // Check if all chunks have arrived
+            $allUploaded = true;
+            for ($i = 0; $i < $totalChunks; $i++) {
+                if (!file_exists($tempDir . '/chunk_' . $i)) {
+                    $allUploaded = false;
+                    break;
+                }
+            }
+
+            if (!$allUploaded) {
+                return $this->success([
+                    'upload_id' => $uploadId,
+                    'chunk_index' => (int) $chunkIndex,
+                    'total_chunks' => $totalChunks,
+                    'is_completed' => false,
+                ], 'Chunk ' . $chunkIndex . ' received successfully.');
+            }
+
+            // All chunks received -> Merge into final file
+            $origName = $request->input('file_name', '');
+            $ext = pathinfo($origName, PATHINFO_EXTENSION);
+            if (!$ext) {
+                $ext = 'bin';
+            }
+
+            $finalFilename = time() . '_' . Str::random(10) . '.' . $ext;
+            $finalPath = $targetDir . '/' . $finalFilename;
+            $out = fopen($finalPath, 'wb');
+
+            for ($i = 0; $i < $totalChunks; $i++) {
+                $chunkPath = $tempDir . '/chunk_' . $i;
+                $in = fopen($chunkPath, 'rb');
+                stream_copy_to_stream($in, $out);
+                fclose($in);
+                @unlink($chunkPath);
+            }
+            fclose($out);
+            @rmdir($tempDir);
+
+            return $this->success([
+                'upload_id' => $uploadId,
+                'file_name' => $finalFilename,
+                'file_url' => asset('uploads/job_gallery/' . $finalFilename),
+                'is_completed' => true,
+            ], 'All chunks merged and media uploaded successfully.');
+        } catch (\Throwable $e) {
+            Log::error('Error in upload_media: ' . $e->getMessage());
+            return $this->error('Failed to upload media: ' . $e->getMessage(), 500);
+        }
+    }
+
     public function direct_hire(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -37,11 +140,40 @@ class HiringController extends Controller
             'job_date' => 'required|date',
             'job_time' => 'required|date_format:H:i',
             'place_pictures' => 'nullable|array',
-            'place_pictures.*' => 'image|max:8192',
-            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
+            'place_pictures.*' => [
+                function ($attribute, $value, $fail) {
+                    if ($value instanceof \Illuminate\Http\UploadedFile) {
+                        if (!$value->isValid()) {
+                            $fail($attribute . ' must be a valid uploaded file.');
+                        }
+                    } elseif (is_string($value)) {
+                        $clean = basename($value);
+                        if (empty($clean) || !file_exists(public_path('uploads/job_gallery/' . $clean))) {
+                            $fail($attribute . ' file not found on server: ' . $clean);
+                        }
+                    } else {
+                        $fail($attribute . ' must be a valid image file or uploaded filename.');
+                    }
+                }
+            ],
+            'video' => [
+                'nullable',
+                function ($attribute, $value, $fail) {
+                    if ($value instanceof \Illuminate\Http\UploadedFile) {
+                        if (!$value->isValid()) {
+                            $fail($attribute . ' must be a valid video file.');
+                        }
+                    } elseif (is_string($value)) {
+                        $clean = basename($value);
+                        if (empty($clean) || !file_exists(public_path('uploads/job_gallery/' . $clean))) {
+                            $fail($attribute . ' video file not found on server: ' . $clean);
+                        }
+                    } else {
+                        $fail($attribute . ' must be a valid video file or uploaded filename.');
+                    }
+                }
+            ],
             'equipment_option' => 'nullable',
-        ], [
-            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validator->fails()) {
@@ -77,26 +209,44 @@ class HiringController extends Controller
                 'equipment_option' => $equipmentOption,
             ]);
 
-            // ✅ SAVE IMAGES
+            // ✅ SAVE IMAGES (Supports both uploaded files and pre-uploaded filenames)
+            $placePictures = $request->input('place_pictures', []);
             if ($request->hasFile('place_pictures')) {
                 foreach ($request->file('place_pictures') as $file) {
-                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/job_gallery/'), $filename);
+                    if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
+                        $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                        $file->move(public_path('uploads/job_gallery/'), $filename);
 
-                    JobRequestImages::create([
-                        'job_id' => $job->id,
-                        'path' => $filename,
-                    ]);
+                        JobRequestImages::create([
+                            'job_id' => $job->id,
+                            'path' => $filename,
+                        ]);
+                    }
+                }
+            } elseif (is_array($placePictures)) {
+                foreach ($placePictures as $item) {
+                    if (is_string($item) && !empty($item)) {
+                        $filename = basename($item);
+                        JobRequestImages::create([
+                            'job_id' => $job->id,
+                            'path' => $filename,
+                        ]);
+                    }
                 }
             }
 
-            // ✅ SAVE VIDEO
+            // ✅ SAVE VIDEO (Supports both uploaded file and pre-uploaded filename)
             if ($request->hasFile('video')) {
                 $file = $request->file('video');
-                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/job_gallery/'), $filename);
+                if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
+                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $file->move(public_path('uploads/job_gallery/'), $filename);
 
-                $job->video = $filename;
+                    $job->video = $filename;
+                    $job->save();
+                }
+            } elseif (is_string($request->video) && !empty($request->video)) {
+                $job->video = basename($request->video);
                 $job->save();
             }
 
@@ -140,11 +290,40 @@ class HiringController extends Controller
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
             'place_pictures' => 'required|array',
-            'place_pictures.*' => 'image|max:8192',
-            'video' => 'nullable|file|mimes:mp4,mov,ogg,qt,avi,webm|max:10240',
+            'place_pictures.*' => [
+                function ($attribute, $value, $fail) {
+                    if ($value instanceof \Illuminate\Http\UploadedFile) {
+                        if (!$value->isValid()) {
+                            $fail($attribute . ' must be a valid uploaded file.');
+                        }
+                    } elseif (is_string($value)) {
+                        $clean = basename($value);
+                        if (empty($clean) || !file_exists(public_path('uploads/job_gallery/' . $clean))) {
+                            $fail($attribute . ' file not found on server: ' . $clean);
+                        }
+                    } else {
+                        $fail($attribute . ' must be a valid image file or uploaded filename.');
+                    }
+                }
+            ],
+            'video' => [
+                'nullable',
+                function ($attribute, $value, $fail) {
+                    if ($value instanceof \Illuminate\Http\UploadedFile) {
+                        if (!$value->isValid()) {
+                            $fail($attribute . ' must be a valid video file.');
+                        }
+                    } elseif (is_string($value)) {
+                        $clean = basename($value);
+                        if (empty($clean) || !file_exists(public_path('uploads/job_gallery/' . $clean))) {
+                            $fail($attribute . ' video file not found on server: ' . $clean);
+                        }
+                    } else {
+                        $fail($attribute . ' must be a valid video file or uploaded filename.');
+                    }
+                }
+            ],
             'equipment_option' => 'nullable',
-        ], [
-            'video.max' => 'The video must not be greater than 10mb.',
         ]);
 
         if ($validated->fails()) {
@@ -177,24 +356,44 @@ class HiringController extends Controller
                 'equipment_option' => $equipmentOption,
             ]);
 
+            // Save images (Supports both direct uploaded files and pre-uploaded filenames)
+            $placePictures = $request->input('place_pictures', []);
             if ($request->hasFile('place_pictures')) {
                 foreach ($request->file('place_pictures') as $file) {
-                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                    $file->move(public_path('uploads/job_gallery/'), $filename);
+                    if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
+                        $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                        $file->move(public_path('uploads/job_gallery/'), $filename);
 
-                    JobRequestImages::create([
-                        'job_id' => $jobRequest->id,
-                        'path' => $filename,
-                    ]);
+                        JobRequestImages::create([
+                            'job_id' => $jobRequest->id,
+                            'path' => $filename,
+                        ]);
+                    }
+                }
+            } elseif (is_array($placePictures)) {
+                foreach ($placePictures as $item) {
+                    if (is_string($item) && !empty($item)) {
+                        $filename = basename($item);
+                        JobRequestImages::create([
+                            'job_id' => $jobRequest->id,
+                            'path' => $filename,
+                        ]);
+                    }
                 }
             }
 
+            // Save video (Supports both direct uploaded file and pre-uploaded filename)
             if ($request->hasFile('video')) {
                 $file = $request->file('video');
-                $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
-                $file->move(public_path('uploads/job_gallery/'), $filename);
+                if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
+                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $file->move(public_path('uploads/job_gallery/'), $filename);
 
-                $jobRequest->video = $filename;
+                    $jobRequest->video = $filename;
+                    $jobRequest->save();
+                }
+            } elseif (is_string($request->video) && !empty($request->video)) {
+                $jobRequest->video = basename($request->video);
                 $jobRequest->save();
             }
 
@@ -213,36 +412,15 @@ class HiringController extends Controller
 
             DB::commit();
 
-            $jobLat = $jobRequest->latitude ? (float) $jobRequest->latitude : null;
-            $jobLng = $jobRequest->longitude ? (float) $jobRequest->longitude : null;
+            // Asynchronously dispatch notifications in Queue for instant response time
+            SendJobPostedNotifications::dispatch($jobRequest->id)->afterCommit();
 
-            $providersQuery = User::query()
-                ->where('role', 1)
-                ->whereHas('providerProfile', function ($q) use ($jobRequest, $jobLat, $jobLng) {
-                    $categoryId = (int) $jobRequest->category_id;
-
-                    $q->where(function ($sub) use ($categoryId) {
-                        $sub->whereJsonContains('service_category', $categoryId)
-                            ->orWhereJsonContains('service_category', (string) $categoryId);
-                    });
-
-                    if ($jobLat && $jobLng) {
-                        $q->whereNotNull('latitude')
-                            ->whereNotNull('longitude')
-                            ->whereRaw(
-                                '(6371 * acos(least(1.0, greatest(-1.0, cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))))) <= 5',
-                                [$jobLat, $jobLng, $jobLat]
-                            );
-                    }
-                });
-
-            $providers = $providersQuery->get();
-
-            Notification::send($providers, (new JobPostedNotification($jobRequest))->afterCommit());
             return $this->success($jobRequest, 'Request Submitted successfully.');
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::info($e->getMessage());
+            Log::error('Error submitting service request: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             return $this->error('An error occurred while submitting the request.');
         }
     }

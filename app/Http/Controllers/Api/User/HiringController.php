@@ -128,6 +128,78 @@ class HiringController extends Controller
         }
     }
 
+    /**
+     * Delete uploaded media file(s) from server and temporary chunks.
+     */
+    public function delete_media(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'file_name' => 'nullable',
+            'file_names' => 'nullable|array',
+            'upload_id' => 'nullable|string|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationError($validator->errors(), 'Validation failed.');
+        }
+
+        try {
+            $filesToDelete = [];
+
+            if ($request->filled('file_name')) {
+                if (is_array($request->file_name)) {
+                    $filesToDelete = array_merge($filesToDelete, $request->file_name);
+                } else {
+                    $filesToDelete[] = $request->file_name;
+                }
+            }
+
+            if ($request->has('file_names') && is_array($request->file_names)) {
+                $filesToDelete = array_merge($filesToDelete, $request->file_names);
+            }
+
+            $deletedFiles = [];
+            foreach ($filesToDelete as $rawName) {
+                if (!is_string($rawName) || empty($rawName)) {
+                    continue;
+                }
+                $clean = basename($rawName);
+                $filePath = public_path('uploads/job_gallery/' . $clean);
+
+                if (file_exists($filePath) && is_file($filePath)) {
+                    @unlink($filePath);
+                    $deletedFiles[] = $clean;
+                }
+
+                // Clean up database references if any
+                JobRequestImages::where('path', $clean)->delete();
+                JobRequestModel::where('video', $clean)->update(['video' => null]);
+            }
+
+            // Also clean up any abandoned chunk directory
+            if ($request->filled('upload_id')) {
+                $safeUploadId = preg_replace('/[^a-zA-Z0-9_-]/', '', $request->upload_id);
+                $tempDir = storage_path('app/temp_chunks/' . $safeUploadId);
+                if (file_exists($tempDir) && is_dir($tempDir)) {
+                    $chunks = glob($tempDir . '/*');
+                    foreach ($chunks as $chunk) {
+                        if (is_file($chunk)) {
+                            @unlink($chunk);
+                        }
+                    }
+                    @rmdir($tempDir);
+                }
+            }
+
+            return $this->success([
+                'deleted_files' => $deletedFiles,
+            ], 'Media deleted successfully.');
+        } catch (\Throwable $e) {
+            Log::error('Error in delete_media: ' . $e->getMessage());
+            return $this->error('Failed to delete media: ' . $e->getMessage(), 500);
+        }
+    }
+
     public function direct_hire(Request $request)
     {
         $validator = Validator::make($request->all(), [

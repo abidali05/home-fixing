@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\MarketplaceOrderController;
 use App\Http\Controllers\Admin\MarketplaceProductController;
 use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\PrivacyController;
+use App\Http\Controllers\Admin\TermsConditionController;
 use App\Http\Controllers\Admin\ProviderController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SellerController;
@@ -17,6 +18,9 @@ use App\Http\Controllers\Admin\SupportItemController;
 use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\SystemUserController;
 use App\Http\Controllers\Admin\UsersController;
+use App\Http\Controllers\Admin\AccountActiveRequestController;
+use App\Http\Controllers\Admin\NotificationController;
+use App\Http\Controllers\Admin\CompanyController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Artisan;
@@ -25,6 +29,28 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return redirect('dashboard');
+});
+
+Route::get('/cron/jobs-cleanup/{token}', function ($token) {
+
+    // Change this token to something secret
+    abort_unless($token === 'azhlksa_cleanup_2026', 403);
+
+    Log::info('Cron route called', [
+        'ip' => request()->ip(),
+        'time' => now()->toDateTimeString(),
+    ]);
+
+    Artisan::call('jobs:cleanup');
+
+    Log::info('Cron command completed', [
+        'output' => Artisan::output(),
+    ]);
+
+    return response()->json([
+        'success' => true,
+        'output' => Artisan::output(),
+    ]);
 });
 
 Route::get('/clear-cache', function () {
@@ -48,14 +74,16 @@ Route::get('/clear-cache', function () {
 Route::get('/run-queue-once', function () {
     try {
         Artisan::call('queue:work', [
+            'connection' => 'database',
             '--once' => true,
-            '--queue' => 'notifications',
+            '--queue' => 'notifications,default',
             '--tries' => 1,
+            '--stop-when-empty' => true,
         ]);
 
         return response()->json([
             'status' => true,
-            'message' => 'Notifications queue executed once',
+            'message' => 'Queue executed successfully once',
             'output' => Artisan::output(),
         ]);
     } catch (\Throwable $e) {
@@ -128,6 +156,7 @@ Route::post('check-phone-availability', [SystemUserController::class, 'checkPhon
 
 Route::middleware(['auth:admin'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/sidebar-notifications', [DashboardController::class, 'getNotifications'])->name('sidebar_notifications');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
@@ -137,8 +166,12 @@ Route::middleware(['auth:admin'])->group(function () {
 
     Route::prefix('admin')->name('admin.')->middleware(['auth:admin'])->group(function () {
         Route::resource('privacy', PrivacyController::class);
+        Route::resource('terms_conditions', TermsConditionController::class);
         Route::get('app-versions', [AppVersionController::class, 'index'])->name('app_versions.index');
         Route::post('app-versions/save', [AppVersionController::class, 'save'])->name('app_versions.save');
+        Route::get('notifications/send', [NotificationController::class, 'create'])->name('notifications.create');
+        Route::post('notifications/send', [NotificationController::class, 'store'])->name('notifications.store');
+        Route::post('notifications/send-direct', [NotificationController::class, 'sendDirectNotification'])->name('notifications.send_direct');
     });
 
 
@@ -164,6 +197,22 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('settings/update', [SystemSettingController::class, 'update'])->name('settings.update')->middleware('CheckPermission:5');
     Route::post('mobile_banners/update', [SystemSettingController::class, 'mobile_banners'])->name('mobile_banners.update')->middleware('CheckPermission:5');
     Route::get('mobile-banners/delete/{id}', [SystemSettingController::class, 'delete_mobile_banners'])->name('mobile_banners.delete')->middleware('CheckPermission:5');
+
+    // Payments & Transactions
+    Route::get('payments', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.index');
+    Route::get('payments-transactions', [\App\Http\Controllers\Admin\PaymentTransactionController::class, 'index'])->name('admin.payments.transactions');
+
+    // Admin Withdrawal Requests Management (Blade Web UI)
+    Route::get('withdrawals', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'index'])->name('admin.withdrawals.index');
+    Route::patch('withdrawals/{id}/accept', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'accept'])->name('admin.withdrawals.accept');
+    Route::patch('withdrawals/{id}/complete', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'complete'])->name('admin.withdrawals.complete');
+    Route::patch('withdrawals/{id}/reject', [\App\Http\Controllers\Admin\WithdrawalAdminController::class, 'reject'])->name('admin.withdrawals.reject');
+
+    // Admin Refund Requests Management (Blade Web UI)
+    Route::get('refunds', [\App\Http\Controllers\Admin\RefundAdminController::class, 'index'])->name('admin.refunds.index');
+    Route::patch('refunds/{id}/accept', [\App\Http\Controllers\Admin\RefundAdminController::class, 'accept'])->name('admin.refunds.accept');
+    Route::patch('refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete'])->name('admin.refunds.complete');
+    Route::patch('refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject'])->name('admin.refunds.reject');
 
 
     // =====================================================================System Settings Start===============================================================================
@@ -240,6 +289,9 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('users/update/{id}', [UsersController::class, 'update'])->name('users.update')->middleware('CheckPermission:16');
     Route::delete('users/delete/{id}', [UsersController::class, 'destroy'])->name('users.delete')->middleware('CheckPermission:17');
 
+    Route::get('account-active-requests', [AccountActiveRequestController::class, 'index'])->name('account_active_requests.index');
+    Route::post('account-active-requests/activate/{id}', [AccountActiveRequestController::class, 'activate'])->name('account_active_requests.activate');
+
     // ====================================================================Users End===============================================================================
 
 
@@ -256,6 +308,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('providers/edit/{id}', [ProviderController::class, 'edit'])->name('providers.edit')->middleware('CheckPermission:20');
     Route::post('providers/update/{id}', [ProviderController::class, 'update'])->name('providers.update')->middleware('CheckPermission:20');
     Route::post('providers/status/{id}', [ProviderController::class, 'updateStatus'])->name('providers.status');
+    Route::post('providers/assign-company/{id}', [ProviderController::class, 'assignCompany'])->name('providers.assign_company');
     Route::delete('providers/delete/{id}', [ProviderController::class, 'destroy'])->name('providers.delete')->middleware('CheckPermission:21');
     Route::get('delete-provider-gallery-image/{id}', [ProviderController::class, 'deleteProviderImage'])->name('providers.deleteProviderImage')->middleware('CheckPermission:20');
 
@@ -268,6 +321,12 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::post('sellers/update/{id}', [SellerController::class, 'update'])->name('sellers.update');
     Route::post('sellers/status/{id}', [SellerController::class, 'updateStatus'])->name('sellers.status');
     // ====================================================================Sellers End===============================================================================
+
+    // ====================================================================Companies Start===============================================================================
+    Route::resource('companies', CompanyController::class);
+    Route::get('companies/{id}/assign', [CompanyController::class, 'assignProvidersForm'])->name('companies.assign.form');
+    Route::post('companies/{id}/assign', [CompanyController::class, 'assignProviders'])->name('companies.assign');
+    // ====================================================================Companies End===============================================================================
 
     // ====================================================================Marketplace Start===============================================================================
     Route::prefix('marketplace')->name('marketplace.')->group(function () {
@@ -310,6 +369,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::delete('job-requests/delete/{id}', [JobsController::class, 'destroy'])->name('job_requests.delete')->middleware('CheckPermission:25');
     Route::get('job-requests/details/{id}', [JobsController::class, 'details'])->name('job_requests.details')->middleware('CheckPermission:22');
     Route::get('delete-job-gallery-image/{id}', [JobsController::class, 'deleteJobImage'])->name('job_requests.deleteJobImage')->middleware('CheckPermission:24');
+    Route::get('delete-job-gallery-video/{id}', [JobsController::class, 'deleteJobVideo'])->name('job_requests.deleteJobVideo')->middleware('CheckPermission:24');
 
     // ====================================================================Job Request End===============================================================================
 
@@ -333,6 +393,7 @@ Route::middleware(['auth:admin'])->group(function () {
 
     Route::get('orders', [OrderController::class, 'index'])->name('orders.index')->middleware('CheckPermission:26');
     Route::get('orders/details/{id}', [OrderController::class, 'details'])->name('orders.details')->middleware('CheckPermission:26');
+    Route::get('orders/receipt/{id}', [OrderController::class, 'receipt'])->name('orders.receipt')->middleware('CheckPermission:26');
 });
 
 
@@ -342,6 +403,10 @@ Route::get('clear-cache', function () {
 
     return 'Cache cleared';
 })->name('clear.cache');
+
+// Tap Payments 3DS Redirect Route
+Route::get('tap/redirect', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.redirect');
+
 
 
 require __DIR__ . '/auth.php';

@@ -51,14 +51,14 @@
                                     <label for="role">Role</label>
                                     <select name="role" id="role" class="form-control" required>
                                         <option value="0" {{ old('role', $privacy->role ?? '') == '0' ? 'selected' : '' }}>User</option>
-                                        <option value="2" {{ old('role', $privacy->role ?? '') == '2' ? 'selected' : '' }}>Provider</option>
-                                        <option value="3" {{ old('role', $privacy->role ?? '') == '3' ? 'selected' : '' }}>Shop</option>
+                                        <option value="1" {{ old('role', $privacy->role ?? '') == '1' ? 'selected' : '' }}>Provider</option>
+                                        <option value="2" {{ old('role', $privacy->role ?? '') == '2' ? 'selected' : '' }}>Shop</option>
                                     </select>
                                 </div>
 
                                 <div class="form-group">
                                     <label for="content">Content</label>
-                                    <textarea name="content" id="content" class="form-control" rows="5" required>{{ $privacy->content }}</textarea>
+                                    <textarea name="content" id="content" class="form-control" rows="10" required>{{ old('content', $privacy->content) }}</textarea>
                                 </div>
 
                                 <button type="submit" class="btn btn-success mt-3">Update</button>
@@ -70,3 +70,26 @@
         </div>
     </main>
 @endsection
+
+@push('scripts')
+    {{-- CKEditor 5 CDN --}}
+    <script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
+    <script>
+        ClassicEditor
+            .create(document.querySelector('#content'), {
+                toolbar: [
+                    'heading', '|',
+                    'bold', 'italic', 'underline', 'strikethrough', '|',
+                    'bulletedList', 'numberedList', 'blockQuote', '|',
+                    'link', '|',
+                    'outdent', 'indent', '|',
+                    'insertTable', 'horizontalLine', '|',
+                    'undo', 'redo'
+                ],
+                placeholder: 'Enter Privacy Policy content here...',
+            })
+            .catch(error => {
+                console.error('CKEditor error:', error);
+            });
+    </script>
+@endpush

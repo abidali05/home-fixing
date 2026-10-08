@@ -15,6 +15,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(FirebaseService::class, function () {
             return new FirebaseService();
         });
+
+        $this->app->singleton(\Twilio\Rest\Client::class, function () {
+            return new \Twilio\Rest\Client(config('services.twilio.sid'), config('services.twilio.token'));
+        });
     }
 
     /**

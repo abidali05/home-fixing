@@ -51,6 +51,11 @@ class Product extends Model
         'installation_available' => 'boolean',
     ];
 
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
     public function seller()
     {
         return $this->belongsTo(User::class, 'user_id');

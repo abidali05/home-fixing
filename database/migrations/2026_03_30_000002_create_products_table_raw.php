@@ -11,6 +11,9 @@ return new class extends Migration {
      */
     public function up()
     {
+        if (\Illuminate\Support\Facades\Schema::hasTable('products')) {
+            return;
+        }
         DB::statement("CREATE TABLE products (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             banner_image VARCHAR(255) NOT NULL,

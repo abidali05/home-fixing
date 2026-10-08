@@ -366,6 +366,13 @@ class HiringController extends Controller
                 foreach ($placePictures as $item) {
                     if (is_string($item) && !empty($item)) {
                         $filename = basename($item);
+                        // Prevent attaching an image that already belongs to another job
+                        $alreadyAttached = JobRequestImages::where('path', $filename)->exists();
+                        if ($alreadyAttached) {
+                            Log::warning("Skipping direct_hire place_picture {$filename}: already belongs to another job.");
+                            continue;
+                        }
+
                         JobRequestImages::create([
                             'job_id' => $job->id,
                             'path' => $filename,
@@ -513,6 +520,13 @@ class HiringController extends Controller
                 foreach ($placePictures as $item) {
                     if (is_string($item) && !empty($item)) {
                         $filename = basename($item);
+                        // Prevent attaching an image that already belongs to another job
+                        $alreadyAttached = JobRequestImages::where('path', $filename)->exists();
+                        if ($alreadyAttached) {
+                            Log::warning("Skipping post_service_request place_picture {$filename}: already belongs to another job.");
+                            continue;
+                        }
+
                         JobRequestImages::create([
                             'job_id' => $jobRequest->id,
                             'path' => $filename,
@@ -595,13 +609,38 @@ class HiringController extends Controller
     public function service_request_details($id)
     {
         try {
-            $request = JobRequestModel::with(['user', 'images'])->where('id', $id)->where('status', '!=', ['completed', 'cancelled'])->firstOrFail();
+            $request = JobRequestModel::with(['user', 'images'])
+                ->where('id', $id)
+                ->whereNotIn('status', ['completed', 'cancelled'])
+                ->firstOrFail();
+
             $category = ServiceCategoryModel::where('id', $request->category_id)->first();
-            $category->path = $category->path != null ? asset('uploads/service_category/' . $category->path) : asset('assets/img/default.jpg');
+            if ($category) {
+                $category->path = $category->path != null ? asset('uploads/service_category/' . $category->path) : asset('assets/img/default.jpg');
+            }
             $request->category = $category;
 
+            // Clean up any stale images in DB that were mistakenly attached from an earlier job
+            $staleImageIds = [];
+            foreach ($request->images as $img) {
+                $rawPath = basename($img->path);
+                $belongsToEarlierJob = JobRequestImages::where('path', $rawPath)
+                    ->where('job_id', '<', $request->id)
+                    ->exists();
+
+                if ($belongsToEarlierJob) {
+                    $staleImageIds[] = $img->id;
+                }
+            }
+
+            if (!empty($staleImageIds)) {
+                JobRequestImages::whereIn('id', $staleImageIds)->delete();
+                $request->load('images');
+            }
+
             foreach ($request->images as $image) {
-                $image->path = $image->path != null ? asset('uploads/job_gallery/' . $image->path) : asset('assets/img/default.jpg');
+                $rawName = basename($image->path);
+                $image->path = !empty($rawName) ? asset('uploads/job_gallery/' . $rawName) : asset('assets/img/default.jpg');
             }
 
             $order = Orders::with('provider')->where('job_id', $request->id)->latest()->first();

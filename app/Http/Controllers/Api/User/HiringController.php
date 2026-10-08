@@ -124,7 +124,7 @@ class HiringController extends Controller
             // Standard Single File Upload
             if (!$uploadId || $totalChunks <= 1 || $chunkIndex === null) {
                 $ext = $this->resolveExtension($file, $request->input('file_name'));
-                $filename = time() . '_' . Str::random(10) . '.' . $ext;
+                $filename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
                 $file->move($targetDir, $filename);
 
                 return $this->success([
@@ -177,7 +177,7 @@ class HiringController extends Controller
 
             // Detect extension from custom file_name or physical merged file content
             $ext = $this->resolveExtension($file, $request->input('file_name'), $tempMerged);
-            $finalFilename = time() . '_' . Str::random(10) . '.' . $ext;
+            $finalFilename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
             $finalPath = $targetDir . '/' . $finalFilename;
 
             rename($tempMerged, $finalPath);
@@ -356,7 +356,8 @@ class HiringController extends Controller
             if ($request->hasFile('place_pictures')) {
                 foreach ($request->file('place_pictures') as $file) {
                     if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
-                        $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                        $ext = $this->resolveExtension($file);
+                        $filename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
                         $file->move(public_path('uploads/job_gallery/'), $filename);
 
                         JobRequestImages::create([
@@ -388,7 +389,8 @@ class HiringController extends Controller
             if ($request->hasFile('video')) {
                 $file = $request->file('video');
                 if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
-                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $ext = $this->resolveExtension($file);
+                    $filename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
                     $file->move(public_path('uploads/job_gallery/'), $filename);
 
                     $job->video = $filename;
@@ -513,7 +515,8 @@ class HiringController extends Controller
             if ($request->hasFile('place_pictures')) {
                 foreach ($request->file('place_pictures') as $file) {
                     if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
-                        $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                        $ext = $this->resolveExtension($file);
+                        $filename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
                         $file->move(public_path('uploads/job_gallery/'), $filename);
 
                         JobRequestImages::create([
@@ -545,7 +548,8 @@ class HiringController extends Controller
             if ($request->hasFile('video')) {
                 $file = $request->file('video');
                 if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
-                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $ext = $this->resolveExtension($file);
+                    $filename = date('Ymd_His') . '_' . Str::random(8) . '.' . $ext;
                     $file->move(public_path('uploads/job_gallery/'), $filename);
 
                     $jobRequest->video = $filename;

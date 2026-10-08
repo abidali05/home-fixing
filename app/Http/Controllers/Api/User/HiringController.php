@@ -348,6 +348,9 @@ class HiringController extends Controller
                 'equipment_option' => $equipmentOption,
             ]);
 
+            // Clear any legacy orphaned images for this job_id just in case
+            JobRequestImages::where('job_id', $job->id)->delete();
+
             // ✅ SAVE IMAGES (Supports both uploaded files and pre-uploaded filenames)
             $placePictures = $request->input('place_pictures', []);
             if ($request->hasFile('place_pictures')) {
@@ -502,6 +505,9 @@ class HiringController extends Controller
                 'equipment_option' => $equipmentOption,
             ]);
 
+            // Clear any legacy orphaned images for this job_id just in case
+            JobRequestImages::where('job_id', $jobRequest->id)->delete();
+
             // Save images (Supports both direct uploaded files and pre-uploaded filenames)
             $placePictures = $request->input('place_pictures', []);
             if ($request->hasFile('place_pictures')) {
@@ -589,11 +595,22 @@ class HiringController extends Controller
                 ->get();
 
             foreach ($requests as $request) {
-                foreach ($request->images as $image) {
-                    $image->path = $image->path != null
-                        ? asset('uploads/job_gallery/' . $image->path)
+                $jobCreatedAt = $request->created_at;
+                $cleanImages = $request->images->filter(function ($img) use ($jobCreatedAt, $request) {
+                    if ($img->created_at && $jobCreatedAt && $img->created_at->lt($jobCreatedAt->copy()->subSeconds(5))) {
+                        return false;
+                    }
+                    $rawPath = basename($img->path);
+                    return !JobRequestImages::where('path', $rawPath)->where('job_id', '<', $request->id)->exists();
+                })->values();
+
+                foreach ($cleanImages as $image) {
+                    $rawName = basename($image->path);
+                    $image->path = !empty($rawName)
+                        ? asset('uploads/job_gallery/' . $rawName)
                         : asset('assets/img/default.jpg');
                 }
+                $request->setRelation('images', $cleanImages);
 
                 $request->setAttribute('order_status', $request->order ? $request->order->status : null);
             }
@@ -620,7 +637,8 @@ class HiringController extends Controller
             }
             $request->category = $category;
 
-            // Clean up any stale images in DB that were mistakenly attached from an earlier job
+            // Clean up any stale images in DB that were created BEFORE this job existed or belong to earlier jobs
+            $jobCreatedAt = $request->created_at;
             $staleImageIds = [];
             foreach ($request->images as $img) {
                 $rawPath = basename($img->path);
@@ -628,7 +646,9 @@ class HiringController extends Controller
                     ->where('job_id', '<', $request->id)
                     ->exists();
 
-                if ($belongsToEarlierJob) {
+                $createdBeforeJob = ($img->created_at && $jobCreatedAt && $img->created_at->lt($jobCreatedAt->copy()->subSeconds(5)));
+
+                if ($belongsToEarlierJob || $createdBeforeJob) {
                     $staleImageIds[] = $img->id;
                 }
             }

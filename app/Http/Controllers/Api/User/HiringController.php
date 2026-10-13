@@ -709,6 +709,28 @@ class HiringController extends Controller
             $bids = BidModel::with('job', 'provider', 'order')->where('job_id', $id)->get();
 
             foreach ($bids as $bid) {
+                if ($bid->provider) {
+                    $img = $bid->provider->profile_image;
+                    if (!empty($img)) {
+                        $bid->provider->profile_image = (str_starts_with($img, 'http://') || str_starts_with($img, 'https://'))
+                            ? $img
+                            : asset('uploads/profile_images/' . $img);
+                    } else {
+                        $bid->provider->profile_image = asset('assets/img/default.jpg');
+                    }
+                }
+
+                if ($bid->order && $bid->order->provider) {
+                    $orderProvImg = $bid->order->provider->profile_image;
+                    if (!empty($orderProvImg)) {
+                        $bid->order->provider->profile_image = (str_starts_with($orderProvImg, 'http://') || str_starts_with($orderProvImg, 'https://'))
+                            ? $orderProvImg
+                            : asset('uploads/profile_images/' . $orderProvImg);
+                    } else {
+                        $bid->order->provider->profile_image = asset('assets/img/default.jpg');
+                    }
+                }
+
                 $repairPrice = (float) ($bid->price ?? 0);
                 $totalPayable = $repairPrice + $customerAppFee;
 

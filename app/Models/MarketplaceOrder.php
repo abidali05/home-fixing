@@ -16,6 +16,7 @@ class MarketplaceOrder extends Model
         'subtotal',
         'shipping_cost',
         'tax_amount',
+        'customer_app_fee',
         'coupon_code',
         'discount_price',
         'total_amount',
@@ -30,6 +31,7 @@ class MarketplaceOrder extends Model
         'subtotal' => 'float',
         'shipping_cost' => 'float',
         'tax_amount' => 'float',
+        'customer_app_fee' => 'float',
         'discount_price' => 'float',
         'total_amount' => 'float',
     ];
@@ -42,5 +44,10 @@ class MarketplaceOrder extends Model
     public function customer()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function payment()
+    {
+        return $this->hasOne(Payment::class, 'marketplace_order_id');
     }
 }

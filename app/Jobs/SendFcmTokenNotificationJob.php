@@ -2,14 +2,12 @@
 
 namespace App\Jobs;
 
-use App\Notifications\FcmTokenNotification;
+use App\Services\FirebaseService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
 
@@ -20,11 +18,19 @@ class SendFcmTokenNotificationJob implements ShouldQueue
     public function __construct(
         public array $tokens,
         public array $payload
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
-    public function handle(Messaging $messaging): void
+    public function handle(FirebaseService $firebaseService): void
     {
         Log::info('Bulk FCM Job Started');
+
+        if (empty($this->tokens)) {
+            return;
+        }
+
+        $messaging = $firebaseService->messaging();
 
         foreach (array_chunk($this->tokens, 200) as $chunk) {
 

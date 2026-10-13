@@ -31,9 +31,19 @@ class JobRequestModel extends Model
         return $this->hasMany(BidModel::class, 'job_id');
     }
 
+    public function order()
+    {
+        return $this->hasOne(Orders::class, 'job_id');
+    }
+
     public function providerBids()
-{
-    return $this->hasMany(BidModel::class, 'job_id')
-        ->where('provider_id', auth()->id());
-}
+    {
+        return $this->hasMany(BidModel::class, 'job_id')
+            ->where('provider_id', auth()->id());
+    }
+
+    public function getVideoAttribute($value)
+    {
+        return $value ? asset('uploads/job_gallery/' . $value) : null;
+    }
 }

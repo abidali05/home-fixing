@@ -138,7 +138,7 @@ class WithdrawalController extends Controller
      * Calculate wallet statistics for a given user and account_type
      * Single source of truth for walletSummary & requestWithdrawal
      */
-    private function calculateWalletBalance($userId, string $accountType = 'provider'): array
+    public function calculateWalletBalance($userId, string $accountType = 'provider'): array
     {
         if ($accountType === 'provider') {
             // 1. Pending Amount: Net pending amount

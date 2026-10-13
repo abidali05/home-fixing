@@ -97,6 +97,19 @@ class TapPaymentService
         $provider = $payment->provider_id ? User::find($payment->provider_id) : null;
         $destinationId = optional($provider?->providerProfile)->tap_destination_id;
 
+        $isLive = str_starts_with($secretKey, 'sk_live_');
+        if (!empty($destinationId)) {
+            if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                Log::warning("TapPaymentService: Resetting test destination ID {$destinationId} for provider #{$provider?->id} because environment is LIVE.");
+                $destinationId = null;
+                $provider?->providerProfile?->update(['tap_destination_id' => null]);
+            } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                Log::warning("TapPaymentService: Resetting live destination ID {$destinationId} for provider #{$provider?->id} because environment is SANDBOX.");
+                $destinationId = null;
+                $provider?->providerProfile?->update(['tap_destination_id' => null]);
+            }
+        }
+
         // Auto-Onboard: If provider has bank account or profile IBAN but no tap_destination_id yet, onboard immediately!
         if (empty($destinationId) && $provider) {
             $bankAccount = BankAccount::where('user_id', $provider->id)
@@ -105,6 +118,15 @@ class TapPaymentService
                 ->first();
 
             $destinationId = $bankAccount?->tap_destination_id;
+            if (!empty($destinationId)) {
+                if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                }
+            }
 
             if (empty($destinationId)) {
                 $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
@@ -327,8 +349,18 @@ class TapPaymentService
             }
         }
 
+        $isLive = str_starts_with($secretKey, 'sk_live_');
         foreach ($shopTotals as $sellerId => $data) {
             $destId = optional($data['seller']?->marketplaceProfile)->tap_destination_id;
+            if (!empty($destId)) {
+                if ($isLive && str_starts_with($destId, 'dst_test_')) {
+                    $destId = null;
+                    $data['seller']?->marketplaceProfile?->update(['tap_destination_id' => null]);
+                } elseif (!$isLive && str_starts_with($destId, 'dst_live_')) {
+                    $destId = null;
+                    $data['seller']?->marketplaceProfile?->update(['tap_destination_id' => null]);
+                }
+            }
 
             // Auto-onboard seller if missing
             if (empty($destId) && !empty($data['seller'])) {
@@ -337,6 +369,16 @@ class TapPaymentService
                     ->where('account_type', 'marketplace')
                     ->latest()
                     ->first();
+                $destId = $bankAccount?->tap_destination_id;
+                if (!empty($destId)) {
+                    if ($isLive && str_starts_with($destId, 'dst_test_')) {
+                        $destId = null;
+                        $bankAccount->update(['tap_destination_id' => null]);
+                    } elseif (!$isLive && str_starts_with($destId, 'dst_live_')) {
+                        $destId = null;
+                        $bankAccount->update(['tap_destination_id' => null]);
+                    }
+                }
                 $iban = $bankAccount?->iban ?: optional($sellerUser->marketplaceProfile)->iban;
                 if (!empty($iban)) {
                     try {

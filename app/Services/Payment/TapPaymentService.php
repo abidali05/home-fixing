@@ -760,6 +760,9 @@ class TapPaymentService
                 }
             }
 
+            // Clear customer cart immediately now that order & items are created
+            Cart::where('user_id', $userId)->delete();
+
             $payment->update([
                 'marketplace_order_id' => $order->id,
             ]);

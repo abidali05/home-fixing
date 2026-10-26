@@ -126,7 +126,7 @@ class MarketplacePaymentController extends Controller
             // Create Payment session for Cart Checkout
             $payment = Payment::create([
                 'user_id' => $user->id,
-                'marketplace_order_id' => null, // Order created ONLY after payment capture
+                'marketplace_order_id' => null,
                 'job_id' => null,
                 'bid_id' => null,
                 'provider_id' => null,
@@ -139,11 +139,20 @@ class MarketplacePaymentController extends Controller
                 ]
             ]);
 
+            // Create pending MarketplaceOrder immediately so Flutter always has a real order_id
+            $order = $this->tapPaymentService->createPendingOrderFromCart($payment);
+            $orderId = $order ? (int) $order->id : (int) $payment->id;
+
             return response()->json([
                 'success' => true,
                 'message' => 'Marketplace Cart payment session initiated successfully.',
                 'data' => array_merge([
                     'payment_id' => (int) $payment->id,
+                    'order_id' => $orderId,
+                    'marketplace_order_id' => $orderId,
+                    'id' => $orderId,
+                    'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
+                    'order' => $order,
                     'amount' => number_format((float) $payment->amount, 2, '.', ''),
                     'currency' => $payment->currency,
                     'status' => $payment->status,
@@ -244,13 +253,16 @@ class MarketplacePaymentController extends Controller
                 if (!$order && !$payment->job_id) {
                     $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
                 }
+                $orderId = $order ? (int) $order->id : (int) $payment->id;
                 return response()->json([
                     'success' => true,
                     'message' => 'Payment is already captured and order created.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
-                        'marketplace_order_id' => $order ? (int) $order->id : null,
-                        'order_number' => $order ? $order->order_number : null,
+                        'order_id' => $orderId,
+                        'marketplace_order_id' => $orderId,
+                        'id' => $orderId,
+                        'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
                         'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
                         'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
                         'status' => 'captured',
@@ -262,6 +274,10 @@ class MarketplacePaymentController extends Controller
             }
 
             $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
+            if (!$order && !$payment->job_id) {
+                $order = $this->tapPaymentService->createPendingOrderFromCart($payment);
+            }
+            $orderId = $order ? (int) $order->id : (int) $payment->id;
 
             $payment->update(['status' => 'processing']);
 
@@ -286,10 +302,14 @@ class MarketplacePaymentController extends Controller
                     'message' => '3DS Authentication required. Please complete authentication via the redirect URL.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
-                        'marketplace_order_id' => $order ? (int) $order->id : null,
+                        'order_id' => $orderId,
+                        'marketplace_order_id' => $orderId,
+                        'id' => $orderId,
+                        'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
                         'status' => strtolower($chargeStatus),
                         'tap_charge_id' => $tapChargeId,
                         'redirect_url' => $redirectUrl,
+                        'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
@@ -299,13 +319,14 @@ class MarketplacePaymentController extends Controller
                 if (!$payment->marketplace_order_id && !$payment->job_id) {
                     $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
                 } else if ($payment->marketplace_order_id) {
-                    $order = MarketplaceOrder::find($payment->marketplace_order_id);
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
                 }
+                $orderId = $order ? (int) $order->id : (int) $payment->id;
 
                 $payment->update([
                     'status' => 'captured',
                     'tap_charge_id' => $tapChargeId,
-                    'marketplace_order_id' => $order ? (int) $order->id : $payment->marketplace_order_id,
+                    'marketplace_order_id' => $orderId,
                 ]);
 
                 return response()->json([
@@ -313,8 +334,10 @@ class MarketplacePaymentController extends Controller
                     'message' => 'Payment processed successfully and Marketplace Order created.',
                     'data' => [
                         'payment_id' => (int) $payment->id,
-                        'marketplace_order_id' => $order ? (int) $order->id : null,
-                        'order_number' => $order ? $order->order_number : null,
+                        'order_id' => $orderId,
+                        'marketplace_order_id' => $orderId,
+                        'id' => $orderId,
+                        'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
                         'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
                         'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
                         'status' => 'captured',
@@ -373,17 +396,20 @@ class MarketplacePaymentController extends Controller
                 $order = $payment->marketplace_order_id ? MarketplaceOrder::with('items')->find($payment->marketplace_order_id) : null;
             }
 
+            $orderId = $order ? (int) $order->id : (int) $payment->id;
             return response()->json([
                 'success' => true,
                 'message' => 'Marketplace payment status retrieved successfully.',
                 'data' => [
                     'payment_id' => (int) $payment->id,
+                    'order_id' => $orderId,
+                    'marketplace_order_id' => $orderId,
+                    'id' => $orderId,
+                    'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
                     'status' => strtolower($payment->status),
                     'amount' => (float) $payment->amount,
                     'currency' => $payment->currency ?: 'SAR',
                     'tap_charge_id' => $payment->tap_charge_id,
-                    'marketplace_order_id' => $order ? (int) $order->id : null,
-                    'order_number' => $order ? $order->order_number : null,
                     'order' => $order,
                 ]
             ], 200);
@@ -458,7 +484,9 @@ class MarketplacePaymentController extends Controller
                         'success' => true,
                         'message' => 'Marketplace order is already paid.',
                         'data' => [
+                            'order_id' => (int) $order->id,
                             'marketplace_order_id' => (int) $order->id,
+                            'id' => (int) $order->id,
                             'order_number' => $order->order_number,
                             'status' => 'captured',
                             'payment_status' => 'paid',
@@ -488,7 +516,9 @@ class MarketplacePaymentController extends Controller
                     'message' => 'Payment has already been verified and order confirmed.',
                     'data' => [
                         'payment_id' => (int) $existingPayment->id,
+                        'order_id' => $order ? (int) $order->id : null,
                         'marketplace_order_id' => $order ? (int) $order->id : null,
+                        'id' => $order ? (int) $order->id : null,
                         'order_number' => $order?->order_number,
                         'status' => 'captured',
                         'payment_status' => 'paid',
@@ -644,7 +674,9 @@ class MarketplacePaymentController extends Controller
                 'message' => 'Payment verified successfully and Marketplace Order confirmed.',
                 'data' => [
                     'payment_id' => $payment ? (int) $payment->id : null,
+                    'order_id' => $order ? (int) $order->id : null,
                     'marketplace_order_id' => $order ? (int) $order->id : null,
+                    'id' => $order ? (int) $order->id : null,
                     'order_number' => $order?->order_number,
                     'status' => 'captured',
                     'payment_status' => 'paid',

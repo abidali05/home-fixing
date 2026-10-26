@@ -665,6 +665,112 @@ class TapPaymentService
     }
 
     /**
+     * Creates a pending MarketplaceOrder from cart items before or during charge.
+     */
+    public function createPendingOrderFromCart(Payment $payment): ?MarketplaceOrder
+    {
+        if ($payment->marketplace_order_id) {
+            $existing = MarketplaceOrder::find($payment->marketplace_order_id);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        $userId = $payment->user_id;
+        $user = $payment->user ?: User::find($userId);
+        if (!$user) {
+            return null;
+        }
+
+        $meta = is_array($payment->gateway_response) ? ($payment->gateway_response['checkout_metadata'] ?? []) : [];
+
+        $cartItems = Cart::with('product')
+            ->where('user_id', $userId)
+            ->get();
+
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+
+            $subtotal = (float) ($meta['subtotal'] ?? ($cartItems->isNotEmpty() ? $cartItems->sum('total_price') : $payment->amount));
+            $shippingCost = (float) ($meta['shipping_cost'] ?? 0);
+            $customerAppFee = (float) ($meta['customer_app_fee'] ?? $meta['marketplace_customer_app_fee'] ?? $defaultAppFee);
+            $taxAmount = 0.00;
+            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $customerAppFee));
+
+            $orderData = [
+                'user_id' => $user->id,
+                'order_number' => 'ORD-' . now()->format('ymd') . Str::upper(Str::random(4)),
+                'shipping_address' => $meta['shipping_address'] ?? ($user->address ?? 'Default Address'),
+                'subtotal' => $subtotal,
+                'shipping_cost' => $shippingCost,
+                'discount_price' => 0,
+                'total_amount' => $totalAmount,
+                'payment_method' => 'card',
+                'notes' => $meta['notes'] ?? null,
+                'status' => 'pending',
+                'payment_status' => 'pending',
+            ];
+
+            if (Schema::hasColumn('marketplace_orders', 'customer_app_fee')) {
+                $orderData['customer_app_fee'] = $customerAppFee;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'tax_amount')) {
+                $orderData['tax_amount'] = $taxAmount;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'payment_status')) {
+                $orderData['payment_status'] = 'pending';
+            }
+
+            $order = MarketplaceOrder::create($orderData);
+
+            if ($cartItems->isNotEmpty()) {
+                $productIds = $cartItems->pluck('product_id')->filter()->unique()->values();
+                $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
+
+                foreach ($cartItems as $cartItem) {
+                    $product = $products->get($cartItem->product_id);
+                    $price = $product ? (float) ($product->sale_price ?: $product->price) : (float) ($cartItem->base_price ?? 0);
+                    $qty = (int) ($cartItem->quantity ?? 1);
+                    $total = (float) ($cartItem->total_price ?: ($price * $qty));
+
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'shop_id' => !empty($product?->user_id) ? $product->user_id : null,
+                        'product_name' => $product?->product_name ?? ('Product #' . $cartItem->product_id),
+                        'quantity' => $qty,
+                        'base_price' => $price,
+                        'total_price' => $total,
+                    ]);
+                }
+            } elseif (!empty($meta['cart_items']) && is_array($meta['cart_items'])) {
+                foreach ($meta['cart_items'] as $itemMeta) {
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => (int) ($itemMeta['product_id'] ?? 0),
+                        'shop_id' => !empty($itemMeta['shop_id']) ? (int) $itemMeta['shop_id'] : null,
+                        'product_name' => $itemMeta['product_name'] ?? 'Marketplace Item',
+                        'quantity' => (int) ($itemMeta['quantity'] ?? 1),
+                        'base_price' => (float) ($itemMeta['base_price'] ?? 0),
+                        'total_price' => (float) ($itemMeta['total_price'] ?? 0),
+                    ]);
+                }
+            }
+
+            $payment->update([
+                'marketplace_order_id' => $order->id,
+            ]);
+
+            Log::info("createPendingOrderFromCart: Created pending MarketplaceOrder #{$order->id} for payment #{$payment->id}");
+
+            return $order;
+        });
+    }
+
+    /**
      * Converts a customer's cart into a real MarketplaceOrder upon successful payment charge.
      */
     public function convertCartToMarketplaceOrder(Payment $payment): ?MarketplaceOrder
@@ -672,6 +778,17 @@ class TapPaymentService
         if ($payment->marketplace_order_id) {
             $existing = MarketplaceOrder::find($payment->marketplace_order_id);
             if ($existing) {
+                $existing->status = 'accept';
+                $existing->payment_status = 'paid';
+                $existing->payment_method = 'card';
+                if (!empty($payment->tap_charge_id) && Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                    $existing->transaction_id = $payment->tap_charge_id;
+                }
+                if (empty($existing->paid_at) && Schema::hasColumn('marketplace_orders', 'paid_at')) {
+                    $existing->paid_at = now();
+                }
+                $existing->save();
+                Cart::where('user_id', $payment->user_id)->delete();
                 return $existing;
             }
         }

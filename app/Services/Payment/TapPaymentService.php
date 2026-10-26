@@ -55,18 +55,18 @@ class TapPaymentService
             'currency' => strtoupper($payment->currency ?: 'SAR'),
             'threeDSecure' => true,
             'save_card' => false,
-            'description' => "Payment for Job #{$payment->job_id} (Bid #{$payment->bid_id})",
-            'statement_descriptor' => "AZHL JOB {$payment->job_id}",
+            'description' => $payment->job_id ? "Payment for Job #{$payment->job_id} (Bid #{$payment->bid_id})" : "Provider Platform Dues Clearance #{$payment->id}",
+            'statement_descriptor' => $payment->job_id ? "AZHL JOB {$payment->job_id}" : "AZHL DUES {$payment->id}",
             'metadata' => [
                 'payment_id' => (string) $payment->id,
-                'job_id' => (string) $payment->job_id,
-                'bid_id' => (string) $payment->bid_id,
+                'job_id' => (string) ($payment->job_id ?? ''),
+                'bid_id' => (string) ($payment->bid_id ?? ''),
                 'user_id' => (string) $payment->user_id,
-                'provider_id' => (string) $payment->provider_id,
+                'provider_id' => (string) ($payment->provider_id ?? ''),
             ],
             'reference' => [
                 'transaction' => "PAY-{$payment->id}",
-                'order' => "JOB-{$payment->job_id}",
+                'order' => $payment->job_id ? "JOB-{$payment->job_id}" : "DUES-{$payment->id}",
             ],
             'receipt' => [
                 'email' => true,
@@ -92,9 +92,11 @@ class TapPaymentService
         ];
 
         // -------------------------------------------------------------
-        // TAP MARKETPLACE: Instant Split for Service Provider
+        // TAP MARKETPLACE: Instant Split for Service Provider (Only for Customer Jobs)
         // -------------------------------------------------------------
-        $provider = $payment->provider_id ? User::find($payment->provider_id) : null;
+        $provider = ($payment->job_id && $payment->provider_id && (int) $payment->user_id !== (int) $payment->provider_id)
+            ? User::find($payment->provider_id)
+            : null;
         $destinationId = optional($provider?->providerProfile)->tap_destination_id;
 
         $isLive = str_starts_with($secretKey, 'sk_live_');
@@ -533,6 +535,33 @@ class TapPaymentService
                 return true;
             }
 
+            // If payment was for Provider Dues Clearance
+            $gwResp = is_array($payment->gateway_response) ? $payment->gateway_response : json_decode((string) $payment->gateway_response, true);
+            if (($gwResp['type'] ?? '') === 'provider_dues_clearance' || (!$payment->job_id && !$payment->marketplace_order_id && $payment->provider_id && (int) $payment->user_id === (int) $payment->provider_id)) {
+                $provider = User::find($payment->provider_id);
+                if ($provider) {
+                    $paidAmount = (float) $payment->amount;
+                    $prevDue = (float) ($provider->payment_due ?? 0.0);
+                    $newDue = max(0.0, round($prevDue - $paidAmount, 2));
+
+                    $provider->payment_due = $newDue;
+                    $provider->save();
+
+                    \App\Models\ProviderDuesLedger::create([
+                        'provider_id' => $provider->id,
+                        'order_id' => null,
+                        'type' => 'credit_online_payment',
+                        'amount' => $paidAmount,
+                        'previous_due' => $prevDue,
+                        'current_due' => $newDue,
+                        'notes' => "Cleared dues online via Tap (Charge {$chargeId})",
+                    ]);
+
+                    Log::info("TapPaymentService: Provider #{$provider->id} cleared dues of {$paidAmount} SAR. New Due: {$newDue} SAR");
+                }
+                return true;
+            }
+
             // If payment was for Cart Checkout (Order not created yet), convert Cart to Order NOW!
             if (!$payment->job_id && !$payment->marketplace_order_id) {
                 $createdOrder = $this->convertCartToMarketplaceOrder($payment);
@@ -544,6 +573,13 @@ class TapPaymentService
                 $serviceOrder = Orders::where('job_id', $payment->job_id)->first();
                 if ($serviceOrder) {
                     $serviceOrder->paid_to_system = 1;
+                    $serviceOrder->payment_status = 'paid';
+                    $serviceOrder->payment_method = $serviceOrder->payment_method ?: 'card';
+                    $serviceOrder->transaction_id = $chargeId;
+                    if (empty($serviceOrder->paid_at)) {
+                        $serviceOrder->paid_at = now();
+                    }
+                    $serviceOrder->calculateAndSyncFinancials(false);
                     $serviceOrder->save();
                 }
             }
@@ -703,6 +739,19 @@ class TapPaymentService
 
         if (!$payment) {
             $payment = Payment::where('tap_charge_id', $chargeId)->first();
+        }
+
+        if (!$payment) {
+            $refId = $payload['reference']['order'] ?? $payload['reference']['transaction'] ?? null;
+            if ($refId) {
+                $order = Orders::find($refId);
+                if ($order && $order->job_id) {
+                    $payment = Payment::where('job_id', $order->job_id)->latest()->first();
+                }
+                if (!$payment) {
+                    $payment = Payment::where('job_id', $refId)->latest()->first();
+                }
+            }
         }
 
         if (!$payment) {

@@ -20,6 +20,9 @@ class Orders extends Model
         'gateway_fee' => 'decimal:2',
         'gateway_vat' => 'decimal:2',
         'net_amount' => 'decimal:2',
+        'cash_collected_amount' => 'decimal:2',
+        'cash_received_at' => 'datetime',
+        'paid_at' => 'datetime',
     ];
 
     /**

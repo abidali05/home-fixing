@@ -39,6 +39,14 @@ class HireProviderService
                 Log::info("HireProviderService: Job #{$job->id} is already in progress/completed. Ensuring order is marked paid.");
                 if ($existingOrder) {
                     $existingOrder->paid_to_system = 1;
+                    $existingOrder->payment_status = 'paid';
+                    $existingOrder->payment_method = $existingOrder->payment_method ?: 'card';
+                    if (!empty($payment->tap_charge_id)) {
+                        $existingOrder->transaction_id = $payment->tap_charge_id;
+                    }
+                    if (empty($existingOrder->paid_at)) {
+                        $existingOrder->paid_at = now();
+                    }
                     $existingOrder->save();
                 }
                 return true;
@@ -93,6 +101,12 @@ class HireProviderService
             $order->price = $payment->bid ? (float) $payment->bid->price : (float) $payment->amount;
             $order->status = 'pending';
             $order->paid_to_system = 1;
+            $order->payment_status = 'paid';
+            $order->payment_method = $order->payment_method ?: 'card';
+            if (!empty($payment->tap_charge_id)) {
+                $order->transaction_id = $payment->tap_charge_id;
+            }
+            $order->paid_at = now();
             $order->calculateAndSyncFinancials(false);
             $order->save();
 

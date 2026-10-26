@@ -8,9 +8,11 @@ use App\Models\BidModel;
 use App\Models\JobRequestModel;
 use App\Models\Orders;
 use App\Models\Payment;
+use App\Services\Job\HireProviderService;
 use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
@@ -306,6 +308,165 @@ class PaymentController extends Controller
         } catch (\Throwable $e) {
             Log::error('Error in payment status API: ' . $e->getMessage());
             return $this->error('Failed to retrieve payment status.', 500);
+        }
+    }
+
+    /**
+     * API #5: Verify Tap Native SDK Payment
+     * POST /api/jobs/{jobId}/bids/{bidId}/verify-tap-payment
+     *
+     * @param Request $request
+     * @param int|string $jobId
+     * @param int|string $bidId
+     * @return JsonResponse
+     */
+    public function verifyTapPayment(Request $request, $jobId, $bidId): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $chargeId = $request->input('charge_id') ?? $request->input('chargeId') ?? $request->input('id') ?? $request->input('tap_id');
+            if (empty($chargeId) || !is_string($chargeId)) {
+                return $this->error('The charge_id field is required.', 422);
+            }
+
+            // 1. Fetch & Validate Job & Bid
+            $job = JobRequestModel::find($jobId);
+            if (!$job) {
+                return $this->error('Job request not found.', 404);
+            }
+
+            if ((int) $job->user_id !== (int) $user->id) {
+                return $this->error('You are not authorized to verify payment for this job.', 403);
+            }
+
+            $bid = BidModel::where('id', $bidId)->where('job_id', $job->id)->first();
+            if (!$bid) {
+                return $this->error('Bid not found for this job.', 404);
+            }
+
+            // 2. Idempotency Check: if order is already marked paid, return success immediately
+            $order = Orders::where('job_id', $job->id)->first();
+            if ($order && ($order->payment_status === 'paid' || (int) $order->paid_to_system === 1)) {
+                return $this->success([
+                    'order_id' => $order->id,
+                    'job_id' => (int) $job->id,
+                    'bid_id' => (int) $bid->id,
+                    'payment_status' => 'paid',
+                    'payment_method' => $order->payment_method ?: 'card',
+                    'transaction_id' => $order->transaction_id ?: $chargeId,
+                    'amount' => (float) ($order->total_amount ?: $order->price),
+                ], 'Order is already marked as paid.');
+            }
+
+            // 3. Server-to-Server Verification directly with Tap Payments API
+            try {
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+            } catch (\Throwable $e) {
+                Log::error("verifyTapPayment: Error retrieving charge {$chargeId}: " . $e->getMessage());
+                return $this->error('Failed to verify payment with Tap Gateway. ' . $e->getMessage(), 400);
+            }
+
+            $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            $chargedAmount = (float) ($chargeData['amount'] ?? 0);
+            $chargedCurrency = strtoupper($chargeData['currency'] ?? '');
+
+            // 4. Security Assertions
+            if ($chargeStatus !== 'CAPTURED') {
+                return $this->error("Payment not captured. Status: {$chargeStatus}", 400, [
+                    'charge_id' => $chargeId,
+                    'status' => strtolower($chargeStatus),
+                ]);
+            }
+
+            if ($chargedCurrency !== 'SAR') {
+                return $this->error("Payment currency mismatch. Expected SAR, got {$chargedCurrency}.", 400);
+            }
+
+            // Expected amount check (with tolerance)
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+            $bidPrice = (float) ($bid->price ?? 0);
+            $extraAmount = $order ? (float) ($order->extra_amount ?? 0) : 0.00;
+            $acceptedExtra = ($order && $order->extra_amount_status === 'accepted') ? $extraAmount : 0.00;
+            $finalBase = $order ? (float) ($order->final_base_price ?: ($bidPrice + $acceptedExtra)) : $bidPrice;
+            $expectedAmount = round($finalBase + $customerAppFee, 2);
+
+            if (abs($chargedAmount - $expectedAmount) > 0.50 && abs($chargedAmount - $bidPrice) > 0.50) {
+                Log::warning("verifyTapPayment: Amount mismatch for job #{$job->id}. Charged: {$chargedAmount}, Expected: {$expectedAmount} or {$bidPrice}");
+                return $this->error('Payment amount mismatch.', 400, [
+                    'charged_amount' => $chargedAmount,
+                    'expected_amount' => $expectedAmount,
+                ]);
+            }
+
+            // 5. Execute DB updates atomically
+            return DB::transaction(function () use ($job, $bid, $user, $chargeId, $chargeData, $chargedAmount, $chargedCurrency) {
+                $payment = Payment::where('job_id', $job->id)
+                    ->where('bid_id', $bid->id)
+                    ->latest()
+                    ->first();
+
+                if (!$payment) {
+                    $payment = Payment::create([
+                        'user_id' => $user->id,
+                        'job_id' => $job->id,
+                        'bid_id' => $bid->id,
+                        'provider_id' => $bid->provider_id,
+                        'amount' => $chargedAmount,
+                        'currency' => $chargedCurrency,
+                        'gateway' => 'tap',
+                        'status' => 'captured',
+                        'tap_charge_id' => $chargeId,
+                        'gateway_response' => ['charge' => $chargeData],
+                    ]);
+                } else {
+                    $payment->update([
+                        'amount' => $chargedAmount,
+                        'status' => 'captured',
+                        'tap_charge_id' => $chargeId,
+                        'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
+                    ]);
+                }
+
+                // Execute provider hiring
+                $hireProviderService = app(HireProviderService::class);
+                $hireProviderService->hireProvider($payment);
+
+                // Ensure order record is marked paid & synced
+                $order = Orders::where('job_id', $job->id)->first();
+                if ($order) {
+                    $order->payment_status = 'paid';
+                    $order->payment_method = 'card';
+                    $order->paid_to_system = 1;
+                    $order->transaction_id = $chargeId;
+                    if (empty($order->paid_at)) {
+                        $order->paid_at = now();
+                    }
+                    $order->calculateAndSyncFinancials(false);
+                    $order->save();
+                }
+
+                Log::info("verifyTapPayment: Payment {$chargeId} successfully verified for job #{$job->id}, order #{$order?->id}");
+
+                return $this->success([
+                    'order_id' => $order ? (int) $order->id : null,
+                    'job_id' => (int) $job->id,
+                    'bid_id' => (int) $bid->id,
+                    'payment_status' => 'paid',
+                    'payment_method' => 'card',
+                    'transaction_id' => $chargeId,
+                    'amount' => (float) number_format($chargedAmount, 2, '.', ''),
+                    'currency' => $chargedCurrency,
+                ], 'Payment verified successfully and order finalized.');
+            });
+
+        } catch (\Throwable $e) {
+            Log::error('Error in verifyTapPayment: ' . $e->getMessage(), ['exception' => $e]);
+            return $this->error('Failed to verify payment: ' . $e->getMessage(), 500);
         }
     }
 }

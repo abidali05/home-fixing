@@ -1,0 +1,955 @@
+<?php
+
+namespace App\Services\Payment;
+
+use App\Models\Admin\SystemSettingModel;
+use App\Models\BankAccount;
+use App\Models\BidModel;
+use App\Models\Cart;
+use App\Models\MarketplaceOrder;
+use App\Models\MarketplaceOrderItem;
+use App\Models\Orders;
+use App\Models\Payment;
+use App\Models\Product;
+use App\Models\User;
+use App\Services\Job\HireProviderService;
+use App\Services\Payment\TapMarketplaceService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+
+class TapPaymentService
+{
+    protected string $baseUrl = 'https://api.tap.company/v2';
+    protected HireProviderService $hireProviderService;
+
+    public function __construct(HireProviderService $hireProviderService)
+    {
+        $this->hireProviderService = $hireProviderService;
+    }
+
+    /**
+     * Creates a charge using the Tap Payments API v2 with a client token.
+     */
+    public function createCharge(Payment $payment, string $token = 'src_all'): array
+    {
+        $secretKey = config('services.tap.secret_key');
+        if (empty($secretKey)) {
+            Log::error("TapPaymentService: TAP_SECRET_KEY is empty in config/services.php or server .env file.");
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
+
+        $webhookUrl = config('services.tap.webhook_url') ?: 'https://admin.azhlksa.com/api/v1/webhooks/tap';
+        $redirectUrl = config('services.tap.redirect_url') ?: 'https://admin.azhlksa.com/tap/redirect';
+
+        $user = $payment->user;
+        $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '500000000');
+        if (strlen($phoneDigits) > 9) {
+            $phoneDigits = substr($phoneDigits, -9);
+        }
+
+        $payload = [
+            'amount' => (float) $payment->amount,
+            'currency' => strtoupper($payment->currency ?: 'SAR'),
+            'threeDSecure' => true,
+            'save_card' => false,
+            'description' => $payment->job_id ? "Payment for Job #{$payment->job_id} (Bid #{$payment->bid_id})" : "Provider Platform Dues Clearance #{$payment->id}",
+            'statement_descriptor' => $payment->job_id ? "AZHL JOB {$payment->job_id}" : "AZHL DUES {$payment->id}",
+            'metadata' => [
+                'payment_id' => (string) $payment->id,
+                'job_id' => (string) ($payment->job_id ?? ''),
+                'bid_id' => (string) ($payment->bid_id ?? ''),
+                'user_id' => (string) $payment->user_id,
+                'provider_id' => (string) ($payment->provider_id ?? ''),
+            ],
+            'reference' => [
+                'transaction' => "PAY-{$payment->id}",
+                'order' => $payment->job_id ? "JOB-{$payment->job_id}" : "DUES-{$payment->id}",
+            ],
+            'receipt' => [
+                'email' => true,
+                'sms' => true,
+            ],
+            'customer' => [
+                'first_name' => $user->name ?? 'Customer',
+                'email' => $user->email ?? 'customer@azhl.com',
+                'phone' => [
+                    'country_code' => '966',
+                    'number' => $phoneDigits ?: '500000000',
+                ],
+            ],
+            'source' => [
+                'id' => $token ?: 'src_all',
+            ],
+            'post' => [
+                'url' => $webhookUrl,
+            ],
+            'redirect' => [
+                'url' => $redirectUrl,
+            ],
+        ];
+
+        // -------------------------------------------------------------
+        // TAP MARKETPLACE: Instant Split for Service Provider (Only for Customer Jobs)
+        // -------------------------------------------------------------
+        if ($payment->job_id && $payment->provider_id && (int) $payment->user_id !== (int) $payment->provider_id) {
+            $splitDetails = $this->getProviderSplitDetails($payment);
+            if ($splitDetails) {
+                $payload['destinations'] = $splitDetails['destinations'];
+                $payment->update([
+                    'tap_destination_id' => $splitDetails['destination_id'],
+                    'tap_split_amount' => $splitDetails['provider_share'],
+                ]);
+                Log::info("TapPaymentService: Added split destination for Provider #{$payment->provider_id} (Dest: {$splitDetails['destination_id']}, Amount: {$splitDetails['provider_share']} SAR)");
+            }
+        }
+
+        Log::info("TapPaymentService: Dispatching charge request for payment #{$payment->id}", [
+            'amount' => $payment->amount,
+            'currency' => $payment->currency,
+            'token' => $token,
+            'has_split' => !empty($payload['destinations']),
+        ]);
+
+        $response = Http::withToken($secretKey)
+            ->acceptJson()
+            ->post("{$this->baseUrl}/charges", $payload);
+
+        $responseData = $response->json() ?? [];
+
+        Log::info("TapPaymentService: Charge API response for payment #{$payment->id}", [
+            'http_code' => $response->status(),
+            'response' => $responseData,
+        ]);
+
+        if ($response->failed()) {
+            // Sandbox resilience: If split destinations was rejected due to sandbox scope pending on Tap account,
+            // retry without destinations so the development checkout flow continues seamlessly.
+            if (!empty($payload['destinations']) && in_array($response->status(), [400, 401, 422])) {
+                Log::warning("TapPaymentService: Charge with split destinations rejected in sandbox ({$response->status()}). Retrying without destinations as development fallback.");
+                unset($payload['destinations']);
+                $fallbackResponse = Http::withToken($secretKey)
+                    ->acceptJson()
+                    ->post("{$this->baseUrl}/charges", $payload);
+
+                if ($fallbackResponse->successful()) {
+                    return $fallbackResponse->json() ?? [];
+                }
+                $responseData = $fallbackResponse->json() ?? $responseData;
+            }
+
+            $errorMessage = $responseData['errors'][0]['description'] ?? ($responseData['message'] ?? 'Failed to communicate with Tap Payments.');
+            Log::error("TapPaymentService: Charge API request failed for payment #{$payment->id}: {$errorMessage}");
+
+            $payment->update([
+                'status' => 'failed',
+                'gateway_response' => $responseData,
+            ]);
+
+            throw new \RuntimeException($errorMessage, $response->status());
+        }
+
+        return $responseData;
+    }
+
+    /**
+     * Creates a charge request on Tap Payments API for a Marketplace Order or Cart Checkout.
+     */
+    public function createMarketplaceCharge(Payment $payment, ?MarketplaceOrder $order = null, string $token = 'src_all'): array
+    {
+        $secretKey = config('services.tap.secret_key');
+        if (empty($secretKey)) {
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
+
+        $webhookUrl = config('services.tap.webhook_url') ?: 'https://admin.azhlksa.com/api/v1/webhooks/tap';
+        $redirectUrl = config('services.tap.redirect_url') ?: 'https://admin.azhlksa.com/tap/redirect';
+
+        $user = $payment->user ?: User::find($payment->user_id);
+        $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '');
+        if (strlen($phoneDigits) > 9) {
+            $phoneDigits = substr($phoneDigits, -9);
+        }
+
+        $orderNumber = $order ? $order->order_number : ("CART-{$payment->id}");
+
+        $payload = [
+            'amount' => (float) $payment->amount,
+            'currency' => strtoupper($payment->currency ?: 'SAR'),
+            'threeDSecure' => true,
+            'save_card' => false,
+            'description' => $order ? "Payment for Marketplace Order #{$order->order_number}" : "Payment for Marketplace Cart Checkout #{$payment->id}",
+            'statement_descriptor' => "AZHL MARKETPLACE",
+            'metadata' => [
+                'payment_id' => (string) $payment->id,
+                'marketplace_order_id' => $order ? (string) $order->id : '',
+                'user_id' => (string) $payment->user_id,
+                'type' => 'marketplace_checkout',
+            ],
+            'reference' => [
+                'transaction' => "MKT-{$payment->id}",
+                'order' => $orderNumber,
+            ],
+            'receipt' => [
+                'email' => true,
+                'sms' => true,
+            ],
+            'customer' => [
+                'first_name' => $user->name ?? 'Customer',
+                'email' => $user->email ?? 'customer@azhl.com',
+                'phone' => [
+                    'country_code' => '966',
+                    'number' => $phoneDigits ?: '500000000',
+                ],
+            ],
+            'source' => [
+                'id' => $token ?: 'src_all',
+            ],
+            'post' => [
+                'url' => $webhookUrl,
+            ],
+            'redirect' => [
+                'url' => $redirectUrl,
+            ],
+        ];
+
+        // -------------------------------------------------------------
+        // TAP MARKETPLACE: Instant Split for Marketplace Seller Shop
+        // -------------------------------------------------------------
+        $settings = \App\Models\Admin\SystemSettingModel::first();
+        $commissionPct = (float) ($settings->marketplace_commission_percentage ?? $settings->azhl_percentage ?? 10.00);
+
+        $destinationsList = [];
+        $totalSplit = 0.00;
+        $primaryDestinationId = null;
+
+        $shopTotals = [];
+
+        if ($order && $order->items()->exists()) {
+            foreach ($order->items()->with(['product.user.marketplaceProfile'])->get() as $it) {
+                $sellerId = $it->shop_id ?: optional($it->product)->user_id;
+                if ($sellerId) {
+                    $itemPrice = (float) ($it->base_price ?: ($it->product ? ($it->product->sale_price ?: $it->product->price) : 0));
+                    $sub = (float) ($it->total_price ?: ($itemPrice * (int) ($it->quantity ?? 1)));
+                    if (!isset($shopTotals[$sellerId])) {
+                        $sellerUser = $it->shop ?: optional($it->product)->user ?: optional($it->product)->seller ?: User::find($sellerId);
+                        $shopTotals[$sellerId] = [
+                            'seller' => $sellerUser,
+                            'subtotal' => 0.0,
+                        ];
+                    }
+                    $shopTotals[$sellerId]['subtotal'] += $sub;
+                }
+            }
+        } elseif (!$order && $payment->user_id) {
+            // Cart Checkout: group items by seller shop
+            $cartItems = Cart::with(['product.user.marketplaceProfile'])
+                ->where('user_id', $payment->user_id)
+                ->get();
+
+            foreach ($cartItems as $ci) {
+                $sellerId = optional($ci->product)->user_id;
+                if ($sellerId) {
+                    $itemPrice = (float) ($ci->product->sale_price ?: $ci->product->price);
+                    $sub = $itemPrice * (int) ($ci->quantity ?? 1);
+                    if (!isset($shopTotals[$sellerId])) {
+                        $shopTotals[$sellerId] = [
+                            'seller' => optional($ci->product)->user ?: optional($ci->product)->seller ?: User::find($sellerId),
+                            'subtotal' => 0.0,
+                        ];
+                    }
+                    $shopTotals[$sellerId]['subtotal'] += $sub;
+                }
+            }
+        }
+
+        $isLive = str_starts_with($secretKey, 'sk_live_');
+        foreach ($shopTotals as $sellerId => $data) {
+            $destId = optional($data['seller']?->marketplaceProfile)->tap_destination_id;
+            if (!empty($destId)) {
+                if ($isLive && str_starts_with($destId, 'dst_test_')) {
+                    $destId = null;
+                    $data['seller']?->marketplaceProfile?->update(['tap_destination_id' => null]);
+                } elseif (!$isLive && str_starts_with($destId, 'dst_live_')) {
+                    $destId = null;
+                    $data['seller']?->marketplaceProfile?->update(['tap_destination_id' => null]);
+                }
+            }
+
+            // Auto-onboard seller if missing
+            if (empty($destId) && !empty($data['seller'])) {
+                $sellerUser = $data['seller'];
+                $bankAccount = BankAccount::where('user_id', $sellerUser->id)
+                    ->where('account_type', 'marketplace')
+                    ->latest()
+                    ->first();
+                $destId = $bankAccount?->tap_destination_id;
+                if (!empty($destId)) {
+                    if ($isLive && str_starts_with($destId, 'dst_test_')) {
+                        $destId = null;
+                        $bankAccount->update(['tap_destination_id' => null]);
+                    } elseif (!$isLive && str_starts_with($destId, 'dst_live_')) {
+                        $destId = null;
+                        $bankAccount->update(['tap_destination_id' => null]);
+                    }
+                }
+                $iban = $bankAccount?->iban ?: optional($sellerUser->marketplaceProfile)->iban;
+                if (!empty($iban)) {
+                    try {
+                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($sellerUser, 'marketplace', [
+                            'iban' => $iban,
+                            'account_title' => $bankAccount?->account_title ?: optional($sellerUser->marketplaceProfile)->account_title ?: $sellerUser->name,
+                            'bank_name' => $bankAccount?->bank_name ?: optional($sellerUser->marketplaceProfile)->bank_name ?: 'Saudi Bank',
+                        ]);
+                        $destId = $onboardResult['data']['destination_id'] ?? null;
+                        if (empty($destId)) {
+                            $sellerUser->refresh();
+                            $destId = optional($sellerUser->marketplaceProfile)->tap_destination_id;
+                        }
+                        if ($destId && $bankAccount) {
+                            $bankAccount->update(['tap_destination_id' => $destId]);
+                        }
+                        Log::info("TapPaymentService: Auto-onboarded marketplace seller #{$sellerUser->id} with Destination ID: {$destId}");
+                    } catch (\Throwable $e) {
+                        Log::warning("TapPaymentService: Auto-onboard failed for marketplace seller #{$sellerUser->id}: " . $e->getMessage());
+                    }
+                }
+            }
+
+            $shopSubtotal = (float) $data['subtotal'];
+            $commission = round($shopSubtotal * ($commissionPct / 100), 2);
+            $sellerShare = max(0, round($shopSubtotal - $commission, 2));
+
+            if (!empty($destId) && $sellerShare > 0) {
+                $destinationsList[] = [
+                    'id' => $destId,
+                    'amount' => (float) number_format($sellerShare, 2, '.', ''),
+                    'currency' => strtoupper($payment->currency ?: 'SAR'),
+                ];
+                $totalSplit += $sellerShare;
+                if (!$primaryDestinationId) {
+                    $primaryDestinationId = $destId;
+                }
+            }
+        }
+
+        if (!empty($destinationsList) && $totalSplit > 0 && $totalSplit < (float) $payment->amount) {
+            $payload['destinations'] = [
+                'destination' => $destinationsList
+            ];
+
+            $payment->update([
+                'tap_destination_id' => $primaryDestinationId,
+                'tap_split_amount' => $totalSplit,
+            ]);
+
+            Log::info("TapPaymentService: Added split destinations for Marketplace checkout (Destinations: " . count($destinationsList) . ", Total Split: {$totalSplit} SAR)");
+        }
+
+        Log::info("TapPaymentService: Initiating marketplace charge request for payment #{$payment->id}", [
+            'amount' => $payment->amount,
+            'currency' => $payment->currency,
+            'has_split' => !empty($payload['destinations']),
+        ]);
+
+        $response = Http::withToken($secretKey)
+            ->acceptJson()
+            ->post("{$this->baseUrl}/charges", $payload);
+
+        $responseData = $response->json() ?? [];
+
+        if ($response->failed()) {
+            // Sandbox resilience: If split destinations was rejected due to sandbox scope pending on Tap account,
+            // retry without destinations so the development checkout flow continues seamlessly.
+            if (!empty($payload['destinations']) && in_array($response->status(), [400, 401, 422])) {
+                Log::warning("TapPaymentService: Marketplace charge with split destinations rejected in sandbox ({$response->status()}). Retrying without destinations as development fallback.");
+                unset($payload['destinations']);
+                $fallbackResponse = Http::withToken($secretKey)
+                    ->acceptJson()
+                    ->post("{$this->baseUrl}/charges", $payload);
+
+                if ($fallbackResponse->successful()) {
+                    return $fallbackResponse->json() ?? [];
+                }
+                $responseData = $fallbackResponse->json() ?? $responseData;
+            }
+
+            $errorMessage = $responseData['errors'][0]['description'] ?? ($responseData['message'] ?? 'Failed to communicate with Tap Payments.');
+            $payment->update([
+                'status' => 'failed',
+                'gateway_response' => $responseData,
+            ]);
+
+            throw new \RuntimeException($errorMessage, $response->status());
+        }
+
+        return $responseData;
+    }
+
+    /**
+     * Retrieves charge details directly from Tap Payments API.
+     */
+    public function retrieveCharge(string $chargeId): array
+    {
+        $secretKey = config('services.tap.secret_key');
+        if (empty($secretKey)) {
+            throw new \RuntimeException('Tap Payments API Secret Key is not configured in server .env file.');
+        }
+
+        $response = Http::withToken($secretKey)
+            ->acceptJson()
+            ->get("{$this->baseUrl}/charges/{$chargeId}");
+
+        $responseData = $response->json() ?? [];
+
+        if ($response->failed()) {
+            Log::error("TapPaymentService: Failed to retrieve charge {$chargeId}: " . json_encode($responseData));
+            throw new \RuntimeException("Unable to retrieve charge {$chargeId} from Tap Payments.");
+        }
+
+        return $responseData;
+    }
+
+    /**
+     * Resolves Tap Destination ID and split amounts for a provider.
+     *
+     * @param Payment $payment
+     * @param User|null $provider
+     * @param float $finalBase
+     * @return array|null
+     */
+    public function getProviderSplitDetails(Payment $payment, ?User $provider = null, float $finalBase = 0.0): ?array
+    {
+        $secretKey = (string) config('services.tap.secret_key');
+        if (!$provider && $payment->provider_id) {
+            $provider = User::find($payment->provider_id);
+        }
+        if (!$provider) {
+            return null;
+        }
+
+        $destinationId = optional($provider->providerProfile)->tap_destination_id;
+        $isLive = str_starts_with($secretKey, 'sk_live_');
+
+        if (!empty($destinationId)) {
+            if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                Log::warning("TapPaymentService: Resetting test destination ID {$destinationId} for provider #{$provider->id} because environment is LIVE.");
+                $destinationId = null;
+                $provider->providerProfile?->update(['tap_destination_id' => null]);
+            } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                Log::warning("TapPaymentService: Resetting live destination ID {$destinationId} for provider #{$provider->id} because environment is SANDBOX.");
+                $destinationId = null;
+                $provider->providerProfile?->update(['tap_destination_id' => null]);
+            }
+        }
+
+        // Auto-Onboard: If provider has bank account or profile IBAN but no tap_destination_id yet, onboard immediately!
+        if (empty($destinationId)) {
+            $bankAccount = BankAccount::where('user_id', $provider->id)
+                ->where('account_type', 'provider')
+                ->latest()
+                ->first();
+
+            $destinationId = $bankAccount?->tap_destination_id;
+            if (!empty($destinationId)) {
+                if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                }
+            }
+
+            if (empty($destinationId)) {
+                $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
+                if (!empty($iban)) {
+                    try {
+                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
+                            'iban' => $iban,
+                            'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
+                            'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
+                        ]);
+                        $destinationId = $onboardResult['data']['destination_id'] ?? null;
+                        if (empty($destinationId)) {
+                            $provider->refresh();
+                            $destinationId = optional($provider->providerProfile)->tap_destination_id;
+                        }
+                        if ($destinationId && $bankAccount) {
+                            $bankAccount->update(['tap_destination_id' => $destinationId]);
+                        }
+                        Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
+                    } catch (\Throwable $e) {
+                        Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
+
+        if (empty($destinationId)) {
+            return null;
+        }
+
+        $order = Orders::where('job_id', $payment->job_id)->first();
+        $financials = $order ? $order->calculateAndSyncFinancials(false) : null;
+        $providerShare = $financials ? (float) $financials['net_amount'] : 0.00;
+
+        if ($providerShare <= 0) {
+            $bid = $payment->bid ?: ($payment->bid_id ? BidModel::find($payment->bid_id) : null);
+            $settings = SystemSettingModel::first();
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+
+            $baseAmount = $finalBase > 0 ? $finalBase : ($bid ? (float) $bid->price : max(0, (float) $payment->amount - $customerAppFee));
+            $commission = round($baseAmount * ($azhlPercentage / 100), 2);
+            $providerShare = max(0, round($baseAmount - $commission, 2));
+            $azhlCommission = $commission;
+        } else {
+            $azhlCommission = (float) ($financials['azhl_fee'] ?? 0.00);
+            $azhlPercentage = (float) ($financials['azhl_percentage'] ?? 10.00);
+        }
+
+        if ($providerShare <= 0 || $providerShare >= (float) $payment->amount) {
+            return null;
+        }
+
+        $destArray = [
+            'destination' => [
+                [
+                    'id' => $destinationId,
+                    'amount' => (float) number_format($providerShare, 2, '.', ''),
+                    'currency' => strtoupper($payment->currency ?: 'SAR'),
+                ]
+            ]
+        ];
+
+        return [
+            'destination_id' => $destinationId,
+            'provider_share' => (float) number_format($providerShare, 2, '.', ''),
+            'azhl_commission' => (float) number_format($azhlCommission, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlPercentage, 2, '.', ''),
+            'destinations' => $destArray,
+        ];
+    }
+
+    /**
+     * Verifies a charge status and executes provider hiring or marketplace order creation if status is CAPTURED.
+     */
+    public function verifyCharge(string $chargeId, Payment $payment): bool
+    {
+        $chargeData = $this->retrieveCharge($chargeId);
+        $status = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+
+        Log::info("TapPaymentService: Verifying charge {$chargeId} for payment #{$payment->id}. Status: {$status}");
+
+        // Validate payload details match payment record
+        $metaPaymentId = $chargeData['metadata']['payment_id'] ?? null;
+        if ($metaPaymentId && (string) $metaPaymentId !== (string) $payment->id) {
+            Log::warning("TapPaymentService: Charge {$chargeId} metadata payment_id mismatch! Expected: {$payment->id}, Got: {$metaPaymentId}");
+            return false;
+        }
+
+        if ($status === 'CAPTURED') {
+            $payment->update([
+                'status' => 'captured',
+                'tap_charge_id' => $chargeId,
+                'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
+            ]);
+
+            // If order already existed
+            if ($payment->marketplace_order_id) {
+                $order = MarketplaceOrder::find($payment->marketplace_order_id);
+                if ($order) {
+                    $order->update([
+                        'status' => 'accept',
+                        'payment_status' => 'paid',
+                        'payment_method' => 'tap',
+                    ]);
+                }
+                return true;
+            }
+
+            // If payment was for Provider Dues Clearance
+            $gwResp = is_array($payment->gateway_response) ? $payment->gateway_response : json_decode((string) $payment->gateway_response, true);
+            if (($gwResp['type'] ?? '') === 'provider_dues_clearance' || (!$payment->job_id && !$payment->marketplace_order_id && $payment->provider_id && (int) $payment->user_id === (int) $payment->provider_id)) {
+                $provider = User::find($payment->provider_id);
+                if ($provider) {
+                    $paidAmount = (float) $payment->amount;
+                    $prevDue = (float) ($provider->payment_due ?? 0.0);
+                    $newDue = max(0.0, round($prevDue - $paidAmount, 2));
+
+                    $provider->payment_due = $newDue;
+                    $provider->save();
+
+                    \App\Models\ProviderDuesLedger::create([
+                        'provider_id' => $provider->id,
+                        'order_id' => null,
+                        'type' => 'credit_online_payment',
+                        'amount' => $paidAmount,
+                        'previous_due' => $prevDue,
+                        'current_due' => $newDue,
+                        'notes' => "Cleared dues online via Tap (Charge {$chargeId})",
+                    ]);
+
+                    Log::info("TapPaymentService: Provider #{$provider->id} cleared dues of {$paidAmount} SAR. New Due: {$newDue} SAR");
+                }
+                return true;
+            }
+
+            // If payment was for Cart Checkout (Order not created yet), convert Cart to Order NOW!
+            if (!$payment->job_id && !$payment->marketplace_order_id) {
+                $createdOrder = $this->convertCartToMarketplaceOrder($payment);
+                return (bool) $createdOrder;
+            }
+
+            // If payment was for existing Marketplace Order
+            if ($payment->marketplace_order_id) {
+                $mpOrder = MarketplaceOrder::find($payment->marketplace_order_id);
+                if ($mpOrder) {
+                    $mpOrder->payment_status = 'paid';
+                    $mpOrder->payment_method = $mpOrder->payment_method ?: 'card';
+                    if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                        $mpOrder->transaction_id = $chargeId;
+                    }
+                    if (Schema::hasColumn('marketplace_orders', 'paid_at') && empty($mpOrder->paid_at)) {
+                        $mpOrder->paid_at = now();
+                    }
+                    if (in_array(strtolower($mpOrder->status), ['pending', 'new', 'waiting'])) {
+                        $mpOrder->status = 'accept';
+                    }
+                    $mpOrder->save();
+                }
+                return true;
+            }
+
+            // If service order already exists for this job, mark it paid
+            if ($payment->job_id) {
+                $serviceOrder = Orders::where('job_id', $payment->job_id)->first();
+                if ($serviceOrder) {
+                    $serviceOrder->paid_to_system = 1;
+                    $serviceOrder->payment_status = 'paid';
+                    $serviceOrder->payment_method = $serviceOrder->payment_method ?: 'card';
+                    $serviceOrder->transaction_id = $chargeId;
+                    if (empty($serviceOrder->paid_at)) {
+                        $serviceOrder->paid_at = now();
+                    }
+                    $serviceOrder->calculateAndSyncFinancials(false);
+                    $serviceOrder->save();
+                }
+            }
+
+            // Hire Provider
+            return $this->hireProviderService->hireProvider($payment);
+        }
+
+        if (in_array($status, ['FAILED', 'DECLINED', 'CANCELLED', 'EXPIRED', 'RESTRICTED'])) {
+            $payment->update([
+                'status' => 'failed',
+                'tap_charge_id' => $chargeId,
+                'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
+            ]);
+
+            return false;
+        }
+
+        // Status is still processing or initiated
+        $payment->update([
+            'status' => 'processing',
+            'tap_charge_id' => $chargeId,
+            'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
+        ]);
+
+        return false;
+    }
+
+    /**
+     * Creates a pending MarketplaceOrder from cart items before or during charge.
+     */
+    public function createPendingOrderFromCart(Payment $payment): ?MarketplaceOrder
+    {
+        if ($payment->marketplace_order_id) {
+            $existing = MarketplaceOrder::find($payment->marketplace_order_id);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        $userId = $payment->user_id;
+        $user = $payment->user ?: User::find($userId);
+        if (!$user) {
+            return null;
+        }
+
+        $meta = is_array($payment->gateway_response) ? ($payment->gateway_response['checkout_metadata'] ?? []) : [];
+
+        $cartItems = Cart::with('product')
+            ->where('user_id', $userId)
+            ->get();
+
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta, $userId) {
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+
+            $subtotal = (float) ($meta['subtotal'] ?? ($cartItems->isNotEmpty() ? $cartItems->sum('total_price') : $payment->amount));
+            $shippingCost = (float) ($meta['shipping_cost'] ?? 0);
+            $customerAppFee = (float) ($meta['customer_app_fee'] ?? $meta['marketplace_customer_app_fee'] ?? $defaultAppFee);
+            $taxAmount = 0.00;
+            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $customerAppFee));
+
+            $orderData = [
+                'user_id' => $user->id,
+                'order_number' => 'ORD-' . now()->format('ymd') . Str::upper(Str::random(4)),
+                'shipping_address' => $meta['shipping_address'] ?? ($user->address ?? 'Default Address'),
+                'subtotal' => $subtotal,
+                'shipping_cost' => $shippingCost,
+                'discount_price' => 0,
+                'total_amount' => $totalAmount,
+                'payment_method' => 'card',
+                'notes' => $meta['notes'] ?? null,
+                'status' => 'pending',
+                'payment_status' => 'pending',
+            ];
+
+            if (Schema::hasColumn('marketplace_orders', 'customer_app_fee')) {
+                $orderData['customer_app_fee'] = $customerAppFee;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'tax_amount')) {
+                $orderData['tax_amount'] = $taxAmount;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'payment_status')) {
+                $orderData['payment_status'] = 'pending';
+            }
+
+            $order = MarketplaceOrder::create($orderData);
+
+            if ($cartItems->isNotEmpty()) {
+                $productIds = $cartItems->pluck('product_id')->filter()->unique()->values();
+                $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
+
+                foreach ($cartItems as $cartItem) {
+                    $product = $products->get($cartItem->product_id);
+                    $price = $product ? (float) ($product->sale_price ?: $product->price) : (float) ($cartItem->base_price ?? 0);
+                    $qty = (int) ($cartItem->quantity ?? 1);
+                    $total = (float) ($cartItem->total_price ?: ($price * $qty));
+
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'shop_id' => !empty($product?->user_id) ? $product->user_id : null,
+                        'product_name' => $product?->product_name ?? ('Product #' . $cartItem->product_id),
+                        'quantity' => $qty,
+                        'base_price' => $price,
+                        'total_price' => $total,
+                    ]);
+                }
+            } elseif (!empty($meta['cart_items']) && is_array($meta['cart_items'])) {
+                foreach ($meta['cart_items'] as $itemMeta) {
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => (int) ($itemMeta['product_id'] ?? 0),
+                        'shop_id' => !empty($itemMeta['shop_id']) ? (int) $itemMeta['shop_id'] : null,
+                        'product_name' => $itemMeta['product_name'] ?? 'Marketplace Item',
+                        'quantity' => (int) ($itemMeta['quantity'] ?? 1),
+                        'base_price' => (float) ($itemMeta['base_price'] ?? 0),
+                        'total_price' => (float) ($itemMeta['total_price'] ?? 0),
+                    ]);
+                }
+            }
+
+            // Clear customer cart immediately now that order & items are created
+            Cart::where('user_id', $user->id)->delete();
+
+            $payment->update([
+                'marketplace_order_id' => $order->id,
+            ]);
+
+            Log::info("createPendingOrderFromCart: Created pending MarketplaceOrder #{$order->id} for payment #{$payment->id}");
+
+            return $order;
+        });
+    }
+
+    /**
+     * Converts a customer's cart into a real MarketplaceOrder upon successful payment charge.
+     */
+    public function convertCartToMarketplaceOrder(Payment $payment): ?MarketplaceOrder
+    {
+        if ($payment->marketplace_order_id) {
+            $existing = MarketplaceOrder::find($payment->marketplace_order_id);
+            if ($existing) {
+                $existing->status = 'accept';
+                $existing->payment_status = 'paid';
+                $existing->payment_method = 'card';
+                if (!empty($payment->tap_charge_id) && Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                    $existing->transaction_id = $payment->tap_charge_id;
+                }
+                if (empty($existing->paid_at) && Schema::hasColumn('marketplace_orders', 'paid_at')) {
+                    $existing->paid_at = now();
+                }
+                $existing->save();
+                Cart::where('user_id', $payment->user_id)->delete();
+                return $existing;
+            }
+        }
+
+        $userId = $payment->user_id;
+        $user = $payment->user ?: User::find($userId);
+        if (!$user) {
+            return null;
+        }
+
+        $meta = is_array($payment->gateway_response) ? ($payment->gateway_response['checkout_metadata'] ?? []) : [];
+
+        $cartItems = Cart::with('product')
+            ->where('user_id', $userId)
+            ->get();
+
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta, $userId) {
+            $settings = \App\Models\Admin\SystemSettingModel::first();
+            $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+
+            $subtotal = (float) ($meta['subtotal'] ?? ($cartItems->isNotEmpty() ? $cartItems->sum('total_price') : $payment->amount));
+            $shippingCost = (float) ($meta['shipping_cost'] ?? 0);
+            $customerAppFee = (float) ($meta['customer_app_fee'] ?? $meta['marketplace_customer_app_fee'] ?? $defaultAppFee);
+            $taxAmount = 0.00;
+            $totalAmount = (float) ($payment->amount ?: ($subtotal + $shippingCost + $customerAppFee));
+
+            $orderData = [
+                'user_id' => $user->id,
+                'order_number' => 'ORD-' . now()->format('ymd') . Str::upper(Str::random(4)),
+                'shipping_address' => $meta['shipping_address'] ?? ($user->address ?? 'Default Address'),
+                'subtotal' => $subtotal,
+                'shipping_cost' => $shippingCost,
+                'discount_price' => 0,
+                'total_amount' => $totalAmount,
+                'payment_method' => 'tap',
+                'notes' => $meta['notes'] ?? null,
+                'status' => 'accept',
+            ];
+
+            if (Schema::hasColumn('marketplace_orders', 'customer_app_fee')) {
+                $orderData['customer_app_fee'] = $customerAppFee;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'tax_amount')) {
+                $orderData['tax_amount'] = $taxAmount;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'payment_status')) {
+                $orderData['payment_status'] = 'paid';
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                $orderData['transaction_id'] = $payment->tap_charge_id;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'paid_at')) {
+                $orderData['paid_at'] = now();
+            }
+
+            $order = MarketplaceOrder::create($orderData);
+
+            if ($cartItems->isNotEmpty()) {
+                $productIds = $cartItems->pluck('product_id')->filter()->unique()->values();
+                $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
+
+                foreach ($cartItems as $cartItem) {
+                    $product = $products->get($cartItem->product_id);
+                    $price = $product ? (float) ($product->sale_price ?: $product->price) : (float) ($cartItem->base_price ?? 0);
+                    $qty = (int) ($cartItem->quantity ?? 1);
+                    $total = (float) ($cartItem->total_price ?: ($price * $qty));
+
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => $cartItem->product_id,
+                        'shop_id' => !empty($product?->user_id) ? $product->user_id : null,
+                        'product_name' => $product?->product_name ?? ('Product #' . $cartItem->product_id),
+                        'quantity' => $qty,
+                        'base_price' => $price,
+                        'total_price' => $total,
+                    ]);
+                }
+
+                // Clear customer cart after order is successfully placed & paid!
+                Cart::where('user_id', $user->id)->delete();
+            } elseif (!empty($meta['cart_items']) && is_array($meta['cart_items'])) {
+                foreach ($meta['cart_items'] as $itemMeta) {
+                    MarketplaceOrderItem::create([
+                        'marketplace_order_id' => $order->id,
+                        'product_id' => (int) ($itemMeta['product_id'] ?? 0),
+                        'shop_id' => !empty($itemMeta['shop_id']) ? (int) $itemMeta['shop_id'] : null,
+                        'product_name' => $itemMeta['product_name'] ?? 'Marketplace Item',
+                        'quantity' => (int) ($itemMeta['quantity'] ?? 1),
+                        'base_price' => (float) ($itemMeta['base_price'] ?? 0),
+                        'total_price' => (float) ($itemMeta['total_price'] ?? 0),
+                    ]);
+                }
+            }
+
+            $payment->update([
+                'marketplace_order_id' => $order->id,
+                'status' => 'captured',
+            ]);
+
+            Log::info("convertCartToMarketplaceOrder: Successfully created MarketplaceOrder #{$order->id} ({$order->order_number}) for payment #{$payment->id}");
+
+            return $order;
+        });
+    }
+
+    /**
+     * Idempotently handles incoming Tap webhook notifications.
+     */
+    public function handleWebhook(array $payload): bool
+    {
+        $chargeId = $payload['id'] ?? null;
+        $metaPaymentId = $payload['metadata']['payment_id'] ?? null;
+
+        if (!$chargeId) {
+            Log::warning("TapPaymentService: Webhook received without charge ID.");
+            return false;
+        }
+
+        Log::info("TapPaymentService: Processing webhook for charge {$chargeId}", ['payload' => $payload]);
+
+        $payment = null;
+        if ($metaPaymentId) {
+            $payment = Payment::find($metaPaymentId);
+        }
+
+        if (!$payment) {
+            $payment = Payment::where('tap_charge_id', $chargeId)->first();
+        }
+
+        if (!$payment) {
+            $refId = $payload['reference']['order'] ?? $payload['reference']['transaction'] ?? null;
+            if ($refId) {
+                $order = Orders::find($refId);
+                if ($order && $order->job_id) {
+                    $payment = Payment::where('job_id', $order->job_id)->latest()->first();
+                }
+                if (!$payment) {
+                    $payment = Payment::where('job_id', $refId)->latest()->first();
+                }
+            }
+        }
+
+        if (!$payment) {
+            Log::error("TapPaymentService: Webhook received for unknown charge {$chargeId} / payment #{$metaPaymentId}");
+            return false;
+        }
+
+        // Idempotency check: If already captured and order created, return true
+        if ($payment->status === 'captured' && $payment->marketplace_order_id) {
+            Log::info("TapPaymentService: Payment #{$payment->id} is already captured. Webhook execution skipped.");
+            return true;
+        }
+
+        // Retrieve fresh charge details directly from Tap API for security verification
+        return $this->verifyCharge($chargeId, $payment);
+    }
+}

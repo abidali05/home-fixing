@@ -21,7 +21,7 @@
                         <div class="card-header pb-0">
                             <div class="card-header pb-0 d-flex justify-content-between align-items-center">
                                 <h6 class="mb-0">Job Requests</h6>
-                                <a href="{{ route('job_requests.create') }}" style="background-color: #2BBDCE; color: white;" type="button" class="btn btn-sm  {{ in_array(23, $rolePermissions) ? '' : 'd-none' }}">
+                                <a href="{{ route('job_requests.create') }}" style="background-color: #4F2396; color: white;" type="button" class="btn btn-sm  {{ in_array(23, $rolePermissions) ? '' : 'd-none' }}">
                                     <i class="bi bi-plus-lg me-1"></i> Add New Request
                                 </a>
                             </div>

@@ -22,7 +22,7 @@
                         <div class="card-header pb-0">
                             <div class="card-header pb-0 d-flex justify-content-between align-items-center">
                                 <h6 class="mb-0">Service Categories</h6>
-                                <button type="button" class="btn btn-sm {{ in_array(2, $rolePermissions) ? '' : 'd-none' }}" style="background-color: #2BBDCE; color: white;" data-bs-toggle="modal"
+                                <button type="button" class="btn btn-sm {{ in_array(2, $rolePermissions) ? '' : 'd-none' }}" style="background-color: #4F2396; color: white;" data-bs-toggle="modal"
                                     data-bs-target="#addCategoryModal">
                                     <i class="bi bi-plus-lg me-1"></i> Add New Category
                                 </button>
@@ -86,7 +86,7 @@
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="submit" class="btn " id="addCategoryButton" style="background-color: #2BBDCE; color: white;">Save Category</button>
+                        <button type="submit" class="btn " id="addCategoryButton" style="background-color: #4F2396; color: white;">Save Category</button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"
                             id="addCategoryClose">Cancel</button>
                     </div>
@@ -129,7 +129,7 @@
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="submit" class="btn" id="editCategoryButton" style="background-color: #2BBDCE; color: white;">Update Category</button>
+                        <button type="submit" class="btn" id="editCategoryButton" style="background-color: #4F2396; color: white;">Update Category</button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     </div>
                 </div>

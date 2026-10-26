@@ -1,33 +1,34 @@
 @extends('layouts.app')
 
 @section('content')
-    @php
-        $setting = App\Models\Admin\SystemSettingModel::first();
-    @endphp
+    <main class="main-content position-relative border-radius-lg">
+        @php
+            $setting = App\Models\Admin\SystemSettingModel::first();
+        @endphp
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
 
         .maincontainer {
-            margin-left: 300px;
-            margin-top: 15px;
-            border-radius: 10px;
+            margin: 0;
+            padding: 0.5rem 1rem 1.5rem 1rem;
+            border-radius: 16px;
+            width: 100%;
         }
 
         .chat-container {
-            height: 100vh;
+            height: calc(100vh - 130px);
+            min-height: 550px;
             display: flex;
-            background: #f0f2f5;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            border-radius: 10px;
+            background: #ffffff;
+            font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(79, 35, 150, 0.08);
+            border: 1px solid rgba(79, 35, 150, 0.12);
         }
 
         /* Sidebar Styles */
         .chat-sidebar {
-            width: 400px;
+            width: 360px;
             background: #ffffff;
             border-right: 1px solid #e9edef;
             display: flex;
@@ -35,13 +36,13 @@
         }
 
         .sidebar-header {
-            background: #65CFDB;
+            background: linear-gradient(135deg, #4F2396 0%, #682eb8 100%);
             padding: 16px 20px;
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
-            min-height: 60px;
-            border-top-left-radius: 10px;
+            min-height: 64px;
+            color: #ffffff;
         }
 
         .user-avatar {
@@ -197,18 +198,17 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background: #efeae2;
-            background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="chat-bg" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="%23ffffff" fill-opacity="0.1"/><circle cx="75" cy="75" r="1" fill="%23ffffff" fill-opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23chat-bg)"/></svg>');
+            background: #f7f9fc;
         }
 
         .chat-header {
-            background: #f0f2f5;
+            background: #ffffff;
             padding: 16px 20px;
-            border-bottom: 1px solid #e9edef;
+            border-bottom: 1px solid rgba(79, 35, 150, 0.1);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            min-height: 60px;
+            min-height: 64px;
         }
 
         .chat-header-info {
@@ -449,10 +449,9 @@
 
         .chat-list-container::-webkit-scrollbar-thumb:hover,
         .messages-area::-webkit-scrollbar-thumb:hover {
-            background: #667781;
         }
     </style>
-    <div class="maincontainer">
+    <div class="container-fluid py-3">
         <div class="chat-container">
             <!-- Chat List Sidebar -->
             <div class="chat-sidebar">
@@ -506,7 +505,7 @@
                     <div class="welcome-screen">
                         <div class="welcome-content">
                             <i class="fas fa-comments welcome-icon"></i>
-                            <h4>Home Fixing Chat</h4>
+                            <h4>Azhl Chat</h4>
                             <p class="text-muted">Manage customer conversations and support requests.<br>Monitor all chat
                                 activities from this admin panel.</p>
                         </div>
@@ -528,9 +527,15 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Company Read-Only Banner -->
+                <div id="companyReadOnlyBanner" class="p-3 text-center text-muted border-top bg-light text-xs" style="display: none;">
+                    <i class="fas fa-eye text-primary me-1"></i> <strong>Company Read-Only Access:</strong> You are viewing live chat history for your assigned provider. Sending messages and deleting chats are restricted.
+                </div>
             </div>
         </div>
     </div>
+</main>
 @endsection
 
 @push('scripts')
@@ -579,6 +584,9 @@
         const searchInput = document.getElementById("searchChats");
         const defaultAvatar =
             "{{ $setting->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('assets/img/logo.png') }}";
+        const companyProviderIds = @json(optional(Auth::guard('admin')->user())->is_company ? \App\Models\User::where('company_id', Auth::guard('admin')->user()->id)->pluck('id')->toArray() : null);
+        const isCompany = @json((bool) optional(Auth::guard('admin')->user())->is_company);
+        const readOnlyBanner = document.getElementById("companyReadOnlyBanner");
         let activeChatId = null;
         let participantsMap = {};
         let allChats = [];
@@ -611,6 +619,22 @@
                 const chat = docSnap.data();
                 const chatId = docSnap.id;
                 const details = chat.participantDetails || {};
+                
+                if (companyProviderIds !== null) {
+                    const detailKeys = Object.keys(details);
+                    const participantArr = Array.isArray(chat.participants) ? chat.participants : [];
+                    const allParticipantIds = [...new Set([...detailKeys, ...participantArr])];
+
+                    const hasAssignedProvider = allParticipantIds.some(id => {
+                        const numId = Number(id);
+                        return companyProviderIds.includes(numId) || companyProviderIds.includes(String(id));
+                    });
+
+                    if (!hasAssignedProvider) {
+                        return;
+                    }
+                }
+
                 participantsMap[chatId] = details;
                 allChats.push({
                     id: chatId,
@@ -704,8 +728,15 @@
                 `;
             });
 
-            chatActions.style.display = 'flex';
-            messageInputArea.style.display = 'block';
+            if (isCompany) {
+                chatActions.style.display = 'none';
+                messageInputArea.style.display = 'none';
+                if (readOnlyBanner) readOnlyBanner.style.display = 'block';
+            } else {
+                chatActions.style.display = 'flex';
+                messageInputArea.style.display = 'block';
+                if (readOnlyBanner) readOnlyBanner.style.display = 'none';
+            }
 
             // Hide welcome screen
             const welcomeScreen = chatMessagesEl.querySelector('.welcome-screen');
@@ -781,6 +812,10 @@
 
         // Send message functionality
         const sendMessage = async () => {
+            if (isCompany) {
+                showNotification("Company accounts have read-only chat access.", "error");
+                return;
+            }
             if (!activeChatId || !messageInput.value.trim()) return;
 
             const messageText = messageInput.value.trim();

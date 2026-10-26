@@ -210,6 +210,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     // Tap Payments API Routes
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
+    Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::get('payments/callback', [PaymentController::class, 'callback']);
@@ -224,9 +225,12 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('marketplace/cart/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
     Route::post('marketplace/checkout/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
     Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/checkout/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
+    Route::post('marketplace/cart/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
     Route::post('marketplace/payments/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
     Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
     Route::post('marketplace/orders/{order}/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/orders/{order}/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
     Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
     Route::get('marketplace/payments/{payment}/status', [MarketplacePaymentController::class, 'status']);
 
@@ -302,11 +306,15 @@ Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
+    Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/checkout/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
+    Route::post('marketplace/cart/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
     Route::post('marketplace/payments/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
     Route::post('marketplace/orders/{order}/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/orders/{order}/apple-pay-charge', [MarketplacePaymentController::class, 'chargeApplePay']);
 });
 
 // Public alias for marketplace get-all

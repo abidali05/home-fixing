@@ -13,6 +13,7 @@ use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
@@ -497,6 +498,299 @@ class PaymentController extends Controller
         } catch (\Throwable $e) {
             Log::error('Error in verifyTapPayment: ' . $e->getMessage(), ['exception' => $e]);
             return $this->error('Failed to verify payment: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * API: Charge Apple Pay Token (Native Apple Pay for Jobs / Services)
+     * POST /api/jobs/{jobId}/bids/{bidId}/apple-pay-charge
+     * POST /api/v1/jobs/{jobId}/bids/{bidId}/apple-pay-charge
+     *
+     * @param Request $request
+     * @param int|string $jobId
+     * @param int|string $bidId
+     * @return JsonResponse
+     */
+    public function chargeApplePay(Request $request, $jobId, $bidId): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            // 1. Fetch & Validate Job & Bid
+            $job = JobRequestModel::find($jobId);
+            if (!$job) {
+                return $this->error('Job request not found.', 404);
+            }
+
+            if ((int) $job->user_id !== (int) $user->id) {
+                return $this->error('You are not authorized to pay for this job.', 403);
+            }
+
+            if ($job->status === 'cancelled') {
+                return $this->error('This job is cancelled.', 400);
+            }
+
+            $bid = BidModel::where('id', $bidId)->where('job_id', $job->id)->first();
+            if (!$bid) {
+                return $this->error('Bid not found for this job.', 404);
+            }
+
+            // 2. Idempotency Check: if order is already marked paid, return success immediately
+            $order = Orders::where('job_id', $job->id)->first();
+            if ($order && ($order->payment_status === 'paid' || (int) $order->paid_to_system === 1)) {
+                return $this->success([
+                    'order_id' => (int) $order->id,
+                    'job_id' => (int) $job->id,
+                    'bid_id' => (int) $bid->id,
+                    'payment_status' => 'paid',
+                    'payment_method' => $order->payment_method ?: 'apple_pay',
+                    'transaction_id' => $order->transaction_id,
+                    'amount' => (float) ($order->total_amount ?: $order->price),
+                    'currency' => 'SAR',
+                ], 'Order is already marked as paid.');
+            }
+
+            // 3. Extract Token or Charge ID
+            $rawToken = $request->input('token') ?? $request->input('apple_pay_token') ?? $request->input('applePayToken');
+            $chargeIdParam = $request->input('charge_id') ?? $request->input('chargeId') ?? $request->input('tap_id');
+
+            $chargeId = null;
+            $chargeData = [];
+            $chargeStatus = 'UNKNOWN';
+
+            // Case A: Client already charged via Tap Native SDK and sent charge_id
+            if (!empty($chargeIdParam) && str_starts_with((string) $chargeIdParam, 'chg_')) {
+                $chargeId = (string) $chargeIdParam;
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+                $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            } elseif (!empty($rawToken)) {
+                // If rawToken itself is a charge ID
+                if (is_string($rawToken) && str_starts_with($rawToken, 'chg_')) {
+                    $chargeId = $rawToken;
+                    $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+                    $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+                } else {
+                    // Case B: Charge Apple Pay Token via Tap API (Server-to-Server)
+                    $tokenString = is_array($rawToken) ? json_encode($rawToken) : (string) $rawToken;
+
+                    // Calculate total payable amount by customer
+                    $settings = \App\Models\Admin\SystemSettingModel::first();
+                    $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+                    $bidPrice = (float) ($bid->price ?? 0);
+                    $extraAmount = $order ? (float) ($order->extra_amount ?? 0) : 0.00;
+                    $acceptedExtra = ($order && $order->extra_amount_status === 'accepted') ? $extraAmount : 0.00;
+                    $finalBase = $order ? (float) ($order->final_base_price ?: ($bidPrice + $acceptedExtra)) : $bidPrice;
+                    $totalPayable = round($finalBase + $customerAppFee, 2);
+
+                    $payment = Payment::where('job_id', $job->id)
+                        ->where('bid_id', $bid->id)
+                        ->latest()
+                        ->first();
+
+                    if (!$payment) {
+                        $payment = Payment::create([
+                            'user_id' => $user->id,
+                            'job_id' => $job->id,
+                            'bid_id' => $bid->id,
+                            'provider_id' => $bid->provider_id,
+                            'amount' => $totalPayable,
+                            'currency' => 'SAR',
+                            'gateway' => 'tap',
+                            'status' => 'processing',
+                        ]);
+                    } else {
+                        $payment->update([
+                            'amount' => $totalPayable,
+                            'status' => 'processing',
+                        ]);
+                    }
+
+                    // Auto-Split Destinations for Provider
+                    $destinations = null;
+                    try {
+                        $splitDetails = $this->tapPaymentService->getProviderSplitDetails($payment, $bid->provider, (float) $finalBase);
+                        if ($splitDetails) {
+                            $destinations = $splitDetails['destinations'];
+                            $payment->update([
+                                'tap_destination_id' => $splitDetails['destination_id'],
+                                'tap_split_amount' => $splitDetails['provider_share'],
+                            ]);
+                        }
+                    } catch (\Throwable $e) {
+                        Log::warning("chargeApplePay: Could not resolve provider split details: " . $e->getMessage());
+                    }
+
+                    $secretKey = config('services.tap.secret_key');
+                    if (empty($secretKey)) {
+                        throw new \RuntimeException('Tap Payments API Secret Key is not configured.');
+                    }
+
+                    $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '500000000');
+                    if (strlen($phoneDigits) > 9) {
+                        $phoneDigits = substr($phoneDigits, -9);
+                    }
+
+                    $payload = [
+                        'amount' => $totalPayable,
+                        'currency' => 'SAR',
+                        'customer' => [
+                            'first_name' => $user->name ?? 'Customer',
+                            'email' => $user->email ?? 'customer@azhal.app',
+                            'phone' => [
+                                'country_code' => '966',
+                                'number' => $phoneDigits ?: '500000000',
+                            ],
+                        ],
+                        'source' => [
+                            'id' => $tokenString,
+                        ],
+                        'reference' => [
+                            'transaction' => "PAY-{$payment->id}",
+                            'order' => "JOB-{$job->id}",
+                        ],
+                        'description' => "Azhal Job #{$job->id} payment via Apple Pay",
+                        'metadata' => [
+                            'payment_id' => (string) $payment->id,
+                            'job_id' => (string) $job->id,
+                            'bid_id' => (string) $bid->id,
+                            'user_id' => (string) $user->id,
+                            'payment_method' => 'apple_pay',
+                        ],
+                    ];
+
+                    if (!empty($destinations)) {
+                        $payload['destinations'] = $destinations;
+                    }
+
+                    Log::info("chargeApplePay: Dispatching Tap Apple Pay charge for job #{$job->id}, payment #{$payment->id}");
+
+                    $response = Http::withToken($secretKey)
+                        ->acceptJson()
+                        ->post('https://api.tap.company/v2/charges', $payload);
+
+                    $chargeData = $response->json() ?? [];
+
+                    // Sandbox resilience fallback: if destinations rejected, retry without
+                    if ($response->failed() && !empty($payload['destinations']) && in_array($response->status(), [400, 401, 422])) {
+                        Log::warning("chargeApplePay: Sandbox split destination rejected ({$response->status()}). Retrying without destinations as fallback.");
+                        unset($payload['destinations']);
+                        $retryResponse = Http::withToken($secretKey)
+                            ->acceptJson()
+                            ->post('https://api.tap.company/v2/charges', $payload);
+                        $response = $retryResponse;
+                        $chargeData = $retryResponse->json() ?? [];
+                    }
+
+                    if ($response->failed()) {
+                        $errorMessage = $chargeData['errors'][0]['description'] ?? ($chargeData['message'] ?? 'Apple Pay charge failed via Tap.');
+                        Log::error("chargeApplePay: Charge failed for job #{$job->id}: {$errorMessage}");
+                        $payment->update([
+                            'status' => 'failed',
+                            'gateway_response' => $chargeData,
+                        ]);
+                        return $this->error($errorMessage, 400, [
+                            'payment_id' => $payment->id,
+                            'status' => 'failed',
+                        ]);
+                    }
+
+                    $chargeId = $chargeData['id'] ?? null;
+                    $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+                }
+            } else {
+                return $this->error('The token field is required.', 422);
+            }
+
+            // 4. Validate captured status
+            if ($chargeStatus !== 'CAPTURED') {
+                return $this->error("Payment not captured. Status: {$chargeStatus}", 400, [
+                    'charge_id' => $chargeId,
+                    'status' => strtolower($chargeStatus),
+                ]);
+            }
+
+            // 5. Atomic DB Updates & Provider Hiring
+            return DB::transaction(function () use ($job, $bid, $user, $chargeId, $chargeData) {
+                $chargedAmount = (float) ($chargeData['amount'] ?? 0);
+                $chargedCurrency = strtoupper($chargeData['currency'] ?? 'SAR');
+
+                $payment = Payment::where('job_id', $job->id)
+                    ->where('bid_id', $bid->id)
+                    ->latest()
+                    ->first();
+
+                if (!$payment) {
+                    $payment = Payment::create([
+                        'user_id' => $user->id,
+                        'job_id' => $job->id,
+                        'bid_id' => $bid->id,
+                        'provider_id' => $bid->provider_id,
+                        'amount' => $chargedAmount,
+                        'currency' => $chargedCurrency,
+                        'gateway' => 'tap',
+                        'status' => 'captured',
+                        'tap_charge_id' => $chargeId,
+                        'gateway_response' => ['charge' => $chargeData],
+                    ]);
+                } else {
+                    $payment->update([
+                        'amount' => $chargedAmount ?: $payment->amount,
+                        'status' => 'captured',
+                        'tap_charge_id' => $chargeId,
+                        'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
+                    ]);
+                }
+
+                // If charge contains split destinations, record them on payment
+                $destList = $chargeData['destinations']['destination'] ?? null;
+                if (!empty($destList) && is_array($destList)) {
+                    $firstDest = $destList[0] ?? null;
+                    if ($firstDest && !empty($firstDest['id'])) {
+                        $payment->update([
+                            'tap_destination_id' => $firstDest['id'],
+                            'tap_split_amount' => (float) ($firstDest['amount'] ?? 0),
+                        ]);
+                    }
+                }
+
+                // Hire Provider
+                $hireProviderService = app(HireProviderService::class);
+                $hireProviderService->hireProvider($payment);
+
+                // Ensure Order record is updated with payment_method = 'apple_pay'
+                $order = Orders::where('job_id', $job->id)->first();
+                if ($order) {
+                    $order->payment_status = 'paid';
+                    $order->payment_method = 'apple_pay';
+                    $order->paid_to_system = 1;
+                    $order->transaction_id = $chargeId;
+                    if (empty($order->paid_at)) {
+                        $order->paid_at = now();
+                    }
+                    $order->calculateAndSyncFinancials(false);
+                    $order->save();
+                }
+
+                Log::info("chargeApplePay: Payment {$chargeId} successfully captured for job #{$job->id}, order #{$order?->id}");
+
+                return $this->success([
+                    'order_id' => $order ? (int) $order->id : null,
+                    'job_id' => (int) $job->id,
+                    'bid_id' => (int) $bid->id,
+                    'payment_status' => 'paid',
+                    'payment_method' => 'apple_pay',
+                    'transaction_id' => $chargeId,
+                    'amount' => (float) number_format($order ? ($order->total_amount ?: $order->price) : $chargedAmount, 2, '.', ''),
+                    'currency' => $chargedCurrency,
+                ], 'Apple Pay payment captured successfully and provider hired.');
+            });
+
+        } catch (\Throwable $e) {
+            Log::error('Error in chargeApplePay: ' . $e->getMessage(), ['exception' => $e]);
+            return $this->error('Failed to process Apple Pay charge: ' . $e->getMessage(), 500);
         }
     }
 }

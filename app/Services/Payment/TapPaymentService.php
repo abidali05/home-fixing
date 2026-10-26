@@ -688,7 +688,7 @@ class TapPaymentService
             ->where('user_id', $userId)
             ->get();
 
-        return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta, $userId) {
             $settings = \App\Models\Admin\SystemSettingModel::first();
             $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 
@@ -761,7 +761,7 @@ class TapPaymentService
             }
 
             // Clear customer cart immediately now that order & items are created
-            Cart::where('user_id', $userId)->delete();
+            Cart::where('user_id', $user->id)->delete();
 
             $payment->update([
                 'marketplace_order_id' => $order->id,
@@ -808,7 +808,7 @@ class TapPaymentService
             ->where('user_id', $userId)
             ->get();
 
-        return DB::transaction(function () use ($payment, $user, $cartItems, $meta) {
+        return DB::transaction(function () use ($payment, $user, $cartItems, $meta, $userId) {
             $settings = \App\Models\Admin\SystemSettingModel::first();
             $defaultAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
 

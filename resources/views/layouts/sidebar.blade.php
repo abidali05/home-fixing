@@ -71,6 +71,8 @@
                         'admin.payments.transactions',
                         'admin.withdrawals.index',
                         'admin.refunds.index',
+                        'admin.provider_dues.index',
+                        'admin.provider_dues.show',
                     ];
                     $isFinanceOpen = in_array(Route::currentRouteName(), $financeRoutes);
                 @endphp
@@ -104,6 +106,12 @@
                             <a class="nav-link {{ Route::currentRouteName() == 'admin.refunds.index' ? 'active' : '' }}"
                                 href="{{ route('admin.refunds.index') }}">
                                 Customer Refund Requests
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ in_array(Route::currentRouteName(), ['admin.provider_dues.index', 'admin.provider_dues.show']) ? 'active' : '' }}"
+                                href="{{ route('admin.provider_dues.index') }}">
+                                Provider Dues & Commissions (COD)
                             </a>
                         </li>
                     </ul>

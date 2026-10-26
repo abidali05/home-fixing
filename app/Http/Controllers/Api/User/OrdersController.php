@@ -123,14 +123,29 @@ class OrdersController extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
-                    $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
+                    $paymentMethod = $order->payment_method ?: 'card';
+                    $dbPaymentStatus = $order->payment_status ?: null;
+
+                    if ($dbPaymentStatus === 'paid') {
+                        $isPaid = true;
+                        $paymentStatus = 'paid';
+                    } elseif ($dbPaymentStatus === 'cash_pending') {
+                        $isPaid = false;
+                        $paymentStatus = 'cash_pending';
+                    } elseif ($dbPaymentStatus === 'pending' || $dbPaymentStatus === 'unpaid') {
+                        $isPaid = false;
+                        $paymentStatus = 'pending';
+                    } else {
+                        $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
+                        $paymentStatus = $isPaid ? 'paid' : ($paymentMethod === 'cash' ? 'cash_pending' : 'pending');
+                    }
+                    $order->payment_method = $paymentMethod;
+                    $order->payment_status = $paymentStatus;
                     $order->is_paid = $isPaid;
-                    $order->payment_status = $isPaid ? 'paid' : 'pending';
 
                     // For cancelled_orders: Attach refund status lifecycle details
                     if ($key === 'cancelled_orders' || strtolower($order->status) === 'cancelled') {
                         $refund = $customerRefunds->get($order->id);
-                        $isPaid = (int) $order->paid_to_system === 1 || in_array($order->job_id, $capturedJobIds);
 
                         $refundData = null;
                         if ($refund) {
@@ -292,7 +307,7 @@ class OrdersController extends Controller
                 'provider_earning' => number_format($netProviderEarning, 2, '.', ''),
                 'currency' => strtoupper($payment ? ($payment->currency ?: 'SAR') : 'SAR'),
                 'order_status' => strtolower($order->status ?: 'completed'),
-                'payment_status' => $payment ? $payment->status : ((int) $order->paid_to_system === 1 ? 'captured' : 'pending'),
+                'payment_status' => $order->payment_status === 'paid' ? ($payment ? $payment->status : 'captured') : ($order->payment_status ?: ($payment ? $payment->status : 'pending')),
                 'payment_gateway' => $payment ? ($payment->gateway ?: 'tap') : 'tap',
                 'tap_charge_id' => $payment ? $payment->tap_charge_id : null,
                 'paid_at' => $payment && $payment->created_at ? $payment->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : ($order->created_at ? $order->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null),

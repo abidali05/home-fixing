@@ -120,6 +120,20 @@ class PaymentController extends Controller
                 ]);
             }
 
+            // Check and resolve Tap Marketplace Auto-Split destination for provider
+            $splitDetails = null;
+            try {
+                $splitDetails = $this->tapPaymentService->getProviderSplitDetails($payment, $bid->provider, (float) $finalBase);
+                if ($splitDetails) {
+                    $payment->update([
+                        'tap_destination_id' => $splitDetails['destination_id'],
+                        'tap_split_amount' => $splitDetails['provider_share'],
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::warning("PaymentController: Could not resolve provider split details: " . $e->getMessage());
+            }
+
             Log::info("PaymentController: Payment initiated for job #{$job->id}, bid #{$bid->id}, payment ID #{$payment->id}");
 
             $breakdown = [
@@ -141,6 +155,10 @@ class PaymentController extends Controller
                 'payment_id' => $payment->id,
                 'amount' => (float) number_format($payment->amount, 2, '.', ''),
                 'currency' => $payment->currency,
+                'destinations' => $splitDetails['destinations'] ?? null,
+                'destination_id' => $splitDetails['destination_id'] ?? null,
+                'provider_share' => $splitDetails['provider_share'] ?? null,
+                'azhl_commission' => $splitDetails['azhl_commission'] ?? null,
                 'bid_price' => number_format($bidPrice, 2, '.', ''),
                 'extra_amount' => number_format($extraAmount, 2, '.', ''),
                 'extra_amount_reason' => $extraAmountReason,
@@ -430,6 +448,18 @@ class PaymentController extends Controller
                         'tap_charge_id' => $chargeId,
                         'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeData]),
                     ]);
+                }
+
+                // If charge contains split destinations, record them on payment
+                $destList = $chargeData['destinations']['destination'] ?? null;
+                if (!empty($destList) && is_array($destList)) {
+                    $firstDest = $destList[0] ?? null;
+                    if ($firstDest && !empty($firstDest['id'])) {
+                        $payment->update([
+                            'tap_destination_id' => $firstDest['id'],
+                            'tap_split_amount' => (float) ($firstDest['amount'] ?? 0),
+                        ]);
+                    }
                 }
 
                 // Execute provider hiring

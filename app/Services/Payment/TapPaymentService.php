@@ -94,101 +94,15 @@ class TapPaymentService
         // -------------------------------------------------------------
         // TAP MARKETPLACE: Instant Split for Service Provider (Only for Customer Jobs)
         // -------------------------------------------------------------
-        $provider = ($payment->job_id && $payment->provider_id && (int) $payment->user_id !== (int) $payment->provider_id)
-            ? User::find($payment->provider_id)
-            : null;
-        $destinationId = optional($provider?->providerProfile)->tap_destination_id;
-
-        $isLive = str_starts_with($secretKey, 'sk_live_');
-        if (!empty($destinationId)) {
-            if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
-                Log::warning("TapPaymentService: Resetting test destination ID {$destinationId} for provider #{$provider?->id} because environment is LIVE.");
-                $destinationId = null;
-                $provider?->providerProfile?->update(['tap_destination_id' => null]);
-            } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
-                Log::warning("TapPaymentService: Resetting live destination ID {$destinationId} for provider #{$provider?->id} because environment is SANDBOX.");
-                $destinationId = null;
-                $provider?->providerProfile?->update(['tap_destination_id' => null]);
-            }
-        }
-
-        // Auto-Onboard: If provider has bank account or profile IBAN but no tap_destination_id yet, onboard immediately!
-        if (empty($destinationId) && $provider) {
-            $bankAccount = BankAccount::where('user_id', $provider->id)
-                ->where('account_type', 'provider')
-                ->latest()
-                ->first();
-
-            $destinationId = $bankAccount?->tap_destination_id;
-            if (!empty($destinationId)) {
-                if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
-                    $destinationId = null;
-                    $bankAccount->update(['tap_destination_id' => null]);
-                } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
-                    $destinationId = null;
-                    $bankAccount->update(['tap_destination_id' => null]);
-                }
-            }
-
-            if (empty($destinationId)) {
-                $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
-                if (!empty($iban)) {
-                    try {
-                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
-                            'iban' => $iban,
-                            'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
-                            'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
-                        ]);
-                        $destinationId = $onboardResult['data']['destination_id'] ?? null;
-                        if (empty($destinationId)) {
-                            $provider->refresh();
-                            $destinationId = optional($provider->providerProfile)->tap_destination_id;
-                        }
-                        if ($destinationId && $bankAccount) {
-                            $bankAccount->update(['tap_destination_id' => $destinationId]);
-                        }
-                        Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
-                    } catch (\Throwable $e) {
-                        Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
-                    }
-                }
-            }
-        }
-
-        if (!empty($destinationId)) {
-            $order = Orders::where('job_id', $payment->job_id)->first();
-            $financials = $order ? $order->calculateAndSyncFinancials(false) : null;
-            $providerShare = $financials ? (float) $financials['net_amount'] : 0.00;
-
-            // If order not created yet (order is created on capture in HireProviderService), calculate from Bid / Payment amount!
-            if ($providerShare <= 0) {
-                $bid = $payment->bid ?: ($payment->bid_id ? BidModel::find($payment->bid_id) : null);
-                $settings = SystemSettingModel::first();
-                $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
-                $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
-
-                $bidPrice = $bid ? (float) $bid->price : max(0, (float) $payment->amount - $customerAppFee);
-                $commission = round($bidPrice * ($azhlPercentage / 100), 2);
-                $providerShare = max(0, round($bidPrice - $commission, 2));
-            }
-
-            if ($providerShare > 0 && $providerShare < (float) $payment->amount) {
-                $payload['destinations'] = [
-                    'destination' => [
-                        [
-                            'id' => $destinationId,
-                            'amount' => (float) number_format($providerShare, 2, '.', ''),
-                            'currency' => strtoupper($payment->currency ?: 'SAR'),
-                        ]
-                    ]
-                ];
-
+        if ($payment->job_id && $payment->provider_id && (int) $payment->user_id !== (int) $payment->provider_id) {
+            $splitDetails = $this->getProviderSplitDetails($payment);
+            if ($splitDetails) {
+                $payload['destinations'] = $splitDetails['destinations'];
                 $payment->update([
-                    'tap_destination_id' => $destinationId,
-                    'tap_split_amount' => $providerShare,
+                    'tap_destination_id' => $splitDetails['destination_id'],
+                    'tap_split_amount' => $splitDetails['provider_share'],
                 ]);
-
-                Log::info("TapPaymentService: Added split destination for Provider #{$payment->provider_id} (Dest: {$destinationId}, Amount: {$providerShare} SAR)");
+                Log::info("TapPaymentService: Added split destination for Provider #{$payment->provider_id} (Dest: {$splitDetails['destination_id']}, Amount: {$splitDetails['provider_share']} SAR)");
             }
         }
 
@@ -496,6 +410,128 @@ class TapPaymentService
         }
 
         return $responseData;
+    }
+
+    /**
+     * Resolves Tap Destination ID and split amounts for a provider.
+     *
+     * @param Payment $payment
+     * @param User|null $provider
+     * @param float $finalBase
+     * @return array|null
+     */
+    public function getProviderSplitDetails(Payment $payment, ?User $provider = null, float $finalBase = 0.0): ?array
+    {
+        $secretKey = (string) config('services.tap.secret_key');
+        if (!$provider && $payment->provider_id) {
+            $provider = User::find($payment->provider_id);
+        }
+        if (!$provider) {
+            return null;
+        }
+
+        $destinationId = optional($provider->providerProfile)->tap_destination_id;
+        $isLive = str_starts_with($secretKey, 'sk_live_');
+
+        if (!empty($destinationId)) {
+            if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                Log::warning("TapPaymentService: Resetting test destination ID {$destinationId} for provider #{$provider->id} because environment is LIVE.");
+                $destinationId = null;
+                $provider->providerProfile?->update(['tap_destination_id' => null]);
+            } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                Log::warning("TapPaymentService: Resetting live destination ID {$destinationId} for provider #{$provider->id} because environment is SANDBOX.");
+                $destinationId = null;
+                $provider->providerProfile?->update(['tap_destination_id' => null]);
+            }
+        }
+
+        // Auto-Onboard: If provider has bank account or profile IBAN but no tap_destination_id yet, onboard immediately!
+        if (empty($destinationId)) {
+            $bankAccount = BankAccount::where('user_id', $provider->id)
+                ->where('account_type', 'provider')
+                ->latest()
+                ->first();
+
+            $destinationId = $bankAccount?->tap_destination_id;
+            if (!empty($destinationId)) {
+                if ($isLive && str_starts_with($destinationId, 'dst_test_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                } elseif (!$isLive && str_starts_with($destinationId, 'dst_live_')) {
+                    $destinationId = null;
+                    $bankAccount->update(['tap_destination_id' => null]);
+                }
+            }
+
+            if (empty($destinationId)) {
+                $iban = $bankAccount?->iban ?: optional($provider->providerProfile)->iban;
+                if (!empty($iban)) {
+                    try {
+                        $onboardResult = app(TapMarketplaceService::class)->onboardRetailer($provider, 'provider', [
+                            'iban' => $iban,
+                            'account_title' => $bankAccount?->account_title ?: optional($provider->providerProfile)->account_title ?: $provider->name,
+                            'bank_name' => $bankAccount?->bank_name ?: optional($provider->providerProfile)->bank_name ?: 'Saudi Bank',
+                        ]);
+                        $destinationId = $onboardResult['data']['destination_id'] ?? null;
+                        if (empty($destinationId)) {
+                            $provider->refresh();
+                            $destinationId = optional($provider->providerProfile)->tap_destination_id;
+                        }
+                        if ($destinationId && $bankAccount) {
+                            $bankAccount->update(['tap_destination_id' => $destinationId]);
+                        }
+                        Log::info("TapPaymentService: Auto-onboarded provider #{$provider->id} with Destination ID: {$destinationId}");
+                    } catch (\Throwable $e) {
+                        Log::warning("TapPaymentService: Auto-onboard failed for Provider #{$provider->id}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
+
+        if (empty($destinationId)) {
+            return null;
+        }
+
+        $order = Orders::where('job_id', $payment->job_id)->first();
+        $financials = $order ? $order->calculateAndSyncFinancials(false) : null;
+        $providerShare = $financials ? (float) $financials['net_amount'] : 0.00;
+
+        if ($providerShare <= 0) {
+            $bid = $payment->bid ?: ($payment->bid_id ? BidModel::find($payment->bid_id) : null);
+            $settings = SystemSettingModel::first();
+            $azhlPercentage = (float) ($settings->azhl_percentage ?? 10.00);
+            $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+
+            $baseAmount = $finalBase > 0 ? $finalBase : ($bid ? (float) $bid->price : max(0, (float) $payment->amount - $customerAppFee));
+            $commission = round($baseAmount * ($azhlPercentage / 100), 2);
+            $providerShare = max(0, round($baseAmount - $commission, 2));
+            $azhlCommission = $commission;
+        } else {
+            $azhlCommission = (float) ($financials['azhl_fee'] ?? 0.00);
+            $azhlPercentage = (float) ($financials['azhl_percentage'] ?? 10.00);
+        }
+
+        if ($providerShare <= 0 || $providerShare >= (float) $payment->amount) {
+            return null;
+        }
+
+        $destArray = [
+            'destination' => [
+                [
+                    'id' => $destinationId,
+                    'amount' => (float) number_format($providerShare, 2, '.', ''),
+                    'currency' => strtoupper($payment->currency ?: 'SAR'),
+                ]
+            ]
+        ];
+
+        return [
+            'destination_id' => $destinationId,
+            'provider_share' => (float) number_format($providerShare, 2, '.', ''),
+            'azhl_commission' => (float) number_format($azhlCommission, 2, '.', ''),
+            'azhl_percentage' => (float) number_format($azhlPercentage, 2, '.', ''),
+            'destinations' => $destArray,
+        ];
     }
 
     /**

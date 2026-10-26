@@ -3483,8 +3483,8 @@ class AuthController extends Controller
                 'reviews' => $user->reviews()->get(),
                 'rating' => (float) $user->rating,
                 'total_orders' => $user->total_orders,
-                'total_earnings' => $user->total_earnings,
-                'payment_due' => $user->payment_due,
+                'total_earnings' => app(\App\Http\Controllers\Api\WithdrawalController::class)->calculateWalletBalance($user->id, 'provider')['total_earnings'],
+                'payment_due' => (float) ($user->getRawOriginal('payment_due') ?? $user->payment_due ?? 0.0),
                 'referral_code' => $providerProfile?->referral_code,
                 'referred_by_code' => $providerProfile?->referred_by_code,
                 'referred_by_id' => $providerProfile?->referred_by_id,
@@ -3538,6 +3538,7 @@ class AuthController extends Controller
             $shopReviews = $this->formatMarketplaceShopReviews($user->id);
 
             return array_merge($payload, [
+                'total_earnings' => app(\App\Http\Controllers\Api\WithdrawalController::class)->calculateWalletBalance($user->id, 'marketplace')['total_earnings'],
                 'active_orders_count' => Orders::where('user_id', $user->id)
                     ->whereIn('status', ['on_the_way', 'arrived', 'working'])
                     ->count(),

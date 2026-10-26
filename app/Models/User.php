@@ -152,13 +152,9 @@ class User extends Authenticatable
         return (float) number_format((float) ($stats['total_earnings'] ?? 0.0), 2, '.', '');
     }
 
-    /**
-     * Deprecated: paid_to_system Commission Hold system is obsolete.
-     * All payments are collected online by AZHL and net earnings are credited to user wallets.
-     */
     public function getPaymentDueAttribute()
     {
-        return 0;
+        return (float) number_format((float) ($this->attributes['payment_due'] ?? 0.00), 2, '.', '');
     }
 
     public function routeNotificationForFcm(): ?string

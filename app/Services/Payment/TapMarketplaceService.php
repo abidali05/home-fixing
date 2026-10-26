@@ -150,6 +150,10 @@ class TapMarketplaceService
                 ->post("{$this->baseUrl}/v3/lead/", $leadPayload);
 
             $body = $response->json();
+            Log::info("TapMarketplaceService: Tap Lead API response for user #{$user->id}", [
+                'status' => $response->status(),
+                'body' => $body,
+            ]);
 
             if ($response->successful() && !empty($body['id'])) {
                 $leadId = $body['id'];
@@ -190,9 +194,18 @@ class TapMarketplaceService
             Log::warning("TapMarketplaceService: Tap Lead API call encountered exception: " . $e->getMessage());
         }
 
-        // --- SANDBOX SIMULATION FALLBACK ---
-        // If the Tap test key does not yet have Marketplace scope permission activated from Tap support,
-        // we provide a realistic Sandbox sub-account so development, split payments, and testing are seamless.
+        // Live Mode: Do NOT generate fake test destination IDs
+        $isLive = str_starts_with($this->secretKey, 'sk_live_');
+        if ($isLive) {
+            Log::warning("TapMarketplaceService: Live onboarding did not produce destination ID for user #{$user->id}. Payouts will default to wallet balance.");
+            return [
+                'success' => false,
+                'message' => 'Live Tap Marketplace destination ID not generated. Payouts will be handled via wallet.',
+                'data' => null,
+            ];
+        }
+
+        // --- SANDBOX SIMULATION FALLBACK (Only for Test Mode) ---
         $simulatedLeadId = 'led_test_' . Str::random(16);
         $simulatedDestId = 'dst_test_' . Str::random(16);
 

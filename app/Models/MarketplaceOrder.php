@@ -22,6 +22,8 @@ class MarketplaceOrder extends Model
         'total_amount',
         'payment_method',
         'payment_status',
+        'transaction_id',
+        'paid_at',
         'notes',
         'delivery_response_reason',
         'status',
@@ -34,6 +36,7 @@ class MarketplaceOrder extends Model
         'customer_app_fee' => 'float',
         'discount_price' => 'float',
         'total_amount' => 'float',
+        'paid_at' => 'datetime',
     ];
 
     public function items()

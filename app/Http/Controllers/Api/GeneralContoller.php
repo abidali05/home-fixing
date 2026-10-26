@@ -230,8 +230,24 @@ class GeneralContoller extends Controller
                     $order->extra_amount_reason = $order->extra_amount_reason;
                     $order->extra_amount_status = (string) ($order->extra_amount_status ?: 'none');
                     $order->total_amount = number_format($total, 2, '.', '');
-                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
-                    $order->payment_status = $isPaid ? 'paid' : 'pending';
+                    $paymentMethod = $order->payment_method ?: 'card';
+                    $dbPaymentStatus = $order->payment_status ?: null;
+
+                    if ($dbPaymentStatus === 'paid') {
+                        $isPaid = true;
+                        $paymentStatus = 'paid';
+                    } elseif ($dbPaymentStatus === 'cash_pending') {
+                        $isPaid = false;
+                        $paymentStatus = 'cash_pending';
+                    } elseif ($dbPaymentStatus === 'pending' || $dbPaymentStatus === 'unpaid') {
+                        $isPaid = false;
+                        $paymentStatus = 'pending';
+                    } else {
+                        $isPaid = (int) ($order->paid_to_system ?? 0) === 1 || in_array($order->job_id, $capturedJobIds);
+                        $paymentStatus = $isPaid ? 'paid' : ($paymentMethod === 'cash' ? 'cash_pending' : 'pending');
+                    }
+                    $order->payment_method = $paymentMethod;
+                    $order->payment_status = $paymentStatus;
                     $order->is_paid = $isPaid;
 
                     if ($order->job_id) {
@@ -252,12 +268,48 @@ class GeneralContoller extends Controller
                     return $order;
                 });
 
-            $active_marketplace_orders = MarketplaceOrder::with('items')
+            $active_marketplace_orders = MarketplaceOrder::with(['items.product', 'items.shop'])
                 ->where('user_id', $user->id)
                 ->whereIn('status', ['pending', 'accept', 'processing', 'mark_as_shipped', 'mark_as_delivered'])
                 ->latest()
                 ->limit(4)
                 ->get();
+
+            $active_marketplace_orders->transform(function ($order) {
+                if ($order->items) {
+                    $order->items->transform(function ($item) {
+                        $item->shop = $item->shop
+                            ? [
+                                'id' => $item->shop->id,
+                                'name' => optional($item->shop->marketplaceProfile)->shop_title ?? $item->shop->name ?? '',
+                            ]
+                            : null;
+
+                        if ($item->product) {
+                            $item->product->banner_image = !empty($item->product->banner_image)
+                                ? (str_starts_with($item->product->banner_image, 'http') ? $item->product->banner_image : asset('storage/' . $item->product->banner_image))
+                                : asset('assets/img/default.jpg');
+
+                            $images = $item->product->product_images;
+                            if (is_string($images)) {
+                                $images = array_filter(explode(',', $images));
+                            }
+
+                            $item->product->product_images = collect($images ?: [])
+                                ->map(function ($image) {
+                                    return (str_starts_with($image, 'http') ? $image : asset('storage/' . $image));
+                                })
+                                ->values();
+
+                            $item->image = $item->product->banner_image;
+                            $item->product_image = $item->product->banner_image;
+                        }
+
+                        return $item;
+                    });
+                }
+                return $order;
+            });
 
             $cart_count = Cart::where('user_id', $user->id)->count();
 
@@ -988,13 +1040,34 @@ class GeneralContoller extends Controller
                 $netAmount = $financials['net_amount'];
                 $subtotal = $financials['customer_total'];
 
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1
-                    || in_array($order->job_id, $allPaidJobIds)
-                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+                $paymentMethod = $order->payment_method ?: 'card';
+                $dbPaymentStatus = $order->payment_status ?: null;
 
-                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
-                    $order->paid_to_system = 1;
-                    $order->saveQuietly();
+                if ($dbPaymentStatus === 'paid') {
+                    $isPaid = true;
+                    $paymentStatus = 'paid';
+                } elseif ($dbPaymentStatus === 'cash_pending') {
+                    $isPaid = false;
+                    $paymentStatus = 'cash_pending';
+                } elseif ($dbPaymentStatus === 'pending' || $dbPaymentStatus === 'unpaid') {
+                    $isPaid = false;
+                    $paymentStatus = 'pending';
+                } else {
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1
+                        || in_array($order->job_id, $allPaidJobIds)
+                        || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                    if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                        $order->paid_to_system = 1;
+                        $order->saveQuietly();
+                    }
+                    if ($isPaid) {
+                        $paymentStatus = 'paid';
+                    } elseif ($paymentMethod === 'cash') {
+                        $paymentStatus = 'cash_pending';
+                    } else {
+                        $paymentStatus = 'pending';
+                    }
                 }
 
                 $order->price = number_format($repairPrice, 2, '.', '');
@@ -1011,7 +1084,8 @@ class GeneralContoller extends Controller
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
-                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->payment_method = $paymentMethod;
+                $order->payment_status = $paymentStatus;
                 $order->is_paid = $isPaid;
 
                 $order->payment_breakdown = [
@@ -1024,7 +1098,8 @@ class GeneralContoller extends Controller
                     'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => $paymentStatus,
                     'is_paid' => $isPaid,
                     'azhl_commission' => number_format($azhlFee, 2, '.', ''),
                     'azhl_fee' => number_format($azhlFee, 2, '.', ''),
@@ -1411,13 +1486,34 @@ class GeneralContoller extends Controller
                 $netAmount = $financials['net_amount'];
                 $subtotal = $financials['customer_total'];
 
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1
-                    || in_array($order->job_id, $allPaidJobIds)
-                    || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+                $paymentMethod = $order->payment_method ?: 'card';
+                $dbPaymentStatus = $order->payment_status ?: null;
 
-                if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
-                    $order->paid_to_system = 1;
-                    $order->saveQuietly();
+                if ($dbPaymentStatus === 'paid') {
+                    $isPaid = true;
+                    $paymentStatus = 'paid';
+                } elseif ($dbPaymentStatus === 'cash_pending') {
+                    $isPaid = false;
+                    $paymentStatus = 'cash_pending';
+                } elseif ($dbPaymentStatus === 'pending' || $dbPaymentStatus === 'unpaid') {
+                    $isPaid = false;
+                    $paymentStatus = 'pending';
+                } else {
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1
+                        || in_array($order->job_id, $allPaidJobIds)
+                        || Payment::where('job_id', $order->job_id)->whereIn('status', ['captured', 'paid'])->exists();
+
+                    if ($isPaid && (int) ($order->paid_to_system ?? 0) !== 1) {
+                        $order->paid_to_system = 1;
+                        $order->saveQuietly();
+                    }
+                    if ($isPaid) {
+                        $paymentStatus = 'paid';
+                    } elseif ($paymentMethod === 'cash') {
+                        $paymentStatus = 'cash_pending';
+                    } else {
+                        $paymentStatus = 'pending';
+                    }
                 }
 
                 $order->price = number_format($repairPrice, 2, '.', '');
@@ -1433,8 +1529,10 @@ class GeneralContoller extends Controller
                 $order->azhl_fee = number_format($azhlFee, 2, '.', '');
                 $order->gateway_fee = number_format($totalGatewayFee, 2, '.', '');
                 $order->net_amount = number_format($netAmount, 2, '.', '');
-                $order->payment_status = $isPaid ? 'paid' : 'pending';
+                $order->payment_method = $paymentMethod;
+                $order->payment_status = $paymentStatus;
                 $order->is_paid = $isPaid;
+
                 $order->payment_breakdown = [
                     'bid_price' => number_format($repairPrice, 2, '.', ''),
                     'repair_price' => number_format($repairPrice, 2, '.', ''),
@@ -1445,7 +1543,8 @@ class GeneralContoller extends Controller
                     'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
-                    'payment_status' => $isPaid ? 'paid' : 'pending',
+                    'payment_method' => $paymentMethod,
+                    'payment_status' => $paymentStatus,
                     'is_paid' => $isPaid,
                     'azhl_commission' => number_format($azhlFee, 2, '.', ''),
                     'azhl_fee' => number_format($azhlFee, 2, '.', ''),
@@ -1708,17 +1807,37 @@ class GeneralContoller extends Controller
                 $totalGatewayFee = $financials['gateway_fee'];
                 $total = $financials['customer_total'];
 
-                $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
-                if (!$isPaid && !empty($order->job_id)) {
-                    $payment = Payment::where('job_id', $order->job_id)
-                        ->whereIn('status', ['captured', 'paid'])
-                        ->latest()
-                        ->first();
-                    if ($payment) {
-                        $isPaid = true;
+                $paymentMethod = $order->payment_method ?: 'card';
+                $dbPaymentStatus = $order->payment_status ?: null;
+
+                if ($dbPaymentStatus === 'paid') {
+                    $isPaid = true;
+                    $paymentStatus = 'paid';
+                } elseif ($dbPaymentStatus === 'cash_pending') {
+                    $isPaid = false;
+                    $paymentStatus = 'cash_pending';
+                } elseif ($dbPaymentStatus === 'pending' || $dbPaymentStatus === 'unpaid') {
+                    $isPaid = false;
+                    $paymentStatus = 'pending';
+                } else {
+                    $isPaid = (int) ($order->paid_to_system ?? 0) === 1;
+                    if (!$isPaid && !empty($order->job_id)) {
+                        $payment = Payment::where('job_id', $order->job_id)
+                            ->whereIn('status', ['captured', 'paid'])
+                            ->latest()
+                            ->first();
+                        if ($payment) {
+                            $isPaid = true;
+                        }
+                    }
+                    if ($isPaid) {
+                        $paymentStatus = 'paid';
+                    } elseif ($paymentMethod === 'cash') {
+                        $paymentStatus = 'cash_pending';
+                    } else {
+                        $paymentStatus = 'pending';
                     }
                 }
-                $paymentStatus = $isPaid ? 'paid' : 'pending';
 
                 $paymentBreakdown = [
                     'bid_id' => $bidId,
@@ -1731,11 +1850,13 @@ class GeneralContoller extends Controller
                     'accepted_extra' => number_format($applicableExtra, 2, '.', ''),
                     'final_base_price' => number_format($finalBase, 2, '.', ''),
                     'customer_app_fee' => number_format($customerAppFee, 2, '.', ''),
+                    'app_service_fee' => number_format($customerAppFee, 2, '.', ''),
                     'system_fee' => number_format($customerAppFee, 2, '.', ''),
                     'subtotal' => number_format($finalBase, 2, '.', ''),
                     'total_payable_by_customer' => number_format($total, 2, '.', ''),
                     'total_amount' => number_format($total, 2, '.', ''),
                     'total' => number_format($total, 2, '.', ''),
+                    'payment_method' => $paymentMethod,
                     'payment_status' => $paymentStatus,
                     'paid_to_system' => $isPaid ? 1 : 0,
                     'is_paid' => $isPaid,
@@ -1755,14 +1876,18 @@ class GeneralContoller extends Controller
                         $track->order->accepted_extra = number_format($applicableExtra, 2, '.', '');
                         $track->order->final_base_price = number_format($finalBase, 2, '.', '');
                         $track->order->customer_app_fee = number_format($customerAppFee, 2, '.', '');
+                        $track->order->app_service_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->system_fee = number_format($customerAppFee, 2, '.', '');
                         $track->order->total_price = number_format($total, 2, '.', '');
                         $track->order->total_amount = number_format($total, 2, '.', '');
                         $track->order->total_payable_by_customer = number_format($total, 2, '.', '');
                         $track->order->total = number_format($total, 2, '.', '');
+                        $track->order->payment_method = $paymentMethod;
                         $track->order->payment_status = $paymentStatus;
                         $track->order->paid_to_system = $isPaid ? 1 : 0;
                         $track->order->is_paid = $isPaid;
+                        $track->order->cash_collected_amount = number_format((float) ($order->cash_collected_amount ?? 0), 2, '.', '');
+                        $track->order->cash_received_at = $order->cash_received_at;
                         $track->order->payment_breakdown = $paymentBreakdown;
 
                         if ($track->order->job) {
@@ -1825,6 +1950,18 @@ class GeneralContoller extends Controller
 
             if (!$isCustomerActor && !$isProviderActor) {
                 return $this->error('Only the assigned customer or provider can update this order status.', 403);
+            }
+
+            if ($isProviderActor) {
+                try {
+                    \App\Services\Payment\CashPaymentService::checkProviderDueLimit($actor);
+                } catch (\Exception $limitEx) {
+                    return $this->error($limitEx->getMessage(), 403, [
+                        'error_code' => 'PAYMENT_DUE_EXCEEDED',
+                        'payment_due' => (float) ($actor->payment_due ?? 0.0),
+                        'max_due_threshold' => (float) ($actor->max_due_threshold ?? 25.0),
+                    ]);
+                }
             }
 
             if ($request->filled('type')) {
@@ -2015,6 +2152,17 @@ class GeneralContoller extends Controller
 
             if ((int) $user->role !== 1) {
                 return $this->error('Only providers can submit bids.', 403);
+            }
+
+            // Check if provider has unpaid cash commission exceeding threshold
+            try {
+                \App\Services\Payment\CashPaymentService::checkProviderDueLimit($user);
+            } catch (\Exception $limitEx) {
+                return $this->error($limitEx->getMessage(), 403, [
+                    'error_code' => 'PAYMENT_DUE_EXCEEDED',
+                    'payment_due' => (float) ($user->payment_due ?? 0.0),
+                    'max_due_threshold' => (float) ($user->max_due_threshold ?? 25.0),
+                ]);
             }
 
             $job = JobRequestModel::where('id', $id)->first();

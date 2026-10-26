@@ -146,46 +146,15 @@ class User extends Authenticatable
 
     public function getTotalEarningsAttribute()
     {
-        if ((string) $this->role === '2') {
-            $items = \App\Models\MarketplaceOrderItem::where('shop_id', $this->id)
-                ->whereHas('order', function ($q) {
-                    $q->where('status', 'completed');
-                })->get();
+        $accountType = ((string) $this->role === '2') ? 'marketplace' : 'provider';
+        $stats = app(\App\Http\Controllers\Api\WithdrawalController::class)->calculateWalletBalance($this->id, $accountType);
 
-            $total = 0.0;
-            foreach ($items as $item) {
-                $itemPrice = (float) ($item->total_price ?? 0);
-                if ($itemPrice <= 0) {
-                    $itemPrice = (float) ($item->base_price ?? 0) * (int) ($item->quantity ?? 1);
-                }
-                $total += $itemPrice;
-            }
-            return (float) number_format($total, 2, '.', '');
-        }
-
-        $completedOrders = Orders::where('provider_id', $this->id)
-            ->where('status', 'completed')
-            ->get();
-        $orderEarnings = 0.0;
-
-        foreach ($completedOrders as $ord) {
-            $financials = $ord->calculateAndSyncFinancials(false);
-            $orderEarnings += (float) ($financials['net_amount'] ?? 0.0);
-        }
-
-        $referralEarnings = (float) ReferralReward::where('referrer_id', $this->id)->sum('reward_amount');
-        $totalEarnings = $orderEarnings + $referralEarnings;
-
-        return (float) number_format($totalEarnings, 2, '.', '');
+        return (float) number_format((float) ($stats['total_earnings'] ?? 0.0), 2, '.', '');
     }
 
-    /**
-     * Deprecated: paid_to_system Commission Hold system is obsolete.
-     * All payments are collected online by AZHL and net earnings are credited to user wallets.
-     */
     public function getPaymentDueAttribute()
     {
-        return 0;
+        return (float) number_format((float) ($this->attributes['payment_due'] ?? 0.00), 2, '.', '');
     }
 
     public function routeNotificationForFcm(): ?string

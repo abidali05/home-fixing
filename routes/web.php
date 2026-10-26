@@ -214,6 +214,12 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::patch('refunds/{id}/complete', [\App\Http\Controllers\Admin\RefundAdminController::class, 'complete'])->name('admin.refunds.complete');
     Route::patch('refunds/{id}/reject', [\App\Http\Controllers\Admin\RefundAdminController::class, 'reject'])->name('admin.refunds.reject');
 
+    // Admin Provider Dues & Commissions Management (Blade Web UI)
+    Route::get('provider-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'index'])->name('admin.provider_dues.index');
+    Route::get('provider-dues/{id}', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'show'])->name('admin.provider_dues.show');
+    Route::post('provider-dues/{id}/adjust', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'adjustDues'])->name('admin.provider_dues.adjust');
+    Route::post('provider-dues/{id}/update-threshold', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'updateThreshold'])->name('admin.provider_dues.update_threshold');
+
 
     // =====================================================================System Settings Start===============================================================================
 

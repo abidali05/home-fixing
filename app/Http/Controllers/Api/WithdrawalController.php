@@ -138,7 +138,7 @@ class WithdrawalController extends Controller
      * Calculate wallet statistics for a given user and account_type
      * Single source of truth for walletSummary & requestWithdrawal
      */
-    private function calculateWalletBalance($userId, string $accountType = 'provider'): array
+    public function calculateWalletBalance($userId, string $accountType = 'provider'): array
     {
         if ($accountType === 'provider') {
             // 1. Pending Amount: Net pending amount
@@ -170,7 +170,7 @@ class WithdrawalController extends Controller
 
             $totalEarnings = $orderEarnings + $referralEarnings;
 
-            // 4. Total Withdrawn: Sum of completed manual withdrawals + completed Tap auto-splits!
+            // 4. Total Withdrawn: Sum of completed manual withdrawals + completed Tap auto-splits + Cash already collected directly in hand!
             $manualWithdrawn = (float) Withdrawal::where('user_id', $userId)
                 ->where('account_type', 'provider')
                 ->where('status', 'completed')
@@ -182,7 +182,20 @@ class WithdrawalController extends Controller
                 ->where('tap_split_amount', '>', 0)
                 ->sum('tap_split_amount');
 
-            $totalWithdrawn = $manualWithdrawn + $autoTransferred;
+            // For completed cash orders, the provider has already received the cash directly in hand.
+            $cashAlreadyCollected = 0.0;
+            foreach ($completedOrders->where('payment_method', 'cash')->where('paid_to_system', 1) as $cashOrd) {
+                $repairPrice = $this->extractRepairPrice($cashOrd);
+                $financials = $this->calculateOrderFinancials($repairPrice, (float) ($cashOrd->extra_amount ?? 0), (string) ($cashOrd->extra_amount_status ?? 'none'), $cashOrd);
+                $cashAlreadyCollected += $financials['net_amount'];
+            }
+
+            // Sum of wallet auto-deductions made to cover platform COD fees
+            $walletDeductions = (float) \App\Models\ProviderDuesLedger::where('provider_id', $userId)
+                ->where('type', 'credit_wallet_deduction')
+                ->sum('amount');
+
+            $totalWithdrawn = $manualWithdrawn + $autoTransferred + $cashAlreadyCollected + $walletDeductions;
 
             // 5. Reserved Funds: Active withdrawal requests currently requested or accepted
             $reservedAmount = (float) Withdrawal::where('user_id', $userId)

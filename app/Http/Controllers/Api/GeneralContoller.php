@@ -268,12 +268,48 @@ class GeneralContoller extends Controller
                     return $order;
                 });
 
-            $active_marketplace_orders = MarketplaceOrder::with('items')
+            $active_marketplace_orders = MarketplaceOrder::with(['items.product', 'items.shop'])
                 ->where('user_id', $user->id)
                 ->whereIn('status', ['pending', 'accept', 'processing', 'mark_as_shipped', 'mark_as_delivered'])
                 ->latest()
                 ->limit(4)
                 ->get();
+
+            $active_marketplace_orders->transform(function ($order) {
+                if ($order->items) {
+                    $order->items->transform(function ($item) {
+                        $item->shop = $item->shop
+                            ? [
+                                'id' => $item->shop->id,
+                                'name' => optional($item->shop->marketplaceProfile)->shop_title ?? $item->shop->name ?? '',
+                            ]
+                            : null;
+
+                        if ($item->product) {
+                            $item->product->banner_image = !empty($item->product->banner_image)
+                                ? (str_starts_with($item->product->banner_image, 'http') ? $item->product->banner_image : asset('storage/' . $item->product->banner_image))
+                                : asset('assets/img/default.jpg');
+
+                            $images = $item->product->product_images;
+                            if (is_string($images)) {
+                                $images = array_filter(explode(',', $images));
+                            }
+
+                            $item->product->product_images = collect($images ?: [])
+                                ->map(function ($image) {
+                                    return (str_starts_with($image, 'http') ? $image : asset('storage/' . $image));
+                                })
+                                ->values();
+
+                            $item->image = $item->product->banner_image;
+                            $item->product_image = $item->product->banner_image;
+                        }
+
+                        return $item;
+                    });
+                }
+                return $order;
+            });
 
             $cart_count = Cart::where('user_id', $user->id)->count();
 

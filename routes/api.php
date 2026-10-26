@@ -223,7 +223,10 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     // Marketplace Tap Payment Routes
     Route::post('marketplace/cart/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
     Route::post('marketplace/checkout/initiate-payment', [MarketplacePaymentController::class, 'initiateCartPayment']);
+    Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/payments/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
     Route::post('marketplace/orders/{order}/initiate-payment', [MarketplacePaymentController::class, 'initiatePayment']);
+    Route::post('marketplace/orders/{order}/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
     Route::post('marketplace/payments/charge', [MarketplacePaymentController::class, 'charge']);
     Route::get('marketplace/payments/{payment}/status', [MarketplacePaymentController::class, 'status']);
 
@@ -301,6 +304,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
+    Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/payments/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
+    Route::post('marketplace/orders/{order}/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);
 });
 
 // Public alias for marketplace get-all

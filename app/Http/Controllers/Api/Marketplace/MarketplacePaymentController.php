@@ -8,8 +8,11 @@ use App\Models\Cart;
 use App\Models\MarketplaceOrder;
 use App\Models\Payment;
 use App\Services\Payment\TapPaymentService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 
 class MarketplacePaymentController extends Controller
@@ -388,6 +391,281 @@ class MarketplacePaymentController extends Controller
         } catch (\Throwable $e) {
             Log::error('MarketplacePaymentController: Error checking payment status - ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Failed to check payment status.'], 500);
+        }
+    }
+
+    /**
+     * Verify Tap Native SDK Payment for Marketplace Checkout
+     * POST /api/v1/marketplace/checkout/verify-tap-payment
+     * POST /api/v1/marketplace/payments/verify-tap-payment
+     * POST /api/v1/marketplace/orders/{order}/verify-tap-payment
+     *
+     * @param Request $request
+     * @param int|string|null $orderId
+     * @return JsonResponse
+     */
+    public function verifyTapPayment(Request $request, $orderId = null): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => 401,
+                    'success' => false,
+                    'message' => 'You must be logged in to verify payment.'
+                ], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'charge_id' => 'required|string',
+                'payment_id' => 'nullable|integer',
+                'order_id' => 'nullable',
+                'amount' => 'nullable|numeric',
+                'currency' => 'nullable|string',
+                'payment_type' => 'nullable|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 422,
+                    'success' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $chargeId = trim((string) $request->input('charge_id'));
+            $resolvedOrderId = $orderId ?: $request->input('order_id');
+
+            // 1. If verifying an existing marketplace order
+            if ($resolvedOrderId) {
+                $order = MarketplaceOrder::where('id', $resolvedOrderId)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if (!$order) {
+                    return response()->json([
+                        'status' => 404,
+                        'success' => false,
+                        'message' => 'Marketplace order not found.'
+                    ], 404);
+                }
+
+                // Idempotency check: already paid
+                if (strtolower((string) $order->payment_status) === 'paid') {
+                    return response()->json([
+                        'status' => 200,
+                        'success' => true,
+                        'message' => 'Marketplace order is already paid.',
+                        'data' => [
+                            'marketplace_order_id' => (int) $order->id,
+                            'order_number' => $order->order_number,
+                            'status' => 'captured',
+                            'payment_status' => 'paid',
+                            'payment_method' => $order->payment_method ?: 'card',
+                            'transaction_id' => $order->transaction_id ?? $chargeId,
+                            'amount' => (float) $order->total_amount,
+                            'currency' => 'SAR',
+                            'order' => $order->load('items'),
+                        ]
+                    ], 200);
+                }
+            }
+
+            // 2. Idempotency check: charge already processed in Payment records
+            $existingPayment = Payment::where('tap_charge_id', $chargeId)
+                ->where('status', 'captured')
+                ->first();
+
+            if ($existingPayment) {
+                $order = $existingPayment->marketplace_order_id
+                    ? MarketplaceOrder::with('items')->find($existingPayment->marketplace_order_id)
+                    : null;
+
+                return response()->json([
+                    'status' => 200,
+                    'success' => true,
+                    'message' => 'Payment has already been verified and order confirmed.',
+                    'data' => [
+                        'payment_id' => (int) $existingPayment->id,
+                        'marketplace_order_id' => $order ? (int) $order->id : null,
+                        'order_number' => $order?->order_number,
+                        'status' => 'captured',
+                        'payment_status' => 'paid',
+                        'payment_method' => $order?->payment_method ?: 'card',
+                        'transaction_id' => $chargeId,
+                        'amount' => (float) ($order ? $order->total_amount : $existingPayment->amount),
+                        'currency' => 'SAR',
+                        'order' => $order,
+                    ]
+                ], 200);
+            }
+
+            // 3. Server-to-server verification with Tap API
+            try {
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+            } catch (\Exception $e) {
+                Log::error("MarketplacePaymentController: Failed to retrieve charge {$chargeId}: " . $e->getMessage());
+                return response()->json([
+                    'status' => 400,
+                    'success' => false,
+                    'message' => 'Unable to verify payment with payment gateway: ' . $e->getMessage()
+                ], 400);
+            }
+
+            $remoteStatus = strtoupper((string) ($chargeData['status'] ?? ''));
+            if ($remoteStatus !== 'CAPTURED') {
+                return response()->json([
+                    'status' => 400,
+                    'success' => false,
+                    'message' => "Payment is not captured. Gateway status: {$remoteStatus}",
+                    'gateway_status' => $remoteStatus
+                ], 400);
+            }
+
+            $chargeCurrency = strtoupper((string) ($chargeData['currency'] ?? ''));
+            if ($chargeCurrency !== 'SAR') {
+                return response()->json([
+                    'status' => 400,
+                    'success' => false,
+                    'message' => "Invalid payment currency '{$chargeCurrency}'. Expected SAR."
+                ], 400);
+            }
+
+            $chargeAmount = (float) ($chargeData['amount'] ?? 0.0);
+
+            // 4. Resolve Payment record
+            $paymentId = $request->input('payment_id') ?: ($chargeData['metadata']['payment_id'] ?? null);
+            $payment = null;
+
+            if ($paymentId) {
+                $payment = Payment::where('id', $paymentId)->where('user_id', $user->id)->first();
+            }
+
+            if (!$payment && !empty($resolvedOrderId)) {
+                $payment = Payment::where('marketplace_order_id', $resolvedOrderId)->latest()->first();
+            }
+
+            if (!$payment) {
+                $payment = Payment::where('user_id', $user->id)
+                    ->where('status', 'pending')
+                    ->whereNull('job_id')
+                    ->latest()
+                    ->first();
+            }
+
+            // 5. Finalize Order & Payment inside DB transaction
+            $order = DB::transaction(function () use ($user, $payment, $chargeId, $chargeData, $chargeAmount, $resolvedOrderId) {
+                if ($resolvedOrderId) {
+                    $order = MarketplaceOrder::where('id', $resolvedOrderId)->where('user_id', $user->id)->first();
+                } else {
+                    $order = null;
+                }
+
+                if ($order) {
+                    $order->payment_status = 'paid';
+                    $order->payment_method = 'card';
+                    if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                        $order->transaction_id = $chargeId;
+                    }
+                    if (Schema::hasColumn('marketplace_orders', 'paid_at') && empty($order->paid_at)) {
+                        $order->paid_at = now();
+                    }
+                    if (in_array(strtolower((string) $order->status), ['pending', 'new', 'waiting'])) {
+                        $order->status = 'accept';
+                    }
+                    $order->save();
+
+                    if ($payment) {
+                        $payment->update([
+                            'status' => 'captured',
+                            'tap_charge_id' => $chargeId,
+                            'marketplace_order_id' => $order->id,
+                            'gateway_response' => array_merge(is_array($payment->gateway_response) ? $payment->gateway_response : [], ['charge' => $chargeData]),
+                        ]);
+                    } else {
+                        Payment::create([
+                            'user_id' => $user->id,
+                            'marketplace_order_id' => $order->id,
+                            'amount' => (float) $order->total_amount,
+                            'currency' => 'SAR',
+                            'gateway' => 'tap',
+                            'tap_charge_id' => $chargeId,
+                            'status' => 'captured',
+                            'gateway_response' => ['charge' => $chargeData],
+                        ]);
+                    }
+                } else {
+                    // Cart Checkout: Convert Cart to Marketplace Order
+                    if (!$payment) {
+                        $payment = Payment::create([
+                            'user_id' => $user->id,
+                            'amount' => $chargeAmount,
+                            'currency' => 'SAR',
+                            'gateway' => 'tap',
+                            'tap_charge_id' => $chargeId,
+                            'status' => 'processing',
+                        ]);
+                    } else {
+                        $payment->update([
+                            'tap_charge_id' => $chargeId,
+                            'status' => 'processing',
+                        ]);
+                    }
+
+                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+
+                    if ($order) {
+                        $order->payment_status = 'paid';
+                        $order->payment_method = 'card';
+                        if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                            $order->transaction_id = $chargeId;
+                        }
+                        if (Schema::hasColumn('marketplace_orders', 'paid_at') && empty($order->paid_at)) {
+                            $order->paid_at = now();
+                        }
+                        $order->save();
+                    }
+
+                    $payment->update([
+                        'status' => 'captured',
+                        'tap_charge_id' => $chargeId,
+                        'marketplace_order_id' => $order?->id,
+                        'gateway_response' => array_merge(is_array($payment->gateway_response) ? $payment->gateway_response : [], ['charge' => $chargeData]),
+                    ]);
+                }
+
+                return $order;
+            });
+
+            return response()->json([
+                'status' => 200,
+                'success' => true,
+                'message' => 'Payment verified successfully and Marketplace Order confirmed.',
+                'data' => [
+                    'payment_id' => $payment ? (int) $payment->id : null,
+                    'marketplace_order_id' => $order ? (int) $order->id : null,
+                    'order_number' => $order?->order_number,
+                    'status' => 'captured',
+                    'payment_status' => 'paid',
+                    'payment_method' => 'card',
+                    'amount' => (float) ($order ? $order->total_amount : $chargeAmount),
+                    'currency' => 'SAR',
+                    'transaction_id' => $chargeId,
+                    'tap_charge_id' => $chargeId,
+                    'order' => $order ? $order->load('items') : null,
+                ]
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('MarketplacePaymentController: Error in verifyTapPayment - ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'status' => 500,
+                'success' => false,
+                'message' => 'Internal server error while verifying payment: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

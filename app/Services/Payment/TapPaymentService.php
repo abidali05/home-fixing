@@ -568,6 +568,26 @@ class TapPaymentService
                 return (bool) $createdOrder;
             }
 
+            // If payment was for existing Marketplace Order
+            if ($payment->marketplace_order_id) {
+                $mpOrder = MarketplaceOrder::find($payment->marketplace_order_id);
+                if ($mpOrder) {
+                    $mpOrder->payment_status = 'paid';
+                    $mpOrder->payment_method = $mpOrder->payment_method ?: 'card';
+                    if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                        $mpOrder->transaction_id = $chargeId;
+                    }
+                    if (Schema::hasColumn('marketplace_orders', 'paid_at') && empty($mpOrder->paid_at)) {
+                        $mpOrder->paid_at = now();
+                    }
+                    if (in_array(strtolower($mpOrder->status), ['pending', 'new', 'waiting'])) {
+                        $mpOrder->status = 'accept';
+                    }
+                    $mpOrder->save();
+                }
+                return true;
+            }
+
             // If service order already exists for this job, mark it paid
             if ($payment->job_id) {
                 $serviceOrder = Orders::where('job_id', $payment->job_id)->first();
@@ -665,6 +685,14 @@ class TapPaymentService
 
             if (Schema::hasColumn('marketplace_orders', 'payment_status')) {
                 $orderData['payment_status'] = 'paid';
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                $orderData['transaction_id'] = $payment->tap_charge_id;
+            }
+
+            if (Schema::hasColumn('marketplace_orders', 'paid_at')) {
+                $orderData['paid_at'] = now();
             }
 
             $order = MarketplaceOrder::create($orderData);

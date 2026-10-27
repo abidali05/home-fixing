@@ -56,7 +56,7 @@ class AuthController extends Controller
             // Bypass / Test Phone Numbers (including all +92 Pakistani numbers for development)
             if (
                 str_starts_with($phone, '+92') ||
-                in_array($phone, ['+966561234567', '+966502616534','+966531301053', '+923069282600', '+923145123730'], true)
+                in_array($phone, ['+966561234567', '+966502616534','+966531301053', '+923069282600', '+923145123730','+966502616987'], true)
             ) {
                 Cache::put('otp_' . $phone, '123456', now()->addMinutes(10));
                 return $this->success(null, 'OTP sent successfully');
@@ -356,13 +356,6 @@ class AuthController extends Controller
                     }
                     $liveImageFilename = time() . '_' . Str::random(10) . '.' . $liveImageFile->getClientOriginalExtension();
                     $liveImageFile->move(public_path('uploads/live_selfies/'), $liveImageFilename);
-                    if (empty($profileImage)) {
-                        $profileImage = $liveImageFilename;
-                        if (!file_exists(public_path('uploads/profile_images/'))) {
-                            mkdir(public_path('uploads/profile_images/'), 0777, true);
-                        }
-                        @copy(public_path('uploads/live_selfies/' . $liveImageFilename), public_path('uploads/profile_images/' . $liveImageFilename));
-                    }
                 }
             }
 
@@ -736,12 +729,14 @@ class AuthController extends Controller
             $user->verification_status = 'pending';
             $user->rejection_reason = null;
 
-            if (empty($user->profile_image) && !empty($liveImageFilename)) {
-                $user->profile_image = $liveImageFilename;
-                if (!file_exists(public_path('uploads/profile_images/'))) {
-                    mkdir(public_path('uploads/profile_images/'), 0777, true);
+            if ($request->hasFile('profile_image')) {
+                if ($user->profile_image && File::exists(public_path('uploads/profile_images/' . $user->profile_image))) {
+                    File::delete(public_path('uploads/profile_images/' . $user->profile_image));
                 }
-                @copy(public_path('uploads/live_selfies/' . $liveImageFilename), public_path('uploads/profile_images/' . $liveImageFilename));
+                $profFile = $request->file('profile_image');
+                $profFilename = time() . '_' . Str::random(10) . '.' . $profFile->getClientOriginalExtension();
+                $profFile->move(public_path('uploads/profile_images/'), $profFilename);
+                $user->profile_image = $profFilename;
             }
 
             $user->save();

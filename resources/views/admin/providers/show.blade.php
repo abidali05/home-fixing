@@ -168,11 +168,8 @@
                                                         <div><strong>Provider Name:</strong> {{ $provider->name }}</div>
                                                     </div>
                                                     @php
-                                                        $liveImgFile = $provider->live_image ?: ($profile?->live_image ?: $provider->profile_image);
+                                                        $liveImgFile = $provider->live_image ?: optional($profile)->live_image;
                                                         $liveImgUrl = $liveImgFile ? asset('uploads/live_selfies/' . $liveImgFile) : null;
-                                                        if ($liveImgFile && !file_exists(public_path('uploads/live_selfies/' . $liveImgFile)) && file_exists(public_path('uploads/profile_images/' . $liveImgFile))) {
-                                                            $liveImgUrl = asset('uploads/profile_images/' . $liveImgFile);
-                                                        }
                                                     @endphp
                                                     @if($liveImgUrl)
                                                         <a href="{{ $liveImgUrl }}" target="_blank" title="Click to view full size">

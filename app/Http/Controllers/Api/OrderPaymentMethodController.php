@@ -194,14 +194,21 @@ class OrderPaymentMethodController extends Controller
             ]);
 
             // Create Tap Charge
-            $chargeResponse = $this->tapPaymentService->createCharge($payment, $request->input('token', 'src_all'));
+            $tokenInput = $request->input('token') ?: $request->input('source_id') ?: 'src_all';
+            $chargeResponse = $this->tapPaymentService->createCharge($payment, $tokenInput);
             $tapChargeId = $chargeResponse['id'] ?? null;
+            $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
             $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
+
+            if ($chargeStatus === 'CAPTURED') {
+                return $this->settleDuesPayment($payment, $user, $tapChargeId, $chargeResponse, $amountToPay, $currentDue);
+            }
 
             if ($tapChargeId) {
                 $payment->update([
                     'tap_charge_id' => $tapChargeId,
                     'status' => 'processing',
+                    'gateway_response' => $chargeResponse,
                 ]);
             }
 
@@ -227,6 +234,175 @@ class OrderPaymentMethodController extends Controller
                 'message' => $e->getMessage() ?: 'Failed to initiate dues payment.',
             ], 500);
         }
+    }
+
+    /**
+     * Provider Verifies Tap Payment (Called by Flutter Tap SDK upon onSuccess)
+     * POST /api/provider/dues/verify-tap-payment
+     * POST /api/provider/verify-tap-payment
+     */
+    public function verifyTapPayment(Request $request): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user() ?? auth()->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $chargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (empty($chargeId) || !is_string($chargeId)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'The charge_id field is required.',
+                ], 422);
+            }
+
+            // 1. Retrieve charge directly from Tap Payments API
+            try {
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+            } catch (\Throwable $e) {
+                Log::error("verifyTapPayment dues: Error retrieving charge {$chargeId}: " . $e->getMessage());
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Failed to verify payment with Tap Gateway. ' . $e->getMessage(),
+                ], 400);
+            }
+
+            $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            $chargedAmount = (float) ($chargeData['amount'] ?? 0);
+            $chargedCurrency = strtoupper($chargeData['currency'] ?? 'SAR');
+
+            if ($chargeStatus !== 'CAPTURED') {
+                return response()->json([
+                    'status' => false,
+                    'message' => "Payment not captured on Tap. Status: {$chargeStatus}",
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'status' => strtolower($chargeStatus),
+                    ],
+                ], 400);
+            }
+
+            // 2. Find or create Payment record
+            $payment = Payment::where('tap_charge_id', $chargeId)->first();
+            if (!$payment) {
+                $payment = Payment::create([
+                    'user_id' => $user->id,
+                    'provider_id' => $user->id,
+                    'amount' => $chargedAmount,
+                    'currency' => $chargedCurrency,
+                    'gateway' => 'tap',
+                    'status' => 'pending',
+                    'tap_charge_id' => $chargeId,
+                ]);
+            }
+
+            // 3. Atomic settlement & Instant Unblock
+            return $this->settleDuesPayment($payment, $user, $chargeId, $chargeData, $chargedAmount, (float) ($user->payment_due ?? 0.0));
+
+        } catch (\Throwable $e) {
+            Log::error('OrderPaymentMethodController verifyTapPayment error: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to verify Tap payment: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Shared helper to settle dues payment atomically and unblock provider
+     */
+    protected function settleDuesPayment(Payment $payment, User $user, string $chargeId, array $chargeData, float $amountToPay, float $currentDue): JsonResponse
+    {
+        return DB::transaction(function () use ($payment, $user, $chargeId, $chargeData, $amountToPay, $currentDue) {
+            $user = User::where('id', $user->id)->lockForUpdate()->first();
+            $previousDue = (float) ($user->payment_due ?? 0.0);
+            $newDue = max(0.0, round($previousDue - $amountToPay, 2));
+
+            $user->payment_due = $newDue;
+            $threshold = (float) ($user->max_due_threshold ?? 25.00);
+            if ($newDue < $threshold) {
+                $user->is_due_blocked = 0;
+            }
+            $user->save();
+
+            // Determine method
+            $rawMethod = strtolower($chargeData['charge']['source']['payment_method'] ?? $chargeData['source']['payment_method'] ?? $chargeData['source']['id'] ?? 'card');
+            if (str_contains($rawMethod, 'mada')) {
+                $methodFormatted = 'tap_card_mada';
+            } elseif (str_contains($rawMethod, 'apple')) {
+                $methodFormatted = 'apple_pay';
+            } else {
+                $methodFormatted = 'tap_card_visa';
+            }
+
+            $refCode = $chargeData['metadata']['reference_code'] ?? ('AZHL-DUE-' . $user->id . '-' . time());
+
+            // 1. Repayment audit
+            ProviderCommissionRepayment::updateOrCreate(
+                ['tap_charge_id' => $chargeId],
+                [
+                    'provider_id' => $user->id,
+                    'transaction_reference' => $refCode,
+                    'amount_paid' => $amountToPay,
+                    'payment_method' => $methodFormatted,
+                    'status' => 'verified',
+                    'verified_at' => now(),
+                    'gateway_response' => $chargeData,
+                ]
+            );
+
+            // 2. Ledger audit
+            ProviderDuesLedger::create([
+                'provider_id' => $user->id,
+                'order_id' => null,
+                'type' => 'credit_online_payment',
+                'amount' => $amountToPay,
+                'previous_due' => $previousDue,
+                'current_due' => $newDue,
+                'notes' => "Cleared dues online via Tap ({$methodFormatted}). Instant Auto-unblock (Charge {$chargeId})",
+            ]);
+
+            // 3. Mark payment captured
+            $payment->update([
+                'status' => 'captured',
+                'tap_charge_id' => $chargeId,
+                'gateway_response' => $chargeData,
+            ]);
+
+            // 4. Instant FCM Push Notification
+            if (!empty($user->fcm_token)) {
+                try {
+                    dispatch(new SendFcmTokenNotificationJob([$user->fcm_token], [
+                        'title' => 'تم سداد المستحقات بنجاح | Dues Cleared',
+                        'body' => "تم تسوية عمولة أزهل بقيمة {$amountToPay} ر.س بنجاح عبر Tap وإلغاء حظر حسابك فوراً.",
+                        'data' => [
+                            'type' => 'commission_repayment_confirmed',
+                            'charge_id' => (string) $chargeId,
+                            'amount_paid' => (string) $amountToPay,
+                            'new_due' => (string) $newDue,
+                            'is_due_blocked' => (string) ($user->is_due_blocked ?? 0),
+                        ],
+                    ]));
+                } catch (\Throwable $e) {
+                    Log::warning("settleDuesPayment FCM error: " . $e->getMessage());
+                }
+            }
+
+            return response()->json([
+                'status' => true,
+                'code' => 200,
+                'message' => 'Dues settled successfully. Account unblocked.',
+                'data' => [
+                    'charge_id' => $chargeId,
+                    'amount_paid' => $amountToPay,
+                    'currency' => 'SAR',
+                    'payment_due' => $newDue,
+                    'is_due_blocked' => (int) ($user->is_due_blocked ?? 0),
+                    'is_blocked' => (bool) (($newDue >= $threshold) || ((int) $user->is_due_blocked === 1)),
+                ],
+            ], 200);
+        });
     }
 
     /**

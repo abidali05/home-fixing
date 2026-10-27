@@ -220,6 +220,8 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('orders/{id}/confirm-cash', [OrderPaymentMethodController::class, 'confirmCash']);
     Route::get('provider/commission-status', [OrderPaymentMethodController::class, 'commissionStatus']);
     Route::post('provider/initiate-due-payment', [OrderPaymentMethodController::class, 'initiateDuePayment']);
+    Route::post('provider/dues/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
     Route::post('provider/dues/apple-pay-charge', [OrderPaymentMethodController::class, 'chargeApplePayDues']);
     Route::post('provider/dues/pay', [OrderPaymentMethodController::class, 'payDues']);
     Route::get('provider/dues/ledger', [OrderPaymentMethodController::class, 'duesLedger']);
@@ -316,6 +318,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Root level aliases for provider commission and dues
     Route::get('provider/commission-status', [OrderPaymentMethodController::class, 'commissionStatus']);
     Route::post('provider/initiate-due-payment', [OrderPaymentMethodController::class, 'initiateDuePayment']);
+    Route::post('provider/dues/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
     Route::post('provider/dues/apple-pay-charge', [OrderPaymentMethodController::class, 'chargeApplePayDues']);
     Route::post('provider/dues/pay', [OrderPaymentMethodController::class, 'payDues']);
     Route::get('provider/dues/ledger', [OrderPaymentMethodController::class, 'duesLedger']);

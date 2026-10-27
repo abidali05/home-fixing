@@ -32,7 +32,7 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    protected $appends = ['cityname', 'total_orders', 'service', 'rating', 'total_earnings', 'payment_due'];
+    protected $appends = ['cityname', 'total_orders', 'service', 'rating', 'total_earnings', 'payment_due', 'is_blocked'];
     protected $guarded = [];
 
     protected $table = 'users';
@@ -155,6 +155,13 @@ class User extends Authenticatable
     public function getPaymentDueAttribute()
     {
         return (float) number_format((float) ($this->attributes['payment_due'] ?? 0.00), 2, '.', '');
+    }
+
+    public function getIsBlockedAttribute(): bool
+    {
+        $due = (float) ($this->attributes['payment_due'] ?? 0.0);
+        $threshold = (float) ($this->attributes['max_due_threshold'] ?? 25.0);
+        return (bool) ($due >= $threshold || (int) ($this->attributes['is_due_blocked'] ?? 0) === 1);
     }
 
     public function routeNotificationForFcm(): ?string

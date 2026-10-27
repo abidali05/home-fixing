@@ -3875,6 +3875,11 @@ class AuthController extends Controller
 
         $user->total_referrals = ProviderProfile::where('referred_by_id', $user->id)->count();
 
+        $due = (float) ($user->payment_due ?? 0.0);
+        $threshold = (float) ($user->max_due_threshold ?? 25.0);
+        $user->is_due_blocked = (int) ($user->is_due_blocked ?? 0);
+        $user->is_blocked = (bool) (($due >= $threshold) || ($user->is_due_blocked === 1));
+
         $user->profile_image = $profile->company_logo
             ? asset('uploads/company_logos/' . $profile->company_logo)
             : ($user->profile_image

@@ -158,6 +158,12 @@ class OrderPaymentMethodController extends Controller
                 return $this->error('Only providers can pay platform dues.', 403);
             }
 
+            // CRITICAL: If Flutter already completed payment in Tap SDK and sent charge_id
+            $incomingChargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (!empty($incomingChargeId) && is_string($incomingChargeId) && (str_starts_with($incomingChargeId, 'chg_') || str_starts_with($incomingChargeId, 'tap_'))) {
+                return $this->verifyTapPayment($request);
+            }
+
             $currentDue = (float) ($user->payment_due ?? 0.0);
             if ($currentDue <= 0) {
                 return response()->json([
@@ -285,6 +291,24 @@ class OrderPaymentMethodController extends Controller
 
             // 2. Find or create Payment record
             $payment = Payment::where('tap_charge_id', $chargeId)->first();
+            if ($payment && $payment->status === 'captured') {
+                $threshold = (float) ($user->max_due_threshold ?? 25.00);
+                $due = (float) ($user->payment_due ?? 0.0);
+                return response()->json([
+                    'status' => true,
+                    'code' => 200,
+                    'message' => 'Dues already settled successfully. Account unblocked.',
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'amount_paid' => (float) $payment->amount,
+                        'currency' => $payment->currency ?: 'SAR',
+                        'payment_due' => $due,
+                        'is_due_blocked' => (int) ($user->is_due_blocked ?? 0),
+                        'is_blocked' => (bool) (($due >= $threshold) || ((int) $user->is_due_blocked === 1)),
+                    ],
+                ], 200);
+            }
+
             if (!$payment) {
                 $payment = Payment::create([
                     'user_id' => $user->id,
@@ -428,6 +452,12 @@ class OrderPaymentMethodController extends Controller
 
             if ((int) $user->role !== 1) {
                 return $this->error('Only providers can pay platform dues.', 403);
+            }
+
+            // CRITICAL: If Flutter already completed payment in Tap SDK and sent charge_id
+            $incomingChargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (!empty($incomingChargeId) && is_string($incomingChargeId) && (str_starts_with($incomingChargeId, 'chg_') || str_starts_with($incomingChargeId, 'tap_'))) {
+                return $this->verifyTapPayment($request);
             }
 
             $currentDue = (float) ($user->payment_due ?? 0.0);

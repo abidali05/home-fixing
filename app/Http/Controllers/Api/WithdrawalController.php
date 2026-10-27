@@ -659,8 +659,8 @@ class WithdrawalController extends Controller
             }
         }
 
-        // 2. Withdrawal Transactions & Provider Dues Repayments
-        if (in_array($filter, ['all', 'withdraw', 'debit', 'payout', 'dues'])) {
+        // 2. Withdrawal Transactions
+        if (in_array($filter, ['all', 'withdraw'])) {
             $withdrawals = Withdrawal::with('bankAccount')
                 ->where('user_id', $user->id)
                 ->where('account_type', $accountType)
@@ -678,6 +678,7 @@ class WithdrawalController extends Controller
                     'currency' => strtoupper($w->currency ?: 'SAR'),
                     'created_at' => $w->created_at ? $w->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                     'credit' => null,
+                    'cancelled' => null,
                     'withdraw' => [
                         'withdrawal_id' => (int) $w->id,
                         'withdrawal_no' => 'WDR-' . str_pad($w->id, 6, '0', STR_PAD_LEFT),
@@ -688,7 +689,8 @@ class WithdrawalController extends Controller
                         'completed_at' => in_array($status, ['completed', 'paid']) ? ($w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null) : null,
                         'rejected_at' => $status === 'rejected' ? ($w->updated_at ? $w->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null) : null,
                         'rejection_reason' => $status === 'rejected' ? ($w->admin_notes ?: 'Request rejected by admin') : null,
-                    ]
+                    ],
+                    'debit' => null,
                 ]);
             }
 
@@ -716,6 +718,7 @@ class WithdrawalController extends Controller
                         'currency' => strtoupper($ap->currency ?: 'SAR'),
                         'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => null,
+                        'cancelled' => null,
                         'withdraw' => [
                             'withdrawal_id' => (int) $ap->id,
                             'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
@@ -726,96 +729,8 @@ class WithdrawalController extends Controller
                             'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                             'rejected_at' => null,
                             'rejection_reason' => null,
-                        ]
-                    ]);
-                }
-
-                // Include Commission Dues Repayments (Dues cleared by Provider via Tap Card / Apple Pay)
-                $repayments = ProviderCommissionRepayment::where('provider_id', $user->id)
-                    ->whereIn('status', ['verified', 'captured', 'completed', 'success'])
-                    ->get();
-
-                foreach ($repayments as $rep) {
-                    $methodLabel = match (strtolower((string) $rep->payment_method)) {
-                        'tap_card_mada' => 'Tap Card (Mada)',
-                        'apple_pay' => 'Apple Pay',
-                        'tap_card_visa' => 'Tap Card (Visa/Mastercard)',
-                        'bank_transfer' => 'Bank Transfer',
-                        'admin_override' => 'Manual Adjustment (Admin)',
-                        default => 'Tap Online Payment',
-                    };
-
-                    $createdIso = $rep->created_at ? $rep->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
-                    $verifiedIso = $rep->verified_at ? $rep->verified_at->setTimezone('Asia/Riyadh')->toIso8601String() : $createdIso;
-                    $refNo = $rep->transaction_reference ?: ($rep->tap_charge_id ?: ('DUE-' . $rep->id));
-
-                    $transactions->push([
-                        'id' => (int) (700000 + $rep->id),
-                        'type' => 'withdraw',
-                        'label' => 'Commission Paid (' . $methodLabel . ')',
-                        'amount' => number_format((float) $rep->amount_paid, 2, '.', ''),
-                        'currency' => 'SAR',
-                        'created_at' => $createdIso,
-                        'credit' => null,
-                        'cancelled' => null,
-                        'withdraw' => [
-                            'withdrawal_id' => (int) $rep->id,
-                            'withdrawal_no' => $refNo,
-                            'bank_name' => 'Azhal Commission Settlement (' . $methodLabel . ')',
-                            'status' => 'completed',
-                            'requested_at' => $createdIso,
-                            'accepted_at' => $verifiedIso,
-                            'completed_at' => $verifiedIso,
-                            'rejected_at' => null,
-                            'rejection_reason' => null,
                         ],
-                        'debit' => [
-                            'charge_id' => $rep->tap_charge_id,
-                            'reference_no' => $refNo,
-                            'payment_method' => $methodLabel,
-                            'status' => 'completed',
-                            'completed_at' => $verifiedIso,
-                        ],
-                    ]);
-                }
-
-                // Also check any manual adjustments in ProviderDuesLedger that don't have a repayment record
-                $manualLedgers = ProviderDuesLedger::where('provider_id', $user->id)
-                    ->whereIn('type', ['credit_manual_adjustment', 'credit_wallet_deduction'])
-                    ->get();
-
-                foreach ($manualLedgers as $ml) {
-                    $createdIso = $ml->created_at ? $ml->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
-                    $typeTitle = $ml->type === 'credit_wallet_deduction' ? 'Wallet Dues Deduction' : 'Admin Dues Clearance';
-                    $refNo = 'DUE-ADJ-' . str_pad($ml->id, 6, '0', STR_PAD_LEFT);
-
-                    $transactions->push([
-                        'id' => (int) (750000 + $ml->id),
-                        'type' => 'withdraw',
-                        'label' => $typeTitle,
-                        'amount' => number_format((float) $ml->amount, 2, '.', ''),
-                        'currency' => 'SAR',
-                        'created_at' => $createdIso,
-                        'credit' => null,
-                        'cancelled' => null,
-                        'withdraw' => [
-                            'withdrawal_id' => (int) $ml->id,
-                            'withdrawal_no' => $refNo,
-                            'bank_name' => $typeTitle,
-                            'status' => 'completed',
-                            'requested_at' => $createdIso,
-                            'accepted_at' => $createdIso,
-                            'completed_at' => $createdIso,
-                            'rejected_at' => null,
-                            'rejection_reason' => null,
-                        ],
-                        'debit' => [
-                            'reference_no' => $refNo,
-                            'payment_method' => $typeTitle,
-                            'status' => 'completed',
-                            'notes' => $ml->notes,
-                            'completed_at' => $createdIso,
-                        ],
+                        'debit' => null,
                     ]);
                 }
             } else {
@@ -823,7 +738,9 @@ class WithdrawalController extends Controller
                     ->whereNotNull('tap_destination_id')
                     ->where('tap_split_amount', '>', 0)
                     ->where(function ($q) use ($user) {
-                        $q->whereHas('marketplaceOrder.items', function ($mq) use ($user) {
+                        $q->whereHas('marketplaceOrder', function ($mq) {
+                            $mq->where('status', 'completed');
+                        })->whereHas('marketplaceOrder.items', function ($mq) use ($user) {
                             $mq->where('shop_id', $user->id);
                         });
                     })
@@ -838,6 +755,7 @@ class WithdrawalController extends Controller
                         'currency' => strtoupper($ap->currency ?: 'SAR'),
                         'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => null,
+                        'cancelled' => null,
                         'withdraw' => [
                             'withdrawal_id' => (int) $ap->id,
                             'withdrawal_no' => 'TAP-SPLIT-' . str_pad($ap->id, 6, '0', STR_PAD_LEFT),
@@ -848,9 +766,96 @@ class WithdrawalController extends Controller
                             'completed_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                             'rejected_at' => null,
                             'rejection_reason' => null,
-                        ]
+                        ],
+                        'debit' => null,
                     ]);
                 }
+            }
+        }
+
+        // 3. Debit Transactions (Provider Dues & Commission Payments to Azhl)
+        if ($accountType === 'provider' && in_array($filter, ['all', 'debit', 'dues'])) {
+            $repayments = ProviderCommissionRepayment::where('provider_id', $user->id)
+                ->whereIn('status', ['verified', 'captured', 'completed', 'success'])
+                ->get();
+
+            foreach ($repayments as $rep) {
+                $methodLabel = match (strtolower((string) $rep->payment_method)) {
+                    'tap_card_mada' => 'Mada Card',
+                    'apple_pay' => 'Apple Pay',
+                    'tap_card_visa' => 'Credit Card',
+                    'bank_transfer' => 'Bank Transfer',
+                    'admin_override' => 'Admin Adjustment',
+                    default => 'Card Payment',
+                };
+
+                $createdIso = $rep->created_at ? $rep->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
+                $verifiedIso = $rep->verified_at ? $rep->verified_at->setTimezone('Asia/Riyadh')->toIso8601String() : $createdIso;
+                $refNo = $rep->transaction_reference ?: ($rep->tap_charge_id ?: ('DUE-' . $rep->id));
+
+                $debitDetails = [
+                    'transaction_id' => $rep->tap_charge_id ?: $refNo,
+                    'charge_id' => $rep->tap_charge_id,
+                    'reference_no' => $refNo,
+                    'payment_method' => $methodLabel,
+                    'status' => 'completed',
+                    'title' => 'Commission Paid',
+                    'message' => 'Commission dues paid to Azhal (' . $methodLabel . ')',
+                    'paid_at' => $verifiedIso,
+                    'completed_at' => $verifiedIso,
+                ];
+
+                $transactions->push([
+                    'id' => (int) (700000 + $rep->id),
+                    'type' => 'debit',
+                    'label' => 'Commission Paid',
+                    'message' => 'Commission dues paid to Azhal (' . $methodLabel . ')',
+                    'amount' => number_format((float) $rep->amount_paid, 2, '.', ''),
+                    'currency' => 'SAR',
+                    'created_at' => $createdIso,
+                    'credit' => null,
+                    'cancelled' => null,
+                    'withdraw' => null,
+                    'debit' => $debitDetails,
+                    'payment' => $debitDetails,
+                ]);
+            }
+
+            // Also check any manual adjustments in ProviderDuesLedger that don't have a repayment record
+            $manualLedgers = ProviderDuesLedger::where('provider_id', $user->id)
+                ->whereIn('type', ['credit_manual_adjustment', 'credit_wallet_deduction'])
+                ->get();
+
+            foreach ($manualLedgers as $ml) {
+                $createdIso = $ml->created_at ? $ml->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
+                $typeTitle = $ml->type === 'credit_wallet_deduction' ? 'Wallet Dues Deduction' : 'Admin Dues Clearance';
+                $refNo = 'DUE-ADJ-' . str_pad($ml->id, 6, '0', STR_PAD_LEFT);
+
+                $debitDetails = [
+                    'transaction_id' => $refNo,
+                    'reference_no' => $refNo,
+                    'payment_method' => $typeTitle,
+                    'status' => 'completed',
+                    'title' => $typeTitle,
+                    'message' => $ml->notes ?: ($typeTitle . ' applied'),
+                    'paid_at' => $createdIso,
+                    'completed_at' => $createdIso,
+                ];
+
+                $transactions->push([
+                    'id' => (int) (750000 + $ml->id),
+                    'type' => 'debit',
+                    'label' => $typeTitle,
+                    'message' => $ml->notes ?: ($typeTitle . ' applied'),
+                    'amount' => number_format((float) $ml->amount, 2, '.', ''),
+                    'currency' => 'SAR',
+                    'created_at' => $createdIso,
+                    'credit' => null,
+                    'cancelled' => null,
+                    'withdraw' => null,
+                    'debit' => $debitDetails,
+                    'payment' => $debitDetails,
+                ]);
             }
         }
 

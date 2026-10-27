@@ -3,11 +3,15 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendFcmTokenNotificationJob;
 use App\Models\Orders;
+use App\Models\ProviderCommissionRepayment;
 use App\Models\ProviderDuesLedger;
 use App\Models\User;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ProviderDuesAdminController extends Controller
 {
@@ -116,6 +120,8 @@ class ProviderDuesAdminController extends Controller
             }
 
             $provider->payment_due = $newDue;
+            $threshold = (float) ($provider->max_due_threshold ?? 25.00);
+            $provider->is_due_blocked = ($newDue >= $threshold) ? 1 : 0;
             $provider->save();
 
             ProviderDuesLedger::create([
@@ -127,9 +133,152 @@ class ProviderDuesAdminController extends Controller
                 'current_due' => $newDue,
                 'notes' => "[Admin Adjustment] " . $notes,
             ]);
+
+            if (in_array($request->action, ['clear_all', 'credit_manual_payment'])) {
+                $adminId = auth()->id() ?? auth('admin')->id();
+                ProviderCommissionRepayment::create([
+                    'provider_id' => $provider->id,
+                    'transaction_reference' => 'ADMIN-ADJ-' . $provider->id . '-' . time(),
+                    'amount_paid' => $adjAmount,
+                    'payment_method' => 'admin_override',
+                    'status' => 'verified',
+                    'verified_at' => now(),
+                    'verified_by_admin_id' => $adminId,
+                    'gateway_response' => [
+                        'action' => $request->action,
+                        'notes' => $notes,
+                        'admin_id' => $adminId,
+                    ],
+                ]);
+
+                if (!empty($provider->fcm_token)) {
+                    try {
+                        dispatch(new SendFcmTokenNotificationJob([$provider->fcm_token], [
+                            'title' => 'تم تسوية مستحقاتك من الإدارة | Dues Cleared by Admin',
+                            'body' => "تم تسوية عمولة أزهل بقيمة {$adjAmount} ر.س يدوياً وإلغاء أي حظر. الرصيد الحالي: {$newDue} ر.س.",
+                            'data' => [
+                                'type' => 'admin_dues_clearance',
+                                'amount_cleared' => (string) $adjAmount,
+                                'new_due' => (string) $newDue,
+                                'is_due_blocked' => (string) $provider->is_due_blocked,
+                            ],
+                        ]));
+                    } catch (\Throwable $e) {
+                        Log::warning("ProviderDuesAdminController FCM error: " . $e->getMessage());
+                    }
+                }
+            }
         });
 
         return redirect()->back()->with('success', 'Provider dues adjusted successfully.');
+    }
+
+    /**
+     * Endpoint 5: Admin Manual Override via API
+     * POST /api/admin/providers/{provider_id}/clear-dues
+     */
+    public function clearDuesApi(Request $request, $id): JsonResponse
+    {
+        $request->validate([
+            'amount_received' => 'nullable|numeric|min:0',
+            'payment_method' => 'nullable|string|in:bank_transfer,office_cash,admin_override',
+            'bank_reference' => 'nullable|string|max:100',
+            'notes' => 'nullable|string|max:255',
+        ]);
+
+        try {
+            $provider = User::where('role', 1)->findOrFail($id);
+
+            return DB::transaction(function () use ($provider, $request) {
+                $provider = User::where('id', $provider->id)->lockForUpdate()->first();
+                $prevDue = (float) ($provider->payment_due ?? 0.0);
+                $amountReceived = $request->filled('amount_received') ? (float) $request->amount_received : $prevDue;
+
+                if ($amountReceived <= 0) {
+                    $amountReceived = $prevDue;
+                }
+
+                $newDue = max(0.00, round($prevDue - $amountReceived, 2));
+                $provider->payment_due = $newDue;
+                $threshold = (float) ($provider->max_due_threshold ?? 25.00);
+                if ($newDue < $threshold) {
+                    $provider->is_due_blocked = 0;
+                }
+                $provider->save();
+
+                $adminId = auth()->id() ?? auth('admin')->id() ?? auth('sanctum')->id();
+                $bankRef = $request->input('bank_reference') ?: ('TXN_ADMIN_' . time());
+                $paymentMethod = $request->input('payment_method') ?: 'bank_transfer';
+                $notes = $request->input('notes') ?: 'Manual override clearance by Admin';
+
+                // Record repayment
+                $repayment = ProviderCommissionRepayment::create([
+                    'provider_id' => $provider->id,
+                    'transaction_reference' => $bankRef,
+                    'amount_paid' => $amountReceived,
+                    'payment_method' => $paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'admin_override',
+                    'status' => 'verified',
+                    'verified_at' => now(),
+                    'verified_by_admin_id' => $adminId,
+                    'gateway_response' => [
+                        'bank_reference' => $bankRef,
+                        'notes' => $notes,
+                        'admin_id' => $adminId,
+                        'payload' => $request->all(),
+                    ],
+                ]);
+
+                // Record ledger
+                ProviderDuesLedger::create([
+                    'provider_id' => $provider->id,
+                    'order_id' => null,
+                    'type' => 'credit_manual_adjustment',
+                    'amount' => $amountReceived,
+                    'previous_due' => $prevDue,
+                    'current_due' => $newDue,
+                    'notes' => "[Admin Manual Override] " . $notes . " (Ref: {$bankRef})",
+                ]);
+
+                // FCM push alert
+                if (!empty($provider->fcm_token)) {
+                    try {
+                        dispatch(new SendFcmTokenNotificationJob([$provider->fcm_token], [
+                            'title' => 'تم تسوية مستحقاتك من الإدارة | Dues Cleared by Admin',
+                            'body' => "تم تسوية عمولة أزهل بقيمة {$amountReceived} ر.س يدوياً وإلغاء أي حظر. الرصيد الحالي: {$newDue} ر.س.",
+                            'data' => [
+                                'type' => 'admin_dues_clearance',
+                                'amount_cleared' => (string) $amountReceived,
+                                'new_due' => (string) $newDue,
+                                'is_due_blocked' => (string) ($provider->is_due_blocked ?? 0),
+                            ],
+                        ]));
+                    } catch (\Throwable $e) {
+                        Log::warning("clearDuesApi FCM error: " . $e->getMessage());
+                    }
+                }
+
+                return response()->json([
+                    'status' => true,
+                    'code' => 200,
+                    'message' => 'Provider dues cleared successfully.',
+                    'data' => [
+                        'provider_id' => (int) $provider->id,
+                        'amount_cleared' => $amountReceived,
+                        'previous_due' => $prevDue,
+                        'new_due' => $newDue,
+                        'is_due_blocked' => (int) ($provider->is_due_blocked ?? 0),
+                        'is_blocked' => (bool) ($provider->is_due_blocked == 1 || $newDue >= $threshold),
+                        'repayment_id' => $repayment->id,
+                    ],
+                ], 200);
+            });
+        } catch (\Throwable $e) {
+            Log::error('ProviderDuesAdminController clearDuesApi error: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to clear provider dues: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**

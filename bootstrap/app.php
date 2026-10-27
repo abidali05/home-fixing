@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
             'ability' => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
             'Role' => role::class,
+            'ensure.commission.paid' => \App\Http\Middleware\EnsureProviderCommissionPaid::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

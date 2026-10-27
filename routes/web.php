@@ -218,6 +218,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('provider-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'index'])->name('admin.provider_dues.index');
     Route::get('provider-dues/{id}', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'show'])->name('admin.provider_dues.show');
     Route::post('provider-dues/{id}/adjust', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'adjustDues'])->name('admin.provider_dues.adjust');
+    Route::post('provider-dues/{id}/clear-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'clearDuesApi'])->name('admin.provider_dues.clear_dues');
     Route::post('provider-dues/{id}/update-threshold', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'updateThreshold'])->name('admin.provider_dues.update_threshold');
 
 

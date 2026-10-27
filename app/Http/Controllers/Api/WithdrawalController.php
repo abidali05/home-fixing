@@ -9,6 +9,8 @@ use App\Models\MarketplaceOrder;
 use App\Models\MarketplaceOrderItem;
 use App\Models\Orders;
 use App\Models\Payment;
+use App\Models\ProviderCommissionRepayment;
+use App\Models\ProviderDuesLedger;
 use App\Models\ProviderProfile;
 use App\Models\ReferralReward;
 use App\Models\User;
@@ -654,8 +656,8 @@ class WithdrawalController extends Controller
             }
         }
 
-        // 2. Withdrawal Transactions
-        if (in_array($filter, ['all', 'withdraw'])) {
+        // 2. Withdrawal Transactions & Provider Dues Repayments
+        if (in_array($filter, ['all', 'withdraw', 'debit', 'payout', 'dues'])) {
             $withdrawals = Withdrawal::with('bankAccount')
                 ->where('user_id', $user->id)
                 ->where('account_type', $accountType)
@@ -669,7 +671,7 @@ class WithdrawalController extends Controller
                     'id' => (int) $w->id,
                     'type' => 'withdraw',
                     'label' => 'Withdraw',
-                    'amount' => round((float) ($w->amount ?? 0), 2),
+                    'amount' => number_format((float) ($w->amount ?? 0), 2, '.', ''),
                     'currency' => strtoupper($w->currency ?: 'SAR'),
                     'created_at' => $w->created_at ? $w->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                     'credit' => null,
@@ -700,7 +702,7 @@ class WithdrawalController extends Controller
                         'id' => (int) (900000 + $ap->id),
                         'type' => 'withdraw',
                         'label' => 'Auto-Payout (Tap)',
-                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'amount' => number_format((float) $ap->tap_split_amount, 2, '.', ''),
                         'currency' => strtoupper($ap->currency ?: 'SAR'),
                         'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => null,
@@ -715,6 +717,95 @@ class WithdrawalController extends Controller
                             'rejected_at' => null,
                             'rejection_reason' => null,
                         ]
+                    ]);
+                }
+
+                // Include Commission Dues Repayments (Dues cleared by Provider via Tap Card / Apple Pay)
+                $repayments = ProviderCommissionRepayment::where('provider_id', $user->id)
+                    ->whereIn('status', ['verified', 'captured', 'completed', 'success'])
+                    ->get();
+
+                foreach ($repayments as $rep) {
+                    $methodLabel = match (strtolower((string) $rep->payment_method)) {
+                        'tap_card_mada' => 'Tap Card (Mada)',
+                        'apple_pay' => 'Apple Pay',
+                        'tap_card_visa' => 'Tap Card (Visa/Mastercard)',
+                        'bank_transfer' => 'Bank Transfer',
+                        'admin_override' => 'Manual Adjustment (Admin)',
+                        default => 'Tap Online Payment',
+                    };
+
+                    $createdIso = $rep->created_at ? $rep->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
+                    $verifiedIso = $rep->verified_at ? $rep->verified_at->setTimezone('Asia/Riyadh')->toIso8601String() : $createdIso;
+                    $refNo = $rep->transaction_reference ?: ($rep->tap_charge_id ?: ('DUE-' . $rep->id));
+
+                    $transactions->push([
+                        'id' => (int) (700000 + $rep->id),
+                        'type' => 'withdraw',
+                        'label' => 'Commission Paid (' . $methodLabel . ')',
+                        'amount' => number_format((float) $rep->amount_paid, 2, '.', ''),
+                        'currency' => 'SAR',
+                        'created_at' => $createdIso,
+                        'credit' => null,
+                        'cancelled' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $rep->id,
+                            'withdrawal_no' => $refNo,
+                            'bank_name' => 'Azhal Commission Settlement (' . $methodLabel . ')',
+                            'status' => 'completed',
+                            'requested_at' => $createdIso,
+                            'accepted_at' => $verifiedIso,
+                            'completed_at' => $verifiedIso,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ],
+                        'debit' => [
+                            'charge_id' => $rep->tap_charge_id,
+                            'reference_no' => $refNo,
+                            'payment_method' => $methodLabel,
+                            'status' => 'completed',
+                            'completed_at' => $verifiedIso,
+                        ],
+                    ]);
+                }
+
+                // Also check any manual adjustments in ProviderDuesLedger that don't have a repayment record
+                $manualLedgers = ProviderDuesLedger::where('provider_id', $user->id)
+                    ->whereIn('type', ['credit_manual_adjustment', 'credit_wallet_deduction'])
+                    ->get();
+
+                foreach ($manualLedgers as $ml) {
+                    $createdIso = $ml->created_at ? $ml->created_at->setTimezone('Asia/Riyadh')->toIso8601String() : null;
+                    $typeTitle = $ml->type === 'credit_wallet_deduction' ? 'Wallet Dues Deduction' : 'Admin Dues Clearance';
+                    $refNo = 'DUE-ADJ-' . str_pad($ml->id, 6, '0', STR_PAD_LEFT);
+
+                    $transactions->push([
+                        'id' => (int) (750000 + $ml->id),
+                        'type' => 'withdraw',
+                        'label' => $typeTitle,
+                        'amount' => number_format((float) $ml->amount, 2, '.', ''),
+                        'currency' => 'SAR',
+                        'created_at' => $createdIso,
+                        'credit' => null,
+                        'cancelled' => null,
+                        'withdraw' => [
+                            'withdrawal_id' => (int) $ml->id,
+                            'withdrawal_no' => $refNo,
+                            'bank_name' => $typeTitle,
+                            'status' => 'completed',
+                            'requested_at' => $createdIso,
+                            'accepted_at' => $createdIso,
+                            'completed_at' => $createdIso,
+                            'rejected_at' => null,
+                            'rejection_reason' => null,
+                        ],
+                        'debit' => [
+                            'reference_no' => $refNo,
+                            'payment_method' => $typeTitle,
+                            'status' => 'completed',
+                            'notes' => $ml->notes,
+                            'completed_at' => $createdIso,
+                        ],
                     ]);
                 }
             } else {
@@ -733,7 +824,7 @@ class WithdrawalController extends Controller
                         'id' => (int) (900000 + $ap->id),
                         'type' => 'withdraw',
                         'label' => 'Auto-Payout (Tap)',
-                        'amount' => round((float) $ap->tap_split_amount, 2),
+                        'amount' => number_format((float) $ap->tap_split_amount, 2, '.', ''),
                         'currency' => strtoupper($ap->currency ?: 'SAR'),
                         'created_at' => $ap->updated_at ? $ap->updated_at->setTimezone('Asia/Riyadh')->toIso8601String() : null,
                         'credit' => null,

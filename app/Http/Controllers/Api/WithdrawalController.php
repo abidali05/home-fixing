@@ -178,10 +178,13 @@ class WithdrawalController extends Controller
                 ->where('status', 'completed')
                 ->sum('amount');
 
+            $completedJobIds = $completedOrders->pluck('job_id')->filter()->toArray();
+
             $autoTransferred = (float) Payment::where('provider_id', $userId)
                 ->where('status', 'captured')
                 ->whereNotNull('tap_destination_id')
                 ->where('tap_split_amount', '>', 0)
+                ->whereIn('job_id', $completedJobIds)
                 ->sum('tap_split_amount');
 
             // For completed cash orders, the provider has already received the cash directly in hand.
@@ -691,10 +694,17 @@ class WithdrawalController extends Controller
 
             // Include Tap Auto-Split direct payouts
             if ($accountType === 'provider') {
+                $completedJobIds = Orders::where('provider_id', $user->id)
+                    ->where('status', 'completed')
+                    ->pluck('job_id')
+                    ->filter()
+                    ->toArray();
+
                 $autoSplitPayments = Payment::where('provider_id', $user->id)
                     ->where('status', 'captured')
                     ->whereNotNull('tap_destination_id')
                     ->where('tap_split_amount', '>', 0)
+                    ->whereIn('job_id', $completedJobIds)
                     ->get();
 
                 foreach ($autoSplitPayments as $ap) {

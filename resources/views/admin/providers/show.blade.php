@@ -21,6 +21,20 @@
                             </div>
                         </div>
                         <div class="card-body">
+                            @if (session('success'))
+                                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                                    <i class="bi bi-check-circle me-1"></i> {{ session('success') }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                            @endif
+
+                            @if (session('error'))
+                                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                                    <i class="bi bi-exclamation-triangle me-1"></i> {{ session('error') }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                            @endif
+
                             <div class="row g-4">
                                 <div class="col-md-4">
                                     <img src="{{ $provider->profile_image ? asset('uploads/profile_images/' . $provider->profile_image) : asset('assets/img/default.jpg') }}"
@@ -65,6 +79,161 @@
                                         </div>
                                         <div class="col-md-12"><strong>Bio:</strong> {{ $profile?->bio ?: '-' }}</div>
                                     </div>
+                                </div>
+                            </div>
+
+                            <hr>
+
+                            <!-- Identity Verification (KYC) Section -->
+                            <div class="card mb-4 border shadow-sm">
+                                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0 fw-bold text-dark">
+                                            <i class="bi bi-shield-check text-primary me-2"></i>Provider Identity Verification (KYC)
+                                        </h6>
+                                        <small class="text-muted">Compare provider's government identity document against the live camera selfie.</small>
+                                    </div>
+                                    <div>
+                                        @php
+                                            $kycStatus = $provider->verification_status ?: ($profile?->verification_status ?: 'pending');
+                                        @endphp
+                                        @if($kycStatus === 'approved')
+                                            <span class="badge bg-success px-3 py-2 fs-7"><i class="bi bi-check-circle me-1"></i> KYC Approved</span>
+                                        @elseif($kycStatus === 'rejected')
+                                            <span class="badge bg-danger px-3 py-2 fs-7"><i class="bi bi-x-circle me-1"></i> KYC Rejected</span>
+                                        @else
+                                            <span class="badge bg-warning text-dark px-3 py-2 fs-7"><i class="bi bi-clock-history me-1"></i> Pending Verification</span>
+                                        @endif
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    @if($kycStatus === 'rejected' && ($provider->rejection_reason || $profile?->rejection_reason))
+                                        <div class="alert alert-danger py-2 px-3 mb-3 d-flex align-items-center">
+                                            <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+                                            <div>
+                                                <strong>Rejection Reason:</strong> {{ $provider->rejection_reason ?: $profile?->rejection_reason }}
+                                            </div>
+                                        </div>
+                                    @endif
+
+                                    <div class="row g-4">
+                                        <!-- Card A: Identity Document -->
+                                        <div class="col-md-6">
+                                            <div class="card h-100 border rounded-3 bg-white">
+                                                <div class="card-header bg-light py-2 px-3 border-bottom d-flex justify-content-between align-items-center">
+                                                    <span class="fw-bold text-dark"><i class="bi bi-card-heading text-primary me-1"></i> Card A: Identity Document</span>
+                                                    <span class="badge bg-secondary text-capitalize">{{ str_replace('_', ' ', $provider->document_type ?: ($profile?->document_type ?: 'Document')) }}</span>
+                                                </div>
+                                                <div class="card-body text-center p-3">
+                                                    <div class="mb-2 text-start small">
+                                                        <div><strong>Type:</strong> {{ ucfirst(str_replace('_', ' ', $provider->document_type ?: ($profile?->document_type ?: 'Not Provided'))) }}</div>
+                                                        <div><strong>Number:</strong> <code>{{ $provider->document_number ?: ($profile?->document_number ?: 'Not Provided') }}</code></div>
+                                                    </div>
+                                                    @php
+                                                        $idDocFile = $provider->identity_document ?: ($profile?->identity_document ?: ($provider->service_license ?: $profile?->service_license));
+                                                        $idDocUrl = $idDocFile ? asset('uploads/identity_documents/' . $idDocFile) : null;
+                                                        if ($idDocFile && !file_exists(public_path('uploads/identity_documents/' . $idDocFile)) && file_exists(public_path('uploads/license_files/' . $idDocFile))) {
+                                                            $idDocUrl = asset('uploads/license_files/' . $idDocFile);
+                                                        }
+                                                    @endphp
+                                                    @if($idDocUrl)
+                                                        <a href="{{ $idDocUrl }}" target="_blank" title="Click to view full size">
+                                                            <img src="{{ $idDocUrl }}" class="img-fluid rounded border shadow-xs" style="max-height: 260px; object-fit: contain; width: 100%;" alt="Identity Document">
+                                                        </a>
+                                                        <div class="mt-2">
+                                                            <a href="{{ $idDocUrl }}" target="_blank" class="btn btn-xs btn-outline-secondary">
+                                                                <i class="bi bi-arrows-fullscreen me-1"></i> Open Full Document
+                                                            </a>
+                                                        </div>
+                                                    @else
+                                                        <div class="p-4 bg-light rounded text-muted">
+                                                            <i class="bi bi-file-earmark-x fs-1 d-block mb-2 text-secondary"></i>
+                                                            <span>No Identity Document Uploaded</span>
+                                                        </div>
+                                                    @endif
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Card B: Live Selfie -->
+                                        <div class="col-md-6">
+                                            <div class="card h-100 border rounded-3 bg-white">
+                                                <div class="card-header bg-light py-2 px-3 border-bottom d-flex justify-content-between align-items-center">
+                                                    <span class="fw-bold text-dark"><i class="bi bi-camera-fill text-success me-1"></i> Card B: Live Camera Selfie</span>
+                                                    <span class="badge bg-info text-white">Live Capture</span>
+                                                </div>
+                                                <div class="card-body text-center p-3">
+                                                    <div class="mb-2 text-start small">
+                                                        <div><strong>Captured Date:</strong> {{ optional($provider->created_at)->format('d M Y, h:i A') }}</div>
+                                                        <div><strong>Provider Name:</strong> {{ $provider->name }}</div>
+                                                    </div>
+                                                    @php
+                                                        $liveImgFile = $provider->live_image ?: ($profile?->live_image ?: $provider->profile_image);
+                                                        $liveImgUrl = $liveImgFile ? asset('uploads/live_selfies/' . $liveImgFile) : null;
+                                                        if ($liveImgFile && !file_exists(public_path('uploads/live_selfies/' . $liveImgFile)) && file_exists(public_path('uploads/profile_images/' . $liveImgFile))) {
+                                                            $liveImgUrl = asset('uploads/profile_images/' . $liveImgFile);
+                                                        }
+                                                    @endphp
+                                                    @if($liveImgUrl)
+                                                        <a href="{{ $liveImgUrl }}" target="_blank" title="Click to view full size">
+                                                            <img src="{{ $liveImgUrl }}" class="img-fluid rounded border shadow-xs" style="max-height: 260px; object-fit: contain; width: 100%;" alt="Live Selfie">
+                                                        </a>
+                                                        <div class="mt-2">
+                                                            <a href="{{ $liveImgUrl }}" target="_blank" class="btn btn-xs btn-outline-secondary">
+                                                                <i class="bi bi-arrows-fullscreen me-1"></i> Open Full Image
+                                                            </a>
+                                                        </div>
+                                                    @else
+                                                        <div class="p-4 bg-light rounded text-muted">
+                                                            <i class="bi bi-person-x fs-1 d-block mb-2 text-secondary"></i>
+                                                            <span>No Live Selfie Uploaded</span>
+                                                        </div>
+                                                    @endif
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Verification Actions Footer -->
+                                    <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top">
+                                        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectKycModal">
+                                            <i class="bi bi-x-circle me-1"></i> Reject KYC
+                                        </button>
+                                        <form action="{{ route('providers.approve_kyc', $provider->id) }}" method="POST" onsubmit="return confirm('Are you sure you want to approve this provider identity? Provider status will become ACTIVE.');">
+                                            @csrf
+                                            <button type="submit" class="btn btn-success">
+                                                <i class="bi bi-check-circle-fill me-1"></i> Approve KYC & Activate Provider
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Modal for KYC Rejection -->
+                            <div class="modal fade" id="rejectKycModal" tabindex="-1" aria-labelledby="rejectKycModalLabel" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <form action="{{ route('providers.reject_kyc', $provider->id) }}" method="POST">
+                                        @csrf
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title text-danger" id="rejectKycModalLabel">
+                                                    <i class="bi bi-exclamation-triangle-fill me-1"></i> Reject Provider KYC
+                                                </h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p class="small text-muted mb-3">Please specify the reason for rejecting this provider's identity verification. The provider will be notified and prompted to re-upload.</p>
+                                                <div class="mb-3">
+                                                    <label class="form-label fw-bold">Rejection Reason <span class="text-danger">*</span></label>
+                                                    <textarea name="rejection_reason" class="form-control" rows="3" required placeholder="e.g. Identity document is blurry or photo does not match the live selfie."></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-danger">Confirm Rejection</button>
+                                            </div>
+                                        </div>
+                                    </form>
                                 </div>
                             </div>
 

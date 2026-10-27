@@ -261,6 +261,11 @@ class AuthController extends Controller
 
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
+            'identity_document' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'service_license' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'document_image' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'live_image' => 'nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'selfie_image' => 'nullable|image|mimes:jpeg,png,jpg|max:8192',
 
             'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
             'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
@@ -326,6 +331,41 @@ class AuthController extends Controller
                 $profileImage = $companyLogoFilename;
             }
 
+            // Provider Identity Document & Live Image Handling
+            $identityDocFilename = null;
+            $liveImageFilename = null;
+
+            if ((string) $request->role === '1') {
+                $identityDocFile = $request->file('identity_document') ?: ($request->file('service_license') ?: $request->file('document_image'));
+                if ($identityDocFile) {
+                    if (!file_exists(public_path('uploads/identity_documents/'))) {
+                        mkdir(public_path('uploads/identity_documents/'), 0777, true);
+                    }
+                    if (!file_exists(public_path('uploads/license_files/'))) {
+                        mkdir(public_path('uploads/license_files/'), 0777, true);
+                    }
+                    $identityDocFilename = time() . '_' . Str::random(10) . '.' . $identityDocFile->getClientOriginalExtension();
+                    $identityDocFile->move(public_path('uploads/identity_documents/'), $identityDocFilename);
+                    @copy(public_path('uploads/identity_documents/' . $identityDocFilename), public_path('uploads/license_files/' . $identityDocFilename));
+                }
+
+                $liveImageFile = $request->file('live_image') ?: $request->file('selfie_image');
+                if ($liveImageFile) {
+                    if (!file_exists(public_path('uploads/live_selfies/'))) {
+                        mkdir(public_path('uploads/live_selfies/'), 0777, true);
+                    }
+                    $liveImageFilename = time() . '_' . Str::random(10) . '.' . $liveImageFile->getClientOriginalExtension();
+                    $liveImageFile->move(public_path('uploads/live_selfies/'), $liveImageFilename);
+                    if (empty($profileImage)) {
+                        $profileImage = $liveImageFilename;
+                        if (!file_exists(public_path('uploads/profile_images/'))) {
+                            mkdir(public_path('uploads/profile_images/'), 0777, true);
+                        }
+                        @copy(public_path('uploads/live_selfies/' . $liveImageFilename), public_path('uploads/profile_images/' . $liveImageFilename));
+                    }
+                }
+            }
+
             $user = User::create([
                 'name' => $displayName,
                 'phone' => $request->phone,
@@ -359,9 +399,15 @@ class AuthController extends Controller
 
                 // Status
                 'status' => in_array($request->role, ['1', '2']) ? 'inactive' : 'active',
+                'provider_status' => (string) $request->role === '1' ? 'inactive' : 'active',
+                'verification_status' => (string) $request->role === '1' ? 'pending' : 'approved',
+                'rejection_reason' => null,
 
                 'document_type' => $request->document_type ?? '',
                 'document_number' => $request->document_number ?? '',
+                'identity_document' => $identityDocFilename,
+                'live_image' => $liveImageFilename,
+                'service_license' => $identityDocFilename,
             ]);
 
             if ((string) $request->role === '1') {
@@ -397,6 +443,11 @@ class AuthController extends Controller
                         'charge_amount' => $request->charge_amount,
                         'document_type' => $request->document_type ?? '',
                         'document_number' => $request->document_number ?? '',
+                        'identity_document' => $identityDocFilename,
+                        'live_image' => $liveImageFilename,
+                        'service_license' => $identityDocFilename,
+                        'verification_status' => 'pending',
+                        'rejection_reason' => null,
                         'referral_code' => $ownReferralCode,
                         'referred_by_id' => $referredById,
                         'referred_by_code' => $referredByCode,
@@ -499,6 +550,11 @@ class AuthController extends Controller
 
             'document_type' => 'sometimes|nullable|string',
             'document_number' => 'sometimes|nullable|string',
+            'identity_document' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'service_license' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'document_image' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:8192',
+            'live_image' => 'nullable|image|mimes:jpeg,png,jpg|max:8192',
+            'selfie_image' => 'nullable|image|mimes:jpeg,png,jpg|max:8192',
 
             'referral_code' => 'nullable|string|exists:provider_profiles,referral_code',
             'referred_by_code' => 'nullable|string|exists:provider_profiles,referral_code',
@@ -581,6 +637,61 @@ class AuthController extends Controller
                 }
             }
 
+            // Identity Document & Live Image Verification Assertions
+            $existingDoc = optional($user->providerProfile)->identity_document ?: $user->identity_document;
+            $hasDocFile = $request->hasFile('identity_document') || $request->hasFile('service_license') || $request->hasFile('document_image');
+            if (empty($existingDoc) && !$hasDocFile) {
+                DB::rollBack();
+                return $this->validationError(['identity_document' => ['The identity document field is required.']]);
+            }
+
+            $existingLive = optional($user->providerProfile)->live_image ?: $user->live_image;
+            $hasLiveFile = $request->hasFile('live_image') || $request->hasFile('selfie_image');
+            if (empty($existingLive) && !$hasLiveFile) {
+                DB::rollBack();
+                return $this->validationError(['live_image' => ['The live selfie image field is required.']]);
+            }
+
+            $docType = $request->input('document_type') ?: (optional($user->providerProfile)->document_type ?: $user->document_type);
+            if (empty($docType)) {
+                DB::rollBack();
+                return $this->validationError(['document_type' => ['The document type field is required.']]);
+            }
+
+            $docNum = $request->input('document_number') ?: (optional($user->providerProfile)->document_number ?: $user->document_number);
+            if (empty($docNum)) {
+                DB::rollBack();
+                return $this->validationError(['document_number' => ['The document number field is required.']]);
+            }
+
+            // Identity Document Upload
+            $identityDocFile = $request->file('identity_document') ?: ($request->file('service_license') ?: $request->file('document_image'));
+            $identityDocFilename = optional($user->providerProfile)->identity_document ?: $user->identity_document;
+
+            if ($identityDocFile) {
+                if (!file_exists(public_path('uploads/identity_documents/'))) {
+                    mkdir(public_path('uploads/identity_documents/'), 0777, true);
+                }
+                if (!file_exists(public_path('uploads/license_files/'))) {
+                    mkdir(public_path('uploads/license_files/'), 0777, true);
+                }
+                $identityDocFilename = time() . '_' . Str::random(10) . '.' . $identityDocFile->getClientOriginalExtension();
+                $identityDocFile->move(public_path('uploads/identity_documents/'), $identityDocFilename);
+                @copy(public_path('uploads/identity_documents/' . $identityDocFilename), public_path('uploads/license_files/' . $identityDocFilename));
+            }
+
+            // Live Selfie Image Upload
+            $liveImageFile = $request->file('live_image') ?: $request->file('selfie_image');
+            $liveImageFilename = optional($user->providerProfile)->live_image ?: $user->live_image;
+
+            if ($liveImageFile) {
+                if (!file_exists(public_path('uploads/live_selfies/'))) {
+                    mkdir(public_path('uploads/live_selfies/'), 0777, true);
+                }
+                $liveImageFilename = time() . '_' . Str::random(10) . '.' . $liveImageFile->getClientOriginalExtension();
+                $liveImageFile->move(public_path('uploads/live_selfies/'), $liveImageFilename);
+            }
+
             ProviderProfile::updateOrCreate(
                 ['user_id' => $user->id],
                 [
@@ -597,8 +708,13 @@ class AuthController extends Controller
                     'bio' => $request->bio,
                     'charge_type' => $request->charge_type,
                     'charge_amount' => $request->charge_amount,
-                    'document_type' => $request->document_type ?? optional($user->providerProfile)->document_type,
-                    'document_number' => $request->document_number ?? optional($user->providerProfile)->document_number,
+                    'document_type' => $docType,
+                    'document_number' => $docNum,
+                    'identity_document' => $identityDocFilename,
+                    'live_image' => $liveImageFilename,
+                    'service_license' => $identityDocFilename,
+                    'verification_status' => 'pending',
+                    'rejection_reason' => null,
                     'referral_code' => $ownReferralCode,
                     'referred_by_id' => $referredById,
                     'referred_by_code' => $referredByCode,
@@ -612,6 +728,22 @@ class AuthController extends Controller
             $user->role = '1';
             $user->has_roles = $this->syncHasRoles($user, '1');
             $user->provider_status = 'inactive';
+            $user->document_type = $docType;
+            $user->document_number = $docNum;
+            $user->identity_document = $identityDocFilename;
+            $user->live_image = $liveImageFilename;
+            $user->service_license = $identityDocFilename;
+            $user->verification_status = 'pending';
+            $user->rejection_reason = null;
+
+            if (empty($user->profile_image) && !empty($liveImageFilename)) {
+                $user->profile_image = $liveImageFilename;
+                if (!file_exists(public_path('uploads/profile_images/'))) {
+                    mkdir(public_path('uploads/profile_images/'), 0777, true);
+                }
+                @copy(public_path('uploads/live_selfies/' . $liveImageFilename), public_path('uploads/profile_images/' . $liveImageFilename));
+            }
+
             $user->save();
 
             if ($request->hasFile('gallery_images')) {
@@ -643,11 +775,10 @@ class AuthController extends Controller
                 'user' => $this->buildAuthenticatedUserPayload($user->fresh()),
             ], 'Provider role added successfully');
         } catch (\Exception $e) {
-            dd($e);
-            Log::info($e->getMessage());
+            Log::error('Error in becomeProvider: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             DB::rollBack();
 
-            return $this->error('Failed to become provider. Please try again later.', 500);
+            return $this->error('Failed to become provider: ' . $e->getMessage(), 500);
         }
     }
 
@@ -3433,6 +3564,12 @@ class AuthController extends Controller
             'status' => $user->status,
             'provider_status' => $user->provider_status,
             'marketplace_status' => $user->marketplace_status,
+            'verification_status' => (string) ($user->verification_status ?: (optional($user->providerProfile)->verification_status ?: 'pending')),
+            'rejection_reason' => $user->rejection_reason ?: optional($user->providerProfile)->rejection_reason,
+            'document_type' => $user->document_type ?: optional($user->providerProfile)->document_type,
+            'document_number' => $user->document_number ?: optional($user->providerProfile)->document_number,
+            'identity_document' => $this->resolveUploadedAssetUrl($user->identity_document ?: optional($user->providerProfile)->identity_document, 'uploads/identity_documents', null),
+            'live_image' => $this->resolveUploadedAssetUrl($user->live_image ?: optional($user->providerProfile)->live_image, 'uploads/live_selfies', null),
             'profile_image' => $this->resolveUploadedAssetUrl($user->profile_image, 'uploads/profile_images'),
             'location_label' => $user->location_label,
             'country' => $user->country,
@@ -3510,6 +3647,10 @@ class AuthController extends Controller
                     'charge_amount' => $providerProfile->charge_amount,
                     'document_type' => $providerProfile->document_type,
                     'document_number' => $providerProfile->document_number,
+                    'identity_document' => $this->resolveUploadedAssetUrl($providerProfile->identity_document ?: $user->identity_document, 'uploads/identity_documents', null),
+                    'live_image' => $this->resolveUploadedAssetUrl($providerProfile->live_image ?: $user->live_image, 'uploads/live_selfies', null),
+                    'verification_status' => (string) ($providerProfile->verification_status ?: ($user->verification_status ?: 'pending')),
+                    'rejection_reason' => $providerProfile->rejection_reason ?: $user->rejection_reason,
                     'service_license' => $providerProfile->service_license
                         ? asset('uploads/license_files/' . $providerProfile->service_license)
                         : null,
@@ -3704,6 +3845,14 @@ class AuthController extends Controller
         $user->charge_amount = $profile->charge_amount;
         $user->document_type = $profile->document_type;
         $user->document_number = $profile->document_number;
+        $user->identity_document = $profile->identity_document
+            ? asset('uploads/identity_documents/' . $profile->identity_document)
+            : ($user->identity_document ? asset('uploads/identity_documents/' . $user->identity_document) : null);
+        $user->live_image = $profile->live_image
+            ? asset('uploads/live_selfies/' . $profile->live_image)
+            : ($user->live_image ? asset('uploads/live_selfies/' . $user->live_image) : null);
+        $user->verification_status = (string) ($profile->verification_status ?: ($user->verification_status ?: 'pending'));
+        $user->rejection_reason = $profile->rejection_reason ?: $user->rejection_reason;
         $user->service_license = $profile->service_license
             ? asset('uploads/license_files/' . $profile->service_license)
             : null;

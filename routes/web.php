@@ -314,6 +314,8 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('providers/edit/{id}', [ProviderController::class, 'edit'])->name('providers.edit')->middleware('CheckPermission:20');
     Route::post('providers/update/{id}', [ProviderController::class, 'update'])->name('providers.update')->middleware('CheckPermission:20');
     Route::post('providers/status/{id}', [ProviderController::class, 'updateStatus'])->name('providers.status');
+    Route::post('providers/approve-kyc/{id}', [ProviderController::class, 'approveKyc'])->name('providers.approve_kyc')->middleware('CheckPermission:20');
+    Route::post('providers/reject-kyc/{id}', [ProviderController::class, 'rejectKyc'])->name('providers.reject_kyc')->middleware('CheckPermission:20');
     Route::post('providers/assign-company/{id}', [ProviderController::class, 'assignCompany'])->name('providers.assign_company');
     Route::delete('providers/delete/{id}', [ProviderController::class, 'destroy'])->name('providers.delete')->middleware('CheckPermission:21');
     Route::get('delete-provider-gallery-image/{id}', [ProviderController::class, 'deleteProviderImage'])->name('providers.deleteProviderImage')->middleware('CheckPermission:20');

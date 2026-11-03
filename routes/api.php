@@ -211,6 +211,7 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
     Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
+    Route::post('jobs/{job}/bids/{bid}/charge', [PaymentController::class, 'charge']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::get('payments/callback', [PaymentController::class, 'callback']);
@@ -303,11 +304,19 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [RefundAdminController::class, 'reject']);
 });
 
-// Public Tap Webhook Routes (Both root, webhooks/tap, and tap-webhook)
+// Public Tap Webhook & Callback Routes
 Route::post('webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
+Route::post('tap/webhook', [TapWebhookController::class, 'handleWebhook']);
+Route::post('v1/tap/webhook', [TapWebhookController::class, 'handleWebhook']);
 Route::post('tap-webhook', [TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/tap-webhook', [TapWebhookController::class, 'handleWebhook']);
+
+// Tap 3DS Callback & Redirect Aliases
+Route::get('tap/callback', [TapWebhookController::class, 'handleRedirect']);
+Route::get('v1/tap/callback', [TapWebhookController::class, 'handleRedirect']);
+Route::get('tap/redirect', [TapWebhookController::class, 'handleRedirect']);
+Route::get('v1/tap/redirect', [TapWebhookController::class, 'handleRedirect']);
 
 // Admin Manual Clear Dues API Routes (Specification)
 Route::post('admin/providers/{id}/clear-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'clearDuesApi']);
@@ -327,6 +336,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
     Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
+    Route::post('jobs/{job}/bids/{bid}/charge', [PaymentController::class, 'charge']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);

@@ -413,8 +413,9 @@ Route::get('clear-cache', function () {
     return 'Cache cleared';
 })->name('clear.cache');
 
-// Tap Payments 3DS Redirect Route
+// Tap Payments 3DS Redirect & Callback Routes
 Route::get('tap/redirect', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.redirect');
+Route::get('tap/callback', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.callback');
 
 
 

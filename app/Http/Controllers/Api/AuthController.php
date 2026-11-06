@@ -21,7 +21,6 @@ use App\Notifications\MarketplaceOrderReceivedNotification;
 use App\Notifications\MarketplaceOrderStatusUpdatedNotification;
 use App\Notifications\MarketplaceShopReviewSubmittedNotification;
 use App\Services\AuthenticaService;
-use App\Services\TwilioService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;

@@ -180,6 +180,12 @@ class OrderPaymentMethodController extends Controller
                 $amountToPay = $currentDue;
             }
 
+            // If mobile sent an already captured charge ID (chg_...)
+            $chargeIdParam = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id');
+            if (!empty($chargeIdParam) && is_string($chargeIdParam) && str_starts_with(trim($chargeIdParam), 'chg_')) {
+                return $this->verifyTapPayment($request);
+            }
+
             $refCode = 'AZHL-DUE-' . date('YmdHis') . '-' . $user->id;
 
             // Create a Payment record for dues clearance
@@ -199,12 +205,12 @@ class OrderPaymentMethodController extends Controller
                 ],
             ]);
 
-            // Create Tap Charge
-            $tokenInput = $request->input('token') ?: $request->input('source_id') ?: 'src_all';
+            // Create Tap Charge using token (tok_...) or source_id
+            $tokenInput = $request->input('token') ?: $request->input('charge_id') ?: $request->input('source_id') ?: 'src_all';
             $chargeResponse = $this->tapPaymentService->createCharge($payment, $tokenInput);
             $tapChargeId = $chargeResponse['id'] ?? null;
             $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
-            $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
+            $redirectUrl = $chargeResponse['transaction']['url'] ?? ($chargeResponse['redirect']['url'] ?? null);
 
             if ($chargeStatus === 'CAPTURED') {
                 return $this->settleDuesPayment($payment, $user, $tapChargeId, $chargeResponse, $amountToPay, $currentDue);
@@ -221,16 +227,20 @@ class OrderPaymentMethodController extends Controller
             return response()->json([
                 'status' => true,
                 'code' => 200,
-                'message' => 'Dues payment initiated successfully.',
+                'message' => !empty($redirectUrl) ? '3DS Authentication Required' : 'Dues payment initiated successfully.',
                 'data' => [
+                    'payment_id' => (string) $payment->id,
                     'charge_id' => $tapChargeId,
+                    'tap_charge_id' => $tapChargeId,
+                    'status' => !empty($redirectUrl) ? 'INITIATED' : $chargeStatus,
+                    'is_paid' => false,
                     'payment_url' => $redirectUrl,
                     'redirect_url' => $redirectUrl,
                     'amount' => $amountToPay,
                     'currency' => 'SAR',
-                    'payment_id' => (string) $payment->id,
                     'reference_code' => $refCode,
                     'current_due' => $currentDue,
+                    'is_blocked' => (bool) ($currentDue >= ($user->max_due_threshold ?? 25.00) || (int) ($user->is_due_blocked ?? 0) === 1),
                 ],
             ], 200);
         } catch (\Throwable $e) {
@@ -419,6 +429,9 @@ class OrderPaymentMethodController extends Controller
                 'message' => 'Dues settled successfully. Account unblocked.',
                 'data' => [
                     'charge_id' => $chargeId,
+                    'tap_charge_id' => $chargeId,
+                    'status' => 'CAPTURED',
+                    'is_paid' => true,
                     'amount_paid' => $amountToPay,
                     'currency' => 'SAR',
                     'payment_due' => $newDue,

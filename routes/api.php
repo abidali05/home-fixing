@@ -204,8 +204,9 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('get-notifications', [NotificationController::class, 'index']);
     Route::get('notifications/unread', [NotificationController::class, 'unread']);
     Route::get('notifications/unread-count', [NotificationController::class, 'unread_count']);
-    Route::post('notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
+    Route::match(['post', 'patch'], 'notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
     Route::post('notifications/read-all', [NotificationController::class, 'mark_all_as_read']);
+    Route::post('notifications/mark-all-read', [NotificationController::class, 'mark_all_as_read']);
 
     // Tap Payments API Routes
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);

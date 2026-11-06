@@ -32,9 +32,8 @@
                                 </div>
                                 <div class="col-md-8">
                                     <div class="row g-3">
-                                        <div class="col-md-6"><strong>Name:</strong> {{ $seller->name }}</div>
-                                        <div class="col-md-6"><strong>Email:</strong> {{ $seller->email ?: '-' }}</div>
-                                        <div class="col-md-6"><strong>Phone:</strong> {{ $seller->phone }}</div>
+                                         <div class="col-md-6"><strong>Name:</strong> {{ $seller->name }}</div>
+                                         <div class="col-md-6"><strong>Phone:</strong> {{ $seller->phone }}</div>
                                         <div class="col-md-6"><strong>Account Status:</strong> {{ ucfirst($seller->marketplace_status ?: 'inactive') }}</div>
                                         <div class="col-md-6"><strong>Shop Title:</strong> {{ $profile?->shop_title ?: '-' }}</div>
                                         <div class="col-md-6"><strong>Tag Line:</strong> {{ $profile?->tag_line ?: '-' }}</div>

@@ -28,6 +28,7 @@ class SendJobRequestNotification implements ShouldQueue
     {
         $this->jobId = $jobId;
         $this->categoryId = $categoryId;
+        $this->onQueue('notifications');
     }
 
     /**

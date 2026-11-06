@@ -30,18 +30,14 @@
                             <form action="{{ route('sellers.update', $seller->id) }}" method="POST" enctype="multipart/form-data">
                                 @csrf
                                 <div class="row g-3">
-                                    <div class="col-md-6">
-                                        <label class="form-label">Name</label>
-                                        <input type="text" name="name" class="form-control" value="{{ old('name', $seller->name) }}" required>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label">Email</label>
-                                        <input type="email" name="email" class="form-control" value="{{ old('email', $seller->email) }}">
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label">Phone</label>
-                                        <input type="text" name="phone" class="form-control" value="{{ old('phone', $seller->phone) }}" required>
-                                    </div>
+                                     <div class="col-md-6">
+                                         <label class="form-label">Name</label>
+                                         <input type="text" name="name" class="form-control" value="{{ old('name', $seller->name) }}" required>
+                                     </div>
+                                     <div class="col-md-6">
+                                         <label class="form-label">Phone</label>
+                                         <input type="text" name="phone" class="form-control" value="{{ old('phone', $seller->phone) }}" required>
+                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Seller Status</label>
                                         <select name="marketplace_status" class="form-select">

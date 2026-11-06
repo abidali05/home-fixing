@@ -32,7 +32,7 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    protected $appends = ['cityname', 'total_orders', 'service', 'rating', 'total_earnings', 'payment_due'];
+    protected $appends = ['cityname', 'total_orders', 'service', 'rating', 'total_earnings', 'payment_due', 'is_blocked'];
     protected $guarded = [];
 
     protected $table = 'users';
@@ -113,6 +113,13 @@ class User extends Authenticatable
 
     public function getTotalOrdersAttribute()
     {
+        if ((string) $this->role === '2') {
+            return \App\Models\MarketplaceOrderItem::where('shop_id', $this->id)
+                ->whereHas('order', function ($q) {
+                    $q->where('status', 'completed');
+                })->count();
+        }
+
         return Orders::where('provider_id', $this->id)->where('status', 'completed')->count();
     }
 
@@ -139,12 +146,22 @@ class User extends Authenticatable
 
     public function getTotalEarningsAttribute()
     {
-        return Orders::where('provider_id', $this->id)->where('status', 'completed')->sum('price') ?? 0;
+        $accountType = ((string) $this->role === '2') ? 'marketplace' : 'provider';
+        $stats = app(\App\Http\Controllers\Api\WithdrawalController::class)->calculateWalletBalance($this->id, $accountType);
+
+        return (float) number_format((float) ($stats['total_earnings'] ?? 0.0), 2, '.', '');
     }
+
     public function getPaymentDueAttribute()
     {
-        $count = Orders::where('provider_id', $this->id)->where('status', 'completed')->where('paid_to_system', '0')->count();
-        return $count * 5;
+        return (float) number_format((float) ($this->attributes['payment_due'] ?? 0.00), 2, '.', '');
+    }
+
+    public function getIsBlockedAttribute(): bool
+    {
+        $due = (float) ($this->attributes['payment_due'] ?? 0.0);
+        $threshold = (float) ($this->attributes['max_due_threshold'] ?? 25.0);
+        return (bool) ($due >= $threshold || (int) ($this->attributes['is_due_blocked'] ?? 0) === 1);
     }
 
     public function routeNotificationForFcm(): ?string

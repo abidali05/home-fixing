@@ -24,27 +24,21 @@ $(document).ready(function(){
         positionClass : "toast-top-center"
     };
 
-    // Show the UI blocker when an AJAX request starts
-    $(document).ajaxStart(function() {
+    // Show the UI blocker when user-initiated AJAX starts (skipping silent background tasks)
+    $(document).ajaxSend(function(event, xhr, settings) {
+        if (settings && settings.url && (settings.url.indexOf('sidebar-notifications') !== -1 || settings.silent === true)) {
+            return;
+        }
         $('#sidenav-main').css('z-index', '0');
         $('#uiBlocker').show();
     });
 
-    // Hide the UI blocker when an AJAX request completes (whether it succeeds or fails)
-    $(document).ajaxStop(function() {
-        setTimeout(function(){
-            $('#uiBlocker').hide();
-             $('#sidenav-main').css('z-index', '999');
-        },500);
-    });
-
-    // Alternatively, you can use ajaxComplete for specific handling
+    // Hide the UI blocker when AJAX completes
     $(document).ajaxComplete(function(event, xhr, settings) {
         setTimeout(function(){
             $('#uiBlocker').hide();
-             $('#sidenav-main').css('z-index', '999');
-        },500);
-        
+            $('#sidenav-main').css('z-index', '999');
+        }, 300);
     });
 });
 

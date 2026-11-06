@@ -13,9 +13,19 @@
                     <div class="row">
                         <div class="col-xl-4 col-lg-5 col-md-7 d-flex flex-column mx-lg-0 mx-auto">
                             <div class="card card-plain">
-                                <div class="card-header pb-0 text-start">
-                                    <h4 class="font-weight-bolder">Login</h4>
-                                    <p class="mb-0">Enter your email and password</p>
+                                <div class="card-header pb-0 text-center">
+                                     <div class="mb-3 text-center">
+                                         @php
+                                             $setting = App\Models\Admin\SystemSettingModel::first();
+                                             $logoUrl = optional($setting)->logo ? asset('uploads/system_settings/' . $setting->logo) : asset('uploads/system_settings/Logo1.png');
+                                         @endphp
+                                         <div class="d-inline-flex align-items-center justify-content-center p-3 mb-2" 
+                                              style="background: linear-gradient(135deg, #4F2396 0%, #682eb8 100%); border-radius: 20px; box-shadow: 0 10px 25px rgba(79, 35, 150, 0.3);">
+                                             <img src="{{ $logoUrl }}" alt="System Logo" class="img-fluid" style="max-height: 64px; width: auto; object-fit: contain;">
+                                         </div>
+                                     </div>
+                                    <h4 class="font-weight-bolder text-dark">Login</h4>
+                                    <p class="mb-0 text-muted small">Enter your email and password to access the panel</p>
                                 </div>
 
                                 <div class="card-body card-header">

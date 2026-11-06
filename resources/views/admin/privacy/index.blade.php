@@ -48,10 +48,10 @@
                                                 <td>{{ $policy->id }}</td>
                                                 <td>
                                                     @if ($policy->role == '0')
-                                                        User
-                                                    @elseif ($policy->role == '2')
+                                                        Customer
+                                                    @elseif ($policy->role == '1')
                                                         Provider
-                                                    @elseif ($policy->role == '3')
+                                                    @elseif ($policy->role == '2')
                                                         Shop
                                                     @else
                                                         Unknown

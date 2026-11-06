@@ -22,7 +22,7 @@ class PrivacyController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'role' => 'required|in:0,2,3',
+            'role' => 'required|in:0,1,2',
             'content' => 'required|string',
         ]);
 
@@ -39,7 +39,7 @@ class PrivacyController extends Controller
     public function update(Request $request, Privacy $privacy)
     {
         $request->validate([
-            'role' => 'required|in:0,2,3',
+            'role' => 'required|in:0,1,2',
             'content' => 'required|string',
         ]);
 

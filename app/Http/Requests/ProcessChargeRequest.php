@@ -14,8 +14,12 @@ class ProcessChargeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'payment_id' => 'required|integer|exists:payments,id',
+            'payment_id' => 'nullable|integer',
+            'order_id' => 'nullable',
+            'marketplace_order_id' => 'nullable',
             'token' => 'nullable|string',
+            'card_token' => 'nullable|string',
+            'charge_id' => 'nullable|string',
         ];
     }
 

@@ -40,13 +40,24 @@
                                     <input type="text" name="search" value="{{ request('search') }}" class="form-control"
                                         placeholder="Name, email, phone, company">
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-md-2">
                                     <label class="form-label">Status</label>
                                     <select name="status" class="form-select select2">
                                         <option value="">All Statuses</option>
                                         @foreach ($statuses as $status)
                                             <option value="{{ $status }}" {{ request('status') === $status ? 'selected' : '' }}>
                                                 {{ ucfirst($status) }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">KYC Verification</label>
+                                    <select name="verification_status" class="form-select select2">
+                                        <option value="">All KYC</option>
+                                        @foreach ($verification_statuses ?? ['pending', 'approved', 'rejected'] as $vStatus)
+                                            <option value="{{ $vStatus }}" {{ request('verification_status') === $vStatus ? 'selected' : '' }}>
+                                                {{ ucfirst($vStatus) }}
                                             </option>
                                         @endforeach
                                     </select>
@@ -110,6 +121,7 @@
                                               <th>Company</th>
                                               <th>Services</th>
                                               <th>Type</th>
+                                              <th class="text-center">KYC Verification</th>
                                               <th>Status</th>
                                               <th>Registered</th>
                                               <th class="text-center">Actions</th>
@@ -196,6 +208,25 @@
                                                      @endforelse
                                                  </td>
                                                  <td>{{ ucfirst($profile?->provider_type ?: 'individual') }}</td>
+                                                 <td class="text-center">
+                                                     @php
+                                                         $provKyc = $provider->verification_status ?: ($profile?->verification_status ?: 'pending');
+                                                         $kycBadgeClass = match($provKyc) {
+                                                             'approved' => 'bg-success',
+                                                             'rejected' => 'bg-danger',
+                                                             default => 'bg-warning text-dark',
+                                                         };
+                                                     @endphp
+                                                     <a href="{{ route('providers.show', $provider->id) }}" class="badge {{ $kycBadgeClass }} text-decoration-none px-2 py-1" title="Click to review KYC">
+                                                         @if($provKyc === 'approved')
+                                                             <i class="bi bi-shield-check me-1"></i>Approved
+                                                         @elseif($provKyc === 'rejected')
+                                                             <i class="bi bi-x-circle me-1"></i>Rejected
+                                                         @else
+                                                             <i class="bi bi-clock-history me-1"></i>Pending
+                                                         @endif
+                                                     </a>
+                                                 </td>
                                                  <td class="text-center admin-status-cell">
                                                      <form action="{{ route('providers.status', $provider->id) }}" method="POST" class="admin-status-form admin-loader-form">
                                                          @csrf
@@ -233,7 +264,7 @@
                                              </tr>
                                          @empty
                                               <tr>
-                                                  <td colspan="11" class="text-center text-muted py-4">No providers found for the selected filters.</td>
+                                                  <td colspan="12" class="text-center text-muted py-4">No providers found for the selected filters.</td>
                                               </tr>
                                         @endforelse
                                     </tbody>

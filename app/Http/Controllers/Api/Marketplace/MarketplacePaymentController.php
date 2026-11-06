@@ -228,99 +228,262 @@ class MarketplacePaymentController extends Controller
     }
 
     /**
-     * Step 2: Charge Marketplace Payment (Works WITH or WITHOUT token!)
+     * Step 2: Charge Marketplace Payment (Custom In-App Token / Card / ApplePay)
      * POST /api/v1/marketplace/payments/charge
+     *
+     * Supports:
+     * - Card Token: {"payment_id": 123, "token": "tok_xxxx"}
+     * - Order Token: {"order_id": 456, "token": "tok_xxxx"}
+     * - Direct Charge ID: {"charge_id": "chg_xxxx"}
      */
     public function charge(ProcessChargeRequest $request)
     {
         try {
             $user = auth('sanctum')->user();
-            $paymentId = $request->input('payment_id');
-
-            // If token is missing, default to 'src_all' (Tap Checkout Webview with Mada/Visa/Mastercard/ApplePay)
-            $token = $request->input('token') ?: 'src_all';
-
-            $payment = Payment::where('id', $paymentId)
-                ->where('user_id', $user->id)
-                ->first();
-
-            if (!$payment) {
-                return response()->json(['success' => false, 'message' => 'Payment record not found.'], 404);
+            if (!$user) {
+                return response()->json(['status' => 401, 'success' => false, 'message' => 'Unauthenticated.'], 401);
             }
 
-            if ($payment->status === 'captured') {
-                $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
+            $rawToken = $request->input('token') ?: $request->input('card_token');
+            $chargeIdParam = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id');
+            $paymentId = $request->input('payment_id');
+            $orderIdParam = $request->input('order_id') ?: $request->input('marketplace_order_id');
+
+            // If token passed is actually a charge ID (e.g. starts with chg_)
+            if (!empty($rawToken) && is_string($rawToken) && str_starts_with(trim($rawToken), 'chg_')) {
+                $chargeIdParam = trim($rawToken);
+                $rawToken = null;
+            }
+
+            // Fallback: If mobile sends direct charge_id, verify it directly
+            if (!empty($chargeIdParam)) {
+                return $this->verifyTapPayment($request, $orderIdParam);
+            }
+
+            $token = $rawToken ?: 'src_all';
+
+            // 1. Resolve Payment and Order records
+            $payment = null;
+            $order = null;
+
+            if ($paymentId) {
+                $payment = Payment::where('id', $paymentId)
+                    ->where('user_id', $user->id)
+                    ->first();
+                if ($payment && $payment->marketplace_order_id) {
+                    $order = MarketplaceOrder::where('id', $payment->marketplace_order_id)
+                        ->where('user_id', $user->id)
+                        ->first();
+                }
+            }
+
+            if (!$order && $orderIdParam) {
+                $order = MarketplaceOrder::where('id', $orderIdParam)
+                    ->where('user_id', $user->id)
+                    ->first();
+                if ($order && !$payment) {
+                    $payment = Payment::where('marketplace_order_id', $order->id)
+                        ->where('user_id', $user->id)
+                        ->latest()
+                        ->first();
+                }
+            }
+
+            // If order already paid, return captured success immediately
+            if ($order && strtolower((string) $order->payment_status) === 'paid') {
+                return response()->json([
+                    'status' => 200,
+                    'success' => true,
+                    'message' => 'Payment captured successfully',
+                    'data' => [
+                        'payment_id' => $payment ? (int) $payment->id : null,
+                        'order_id' => (int) $order->id,
+                        'marketplace_order_id' => (int) $order->id,
+                        'id' => (int) $order->id,
+                        'order_number' => $order->order_number,
+                        'status' => 'CAPTURED',
+                        'is_paid' => true,
+                        'is_order_created' => true,
+                        'tap_charge_id' => $order->transaction_id ?? optional($payment)->tap_charge_id,
+                        'transaction_id' => $order->transaction_id ?? optional($payment)->tap_charge_id,
+                        'amount' => (float) $order->total_amount,
+                        'currency' => 'SAR',
+                        'redirect_url' => null,
+                        'order' => $order->load('items'),
+                    ]
+                ], 200);
+            }
+
+            // If payment record is already captured
+            if ($payment && $payment->status === 'captured') {
                 if (!$order && !$payment->job_id) {
                     $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
                 }
                 $orderId = $order ? (int) $order->id : (int) $payment->id;
+
                 return response()->json([
+                    'status' => 200,
                     'success' => true,
-                    'message' => 'Payment is already captured and order created.',
+                    'message' => 'Payment captured successfully',
                     'data' => [
                         'payment_id' => (int) $payment->id,
                         'order_id' => $orderId,
                         'marketplace_order_id' => $orderId,
                         'id' => $orderId,
                         'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
-                        'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
-                        'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
-                        'status' => 'captured',
+                        'status' => 'CAPTURED',
+                        'is_paid' => true,
+                        'is_order_created' => true,
                         'tap_charge_id' => $payment->tap_charge_id,
+                        'transaction_id' => $payment->tap_charge_id,
+                        'amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
+                        'currency' => 'SAR',
                         'redirect_url' => null,
                         'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
 
-            $order = $payment->marketplace_order_id ? MarketplaceOrder::find($payment->marketplace_order_id) : null;
-            if (!$order && !$payment->job_id) {
-                $order = $this->tapPaymentService->createPendingOrderFromCart($payment);
-            }
-            $orderId = $order ? (int) $order->id : (int) $payment->id;
+            // If neither payment nor order exists, create pending from Cart
+            if (!$payment && !$order) {
+                $cartItems = Cart::with('product')->where('user_id', $user->id)->get();
+                if ($cartItems->isEmpty()) {
+                    return response()->json([
+                        'status' => 400,
+                        'success' => false,
+                        'message' => 'Cart is empty and no valid payment or order found.',
+                    ], 400);
+                }
 
+                $settings = \App\Models\Admin\SystemSettingModel::first();
+                $marketplaceCustomerAppFee = (float) ($settings->marketplace_customer_app_fee ?? $settings->customer_app_fee ?? 3.00);
+
+                $productsSubtotal = 0.0;
+                $cartItemsData = [];
+                foreach ($cartItems as $ci) {
+                    $price = $ci->product ? (float) ($ci->product->sale_price ?: $ci->product->price) : (float) ($ci->base_price ?? 0.0);
+                    $qty = (int) ($ci->quantity ?? 1);
+                    $sub = $price * $qty;
+                    $productsSubtotal += $sub;
+
+                    $cartItemsData[] = [
+                        'product_id' => (int) $ci->product_id,
+                        'shop_id' => optional($ci->product)->user_id,
+                        'product_name' => optional($ci->product)->product_name ?? ('Product #' . $ci->product_id),
+                        'quantity' => $qty,
+                        'base_price' => $price,
+                        'total_price' => $sub,
+                    ];
+                }
+
+                $shippingCost = (float) ($request->input('shipping_cost') ?? 0.0);
+                $customerAppFee = $productsSubtotal > 0 ? $marketplaceCustomerAppFee : 0.0;
+                $totalAmount = max(0.1, round($productsSubtotal + $shippingCost + $customerAppFee, 2));
+
+                $payment = Payment::create([
+                    'user_id' => $user->id,
+                    'marketplace_order_id' => null,
+                    'amount' => $totalAmount,
+                    'currency' => 'SAR',
+                    'gateway' => 'tap',
+                    'status' => 'pending',
+                    'gateway_response' => [
+                        'checkout_metadata' => [
+                            'shipping_address' => $request->input('shipping_address') ?: $user->address,
+                            'shipping_cost' => $shippingCost,
+                            'tax_amount' => 0.00,
+                            'customer_app_fee' => $customerAppFee,
+                            'notes' => $request->input('notes'),
+                            'cart_items_count' => $cartItems->count(),
+                            'cart_items' => $cartItemsData,
+                        ]
+                    ]
+                ]);
+
+                $order = $this->tapPaymentService->createPendingOrderFromCart($payment);
+            } elseif ($order && !$payment) {
+                $payment = Payment::firstOrCreate(
+                    [
+                        'marketplace_order_id' => $order->id,
+                        'status' => 'pending',
+                    ],
+                    [
+                        'user_id' => $user->id,
+                        'amount' => (float) $order->total_amount,
+                        'currency' => 'SAR',
+                        'gateway' => 'tap',
+                    ]
+                );
+            } elseif ($payment && !$order) {
+                if ($payment->marketplace_order_id) {
+                    $order = MarketplaceOrder::find($payment->marketplace_order_id);
+                } else {
+                    $order = $this->tapPaymentService->createPendingOrderFromCart($payment);
+                }
+            }
+
+            $orderId = $order ? (int) $order->id : (int) $payment->id;
             $payment->update(['status' => 'processing']);
 
-            // Dispatch Tap Charge Request
+            // 2. Dispatch Tap Charge Request to Tap API
             $chargeResponse = $this->tapPaymentService->createMarketplaceCharge($payment, $order, $token);
 
             $tapChargeId = $chargeResponse['id'] ?? null;
             $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
-            $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
+            $redirectUrl = $chargeResponse['transaction']['url'] ?? ($chargeResponse['redirect']['url'] ?? null);
 
             if ($tapChargeId) {
                 $payment->update([
                     'tap_charge_id' => $tapChargeId,
-                    'gateway_response' => array_merge($payment->gateway_response ?? [], ['charge' => $chargeResponse]),
+                    'gateway_response' => array_merge(is_array($payment->gateway_response) ? $payment->gateway_response : [], ['charge' => $chargeResponse]),
                 ]);
             }
 
-            // 3DS Authentication / Tap Checkout Webview Required
+            // Case A: 3DS Authentication Required (Mada / Saudi Cards)
             if (!empty($redirectUrl) && $chargeStatus !== 'CAPTURED') {
+                $payment->update(['status' => 'pending']);
+
+                Log::info("MarketplacePaymentController: 3DS Redirect required for payment #{$payment->id}, order #{$orderId}. Charge ID: {$tapChargeId}");
+
                 return response()->json([
+                    'status' => 200,
                     'success' => true,
-                    'message' => '3DS Authentication required. Please complete authentication via the redirect URL.',
+                    'message' => '3DS Authentication Required',
                     'data' => [
                         'payment_id' => (int) $payment->id,
                         'order_id' => $orderId,
                         'marketplace_order_id' => $orderId,
                         'id' => $orderId,
                         'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
-                        'status' => strtolower($chargeStatus),
-                        'tap_charge_id' => $tapChargeId,
+                        'status' => 'INITIATED',
                         'redirect_url' => $redirectUrl,
+                        'tap_charge_id' => $tapChargeId,
+                        'is_paid' => false,
+                        'is_order_created' => (bool) $order,
                         'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
 
-            // If Payment is CAPTURED: Create Order from Cart & Clear Cart!
+            // Case B: Direct Success (No 3DS required or already captured)
             if ($chargeStatus === 'CAPTURED') {
                 if (!$payment->marketplace_order_id && !$payment->job_id) {
                     $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
-                } else if ($payment->marketplace_order_id) {
-                    $order = $this->tapPaymentService->convertCartToMarketplaceOrder($payment);
+                } else if ($order) {
+                    $order->payment_status = 'paid';
+                    $order->payment_method = 'card';
+                    if (Schema::hasColumn('marketplace_orders', 'transaction_id')) {
+                        $order->transaction_id = $tapChargeId;
+                    }
+                    if (Schema::hasColumn('marketplace_orders', 'paid_at') && empty($order->paid_at)) {
+                        $order->paid_at = now();
+                    }
+                    if (in_array(strtolower((string) $order->status), ['pending', 'new', 'waiting'])) {
+                        $order->status = 'accept';
+                    }
+                    $order->save();
                 }
+
                 $orderId = $order ? (int) $order->id : (int) $payment->id;
 
                 $payment->update([
@@ -329,9 +492,15 @@ class MarketplacePaymentController extends Controller
                     'marketplace_order_id' => $orderId,
                 ]);
 
+                // Clear customer's cart
+                Cart::where('user_id', $user->id)->delete();
+
+                Log::info("MarketplacePaymentController: Payment #{$payment->id} direct CAPTURED. Order #{$orderId} confirmed.");
+
                 return response()->json([
+                    'status' => 200,
                     'success' => true,
-                    'message' => 'Payment processed successfully and Marketplace Order created.',
+                    'message' => 'Payment captured successfully',
                     'data' => [
                         'payment_id' => (int) $payment->id,
                         'order_id' => $orderId,
@@ -340,23 +509,43 @@ class MarketplacePaymentController extends Controller
                         'order_number' => $order ? $order->order_number : ('ORD-' . $payment->id),
                         'subtotal' => $order ? (float) $order->subtotal : (float) $payment->amount,
                         'total_amount' => $order ? (float) $order->total_amount : (float) $payment->amount,
-                        'status' => 'captured',
+                        'status' => 'CAPTURED',
+                        'is_paid' => true,
+                        'is_order_created' => true,
                         'tap_charge_id' => $tapChargeId,
+                        'transaction_id' => $tapChargeId,
                         'redirect_url' => null,
                         'order' => $order ? $order->load('items') : null,
                     ]
                 ], 200);
             }
 
+            // Case C: Failed or Declined
+            $payment->update(['status' => 'failed']);
+            $errorMessage = $chargeResponse['response']['message'] ?? ($chargeResponse['errors'][0]['description'] ?? 'Payment failed or declined.');
+
             return response()->json([
+                'status' => 400,
                 'success' => false,
-                'message' => $chargeResponse['response']['message'] ?? 'Payment failed or declined.',
-                'data' => $chargeResponse
+                'message' => $errorMessage,
+                'data' => [
+                    'payment_id' => (int) $payment->id,
+                    'order_id' => $orderId,
+                    'status' => 'FAILED',
+                    'tap_charge_id' => $tapChargeId,
+                    'gateway_response' => $chargeResponse,
+                ]
             ], 400);
 
         } catch (\Throwable $e) {
-            Log::error('MarketplacePaymentController: Error processing charge - ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Payment processing failed: ' . $e->getMessage()], 500);
+            Log::error('MarketplacePaymentController: Error processing charge - ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'status' => 500,
+                'success' => false,
+                'message' => 'Payment processing failed: ' . $e->getMessage()
+            ], 500);
         }
     }
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendFcmTokenNotificationJob;
 use App\Models\Admin\ServiceCategoryModel;
 use App\Models\CityModel;
 use App\Models\ProviderGallery;
@@ -58,6 +59,10 @@ class ProviderController extends Controller
             $query->where('provider_status', $request->status);
         }
 
+        if ($request->filled('verification_status')) {
+            $query->where('verification_status', $request->verification_status);
+        }
+
         if ($request->filled('city_id')) {
             $query->where('city_id', $request->city_id);
         }
@@ -96,6 +101,7 @@ class ProviderController extends Controller
             'cities' => CityModel::query()->orderBy('name')->get(),
             'services' => ServiceCategoryModel::query()->orderBy('name')->get(),
             'statuses' => ['active', 'inactive', 'suspended', 'banned'],
+            'verification_statuses' => ['pending', 'approved', 'rejected'],
             'providerTypes' => ['individual', 'company'],
             'isCompany' => $isCompany
         ]);
@@ -435,11 +441,118 @@ class ProviderController extends Controller
         $provider->charge_amount = $profile->charge_amount;
         $provider->document_type = $profile->document_type;
         $provider->document_number = $profile->document_number;
+        $provider->identity_document = $profile->identity_document ?: $provider->identity_document;
+        $provider->live_image = $profile->live_image ?: $provider->live_image;
+        $provider->verification_status = $profile->verification_status ?: ($provider->verification_status ?: 'pending');
+        $provider->rejection_reason = $profile->rejection_reason ?: $provider->rejection_reason;
         $provider->provider_type = $profile->provider_type;
         $provider->company_name = $profile->company_name;
         $provider->service_license = $profile->service_license;
         $provider->certification = $profile->certification;
         $provider->status = $provider->provider_status ?: $provider->status;
+    }
+
+    /**
+     * Approve Provider KYC (Identity Verification)
+     */
+    public function approveKyc($id)
+    {
+        $provider = User::findOrFail($id);
+        $provider->verification_status = 'approved';
+        $provider->provider_status = 'active';
+        $provider->status = 'active';
+        $provider->rejection_reason = null;
+        $provider->save();
+
+        if ($provider->providerProfile) {
+            $provider->providerProfile->update([
+                'verification_status' => 'approved',
+                'rejection_reason' => null,
+            ]);
+        }
+
+        $this->sendKycNotification($provider, 'approved', 'Your identity verification (KYC) has been approved! You can now bid on service requests.');
+
+        Log::info("Provider KYC approved for Provider #{$provider->id}");
+
+        return back()->with('success', 'Provider KYC approved successfully. Provider is now active.');
+    }
+
+    /**
+     * Reject Provider KYC (Identity Verification)
+     */
+    public function rejectKyc(Request $request, $id)
+    {
+        $request->validate([
+            'rejection_reason' => 'required|string|max:500',
+        ]);
+
+        $provider = User::findOrFail($id);
+        $reason = $request->input('rejection_reason');
+
+        $provider->verification_status = 'rejected';
+        $provider->provider_status = 'inactive';
+        $provider->rejection_reason = $reason;
+        $provider->save();
+
+        if ($provider->providerProfile) {
+            $provider->providerProfile->update([
+                'verification_status' => 'rejected',
+                'rejection_reason' => $reason,
+            ]);
+        }
+
+        $this->sendKycNotification($provider, 'rejected', "Your identity verification (KYC) was rejected: {$reason}. Please re-submit your documents.");
+
+        Log::info("Provider KYC rejected for Provider #{$provider->id}: {$reason}");
+
+        return back()->with('success', 'Provider KYC rejected.');
+    }
+
+    private function sendKycNotification(User $user, string $status, string $message): void
+    {
+        try {
+            $now = now();
+            $title = $status === 'approved' ? 'KYC Verification Approved' : 'KYC Verification Rejected';
+            $eventType = 'provider_kyc_' . $status;
+
+            DB::table('notifications')->insert([
+                'id' => (string) Str::uuid(),
+                'type' => 'App\\Notifications\\SystemAlertNotification',
+                'notifiable_type' => 'App\\Models\\User',
+                'notifiable_id' => $user->id,
+                'data' => json_encode([
+                    'type' => $eventType,
+                    'title' => $title,
+                    'message' => $message,
+                    'data' => [
+                        'type' => $eventType,
+                        'event_type' => $eventType,
+                        'user_id' => (string) $user->id,
+                        'verification_status' => $status,
+                        'sent_at' => $now->toDateTimeString(),
+                    ]
+                ]),
+                'read_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            if (!empty($user->fcm_token)) {
+                dispatch((new SendFcmTokenNotificationJob([$user->fcm_token], [
+                    'title' => $title,
+                    'body' => $message,
+                    'data' => [
+                        'type' => $eventType,
+                        'event_type' => $eventType,
+                        'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
+                        'user_id' => (string) $user->id,
+                    ]
+                ])));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('sendKycNotification error: ' . $e->getMessage());
+        }
     }
 
     private function movePublicFile(Request $request, string $field, string $directory): ?string

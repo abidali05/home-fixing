@@ -163,6 +163,10 @@ class CashPaymentService
                     $newDue = round($previousDue + $remainingDueToAdd, 2);
 
                     $provider->payment_due = $newDue;
+                    $threshold = (float) ($provider->max_due_threshold ?? 25.00);
+                    if ($newDue >= $threshold) {
+                        $provider->is_due_blocked = 1;
+                    }
                     $provider->save();
 
                     ProviderDuesLedger::create([
@@ -217,8 +221,8 @@ class CashPaymentService
         $due = (float) ($provider->payment_due ?? 0.0);
         $threshold = (float) ($provider->max_due_threshold ?? 25.00);
 
-        if ($due >= $threshold) {
-            throw new \Exception("You have exceeded the maximum allowed unpaid cash commission threshold ({$due} SAR >= {$threshold} SAR). Please clear your pending platform dues before accepting new jobs or placing bids.", 403);
+        if ($due >= $threshold || (int) ($provider->is_due_blocked ?? 0) === 1) {
+            throw new \Exception("Your outstanding Azhl commission (SAR " . number_format($due, 2) . ") exceeds the threshold limit of SAR " . number_format($threshold, 2) . ". Please clear your dues in the app to continue.", 403);
         }
     }
 }

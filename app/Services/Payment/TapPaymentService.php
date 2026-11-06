@@ -50,6 +50,10 @@ class TapPaymentService
             $phoneDigits = substr($phoneDigits, -9);
         }
 
+        $gwRespMeta = is_array($payment->gateway_response) ? $payment->gateway_response : json_decode((string) $payment->gateway_response, true);
+        $paymentType = $gwRespMeta['type'] ?? ($payment->job_id ? 'job_payment' : ($payment->marketplace_order_id ? 'marketplace_payment' : 'commission_repayment'));
+        $refCode = $gwRespMeta['reference_code'] ?? "PAY-{$payment->id}";
+
         $payload = [
             'amount' => (float) $payment->amount,
             'currency' => strtoupper($payment->currency ?: 'SAR'),
@@ -63,6 +67,8 @@ class TapPaymentService
                 'bid_id' => (string) ($payment->bid_id ?? ''),
                 'user_id' => (string) $payment->user_id,
                 'provider_id' => (string) ($payment->provider_id ?? ''),
+                'type' => (string) $paymentType,
+                'reference_code' => (string) $refCode,
             ],
             'reference' => [
                 'transaction' => "PAY-{$payment->id}",
@@ -571,18 +577,59 @@ class TapPaymentService
                 return true;
             }
 
-            // If payment was for Provider Dues Clearance
+            // If payment was for Provider Dues Clearance / Commission Repayment
             $gwResp = is_array($payment->gateway_response) ? $payment->gateway_response : json_decode((string) $payment->gateway_response, true);
-            if (($gwResp['type'] ?? '') === 'provider_dues_clearance' || (!$payment->job_id && !$payment->marketplace_order_id && $payment->provider_id && (int) $payment->user_id === (int) $payment->provider_id)) {
-                $provider = User::find($payment->provider_id);
+            $isCommissionRepayment = (($gwResp['type'] ?? '') === 'provider_dues_clearance')
+                || (($gwResp['type'] ?? '') === 'commission_repayment')
+                || (($chargeData['metadata']['type'] ?? '') === 'commission_repayment')
+                || (!$payment->job_id && !$payment->marketplace_order_id && $payment->provider_id && (int) $payment->user_id === (int) $payment->provider_id);
+
+            if ($isCommissionRepayment) {
+                $providerId = $payment->provider_id ?: ($chargeData['metadata']['provider_id'] ?? null);
+                $provider = User::find($providerId);
                 if ($provider) {
-                    $paidAmount = (float) $payment->amount;
+                    $paidAmount = (float) $payment->amount ?: (float) ($chargeData['amount'] ?? 0.0);
                     $prevDue = (float) ($provider->payment_due ?? 0.0);
                     $newDue = max(0.0, round($prevDue - $paidAmount, 2));
 
                     $provider->payment_due = $newDue;
+                    $threshold = (float) ($provider->max_due_threshold ?? 25.00);
+                    if ($newDue < $threshold) {
+                        $provider->is_due_blocked = 0;
+                    }
                     $provider->save();
 
+                    // Determine payment method
+                    $rawMethod = strtolower($chargeData['charge']['source']['payment_method'] ?? $chargeData['source']['payment_method'] ?? $chargeData['source']['id'] ?? 'card');
+                    if (str_contains($rawMethod, 'mada')) {
+                        $methodFormatted = 'tap_card_mada';
+                    } elseif (str_contains($rawMethod, 'apple')) {
+                        $methodFormatted = 'apple_pay';
+                    } else {
+                        $methodFormatted = 'tap_card_visa';
+                    }
+
+                    $refCode = $chargeData['metadata']['reference_code'] ?? ($gwResp['reference_code'] ?? ("AZHL-DUE-" . $provider->id . "-" . time()));
+
+                    // 1. Audit in provider_commission_repayments
+                    try {
+                        \App\Models\ProviderCommissionRepayment::updateOrCreate(
+                            ['tap_charge_id' => $chargeId],
+                            [
+                                'provider_id' => $provider->id,
+                                'transaction_reference' => $refCode,
+                                'amount_paid' => $paidAmount,
+                                'payment_method' => $methodFormatted,
+                                'status' => 'verified',
+                                'verified_at' => now(),
+                                'gateway_response' => $chargeData,
+                            ]
+                        );
+                    } catch (\Throwable $repEx) {
+                        Log::error("TapPaymentService: Failed inserting into provider_commission_repayments: " . $repEx->getMessage());
+                    }
+
+                    // 2. Audit in provider_dues_ledger
                     \App\Models\ProviderDuesLedger::create([
                         'provider_id' => $provider->id,
                         'order_id' => null,
@@ -590,10 +637,29 @@ class TapPaymentService
                         'amount' => $paidAmount,
                         'previous_due' => $prevDue,
                         'current_due' => $newDue,
-                        'notes' => "Cleared dues online via Tap (Charge {$chargeId})",
+                        'notes' => "Cleared dues online via Tap ({$methodFormatted}). Instant Auto-unblock (Charge {$chargeId})",
                     ]);
 
-                    Log::info("TapPaymentService: Provider #{$provider->id} cleared dues of {$paidAmount} SAR. New Due: {$newDue} SAR");
+                    // 3. Instant Push Notification to Provider
+                    if (!empty($provider->fcm_token)) {
+                        try {
+                            dispatch(new \App\Jobs\SendFcmTokenNotificationJob([$provider->fcm_token], [
+                                'title' => 'تم سداد المستحقات بنجاح | Dues Cleared',
+                                'body' => "تم تسوية عمولة أزهل بقيمة {$paidAmount} ر.س بنجاح وإلغاء حظر حسابك فوراً. يمكنك الآن تقديم العروض والمحادثة.",
+                                'data' => [
+                                    'type' => 'commission_repayment_confirmed',
+                                    'charge_id' => (string) $chargeId,
+                                    'amount_paid' => (string) $paidAmount,
+                                    'new_due' => (string) $newDue,
+                                    'is_due_blocked' => (string) ($provider->is_due_blocked ?? 0),
+                                ],
+                            ]));
+                        } catch (\Throwable $fcmEx) {
+                            Log::warning("TapPaymentService: Failed to dispatch dues clearance FCM to provider {$provider->id}: " . $fcmEx->getMessage());
+                        }
+                    }
+
+                    Log::info("TapPaymentService: Provider #{$provider->id} cleared dues of {$paidAmount} SAR. New Due: {$newDue} SAR. Blocked: {$provider->is_due_blocked}");
                 }
                 return true;
             }
@@ -938,13 +1004,32 @@ class TapPaymentService
             }
         }
 
+        if (!$payment && (($payload['metadata']['type'] ?? '') === 'commission_repayment' || !empty($payload['metadata']['provider_id']))) {
+            $providerId = $payload['metadata']['provider_id'] ?? null;
+            if ($providerId) {
+                $payment = Payment::create([
+                    'user_id' => $providerId,
+                    'provider_id' => $providerId,
+                    'amount' => (float) ($payload['amount'] ?? 0),
+                    'currency' => strtoupper($payload['currency'] ?? 'SAR'),
+                    'gateway' => 'tap',
+                    'status' => 'pending',
+                    'tap_charge_id' => $chargeId,
+                    'gateway_response' => [
+                        'type' => 'commission_repayment',
+                        'reference_code' => $payload['metadata']['reference_code'] ?? ("AZHL-DUE-{$providerId}-" . time()),
+                    ],
+                ]);
+            }
+        }
+
         if (!$payment) {
             Log::error("TapPaymentService: Webhook received for unknown charge {$chargeId} / payment #{$metaPaymentId}");
             return false;
         }
 
-        // Idempotency check: If already captured and order created, return true
-        if ($payment->status === 'captured' && $payment->marketplace_order_id) {
+        // Idempotency check: If already captured and processed
+        if ($payment->status === 'captured') {
             Log::info("TapPaymentService: Payment #{$payment->id} is already captured. Webhook execution skipped.");
             return true;
         }

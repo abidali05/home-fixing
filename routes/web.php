@@ -218,6 +218,7 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('provider-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'index'])->name('admin.provider_dues.index');
     Route::get('provider-dues/{id}', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'show'])->name('admin.provider_dues.show');
     Route::post('provider-dues/{id}/adjust', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'adjustDues'])->name('admin.provider_dues.adjust');
+    Route::post('provider-dues/{id}/clear-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'clearDuesApi'])->name('admin.provider_dues.clear_dues');
     Route::post('provider-dues/{id}/update-threshold', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'updateThreshold'])->name('admin.provider_dues.update_threshold');
 
 
@@ -314,6 +315,8 @@ Route::middleware(['auth:admin'])->group(function () {
     Route::get('providers/edit/{id}', [ProviderController::class, 'edit'])->name('providers.edit')->middleware('CheckPermission:20');
     Route::post('providers/update/{id}', [ProviderController::class, 'update'])->name('providers.update')->middleware('CheckPermission:20');
     Route::post('providers/status/{id}', [ProviderController::class, 'updateStatus'])->name('providers.status');
+    Route::post('providers/approve-kyc/{id}', [ProviderController::class, 'approveKyc'])->name('providers.approve_kyc')->middleware('CheckPermission:20');
+    Route::post('providers/reject-kyc/{id}', [ProviderController::class, 'rejectKyc'])->name('providers.reject_kyc')->middleware('CheckPermission:20');
     Route::post('providers/assign-company/{id}', [ProviderController::class, 'assignCompany'])->name('providers.assign_company');
     Route::delete('providers/delete/{id}', [ProviderController::class, 'destroy'])->name('providers.delete')->middleware('CheckPermission:21');
     Route::get('delete-provider-gallery-image/{id}', [ProviderController::class, 'deleteProviderImage'])->name('providers.deleteProviderImage')->middleware('CheckPermission:20');
@@ -410,8 +413,9 @@ Route::get('clear-cache', function () {
     return 'Cache cleared';
 })->name('clear.cache');
 
-// Tap Payments 3DS Redirect Route
+// Tap Payments 3DS Redirect & Callback Routes
 Route::get('tap/redirect', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.redirect');
+Route::get('tap/callback', [\App\Http\Controllers\Api\TapWebhookController::class, 'handleRedirect'])->name('tap.callback');
 
 
 

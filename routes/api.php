@@ -133,8 +133,8 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
         Route::post('accept-reject-request', [GeneralContoller::class, 'accept_reject_request']);
         Route::get('provider-orders', [GeneralContoller::class, 'my_orders']);
 
-        Route::post('submit-bid/{id}', [GeneralContoller::class, 'submit_bid']);
-        Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid']);
+        Route::post('submit-bid/{id}', [GeneralContoller::class, 'submit_bid'])->middleware('ensure.commission.paid');
+        Route::post('post-bid/{id}', [GeneralContoller::class, 'post_bid'])->middleware('ensure.commission.paid');
         Route::get('my-bids', [GeneralContoller::class, 'my_bids']);
         Route::get('provider-reviews', [GeneralContoller::class, 'provider_reviews']);
 
@@ -204,13 +204,15 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::get('get-notifications', [NotificationController::class, 'index']);
     Route::get('notifications/unread', [NotificationController::class, 'unread']);
     Route::get('notifications/unread-count', [NotificationController::class, 'unread_count']);
-    Route::post('notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
+    Route::match(['post', 'patch'], 'notifications/{id}/read', [NotificationController::class, 'mark_as_read']);
     Route::post('notifications/read-all', [NotificationController::class, 'mark_all_as_read']);
+    Route::post('notifications/mark-all-read', [NotificationController::class, 'mark_all_as_read']);
 
     // Tap Payments API Routes
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
     Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
+    Route::post('jobs/{job}/bids/{bid}/charge', [PaymentController::class, 'charge']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::get('payments/callback', [PaymentController::class, 'callback']);
@@ -218,6 +220,11 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     // Offline Cash Payment & Provider Dues Routes (Specification)
     Route::post('orders/{id}/payment-method', [OrderPaymentMethodController::class, 'selectPaymentMethod']);
     Route::post('orders/{id}/confirm-cash', [OrderPaymentMethodController::class, 'confirmCash']);
+    Route::get('provider/commission-status', [OrderPaymentMethodController::class, 'commissionStatus']);
+    Route::post('provider/initiate-due-payment', [OrderPaymentMethodController::class, 'initiateDuePayment']);
+    Route::post('provider/dues/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/dues/apple-pay-charge', [OrderPaymentMethodController::class, 'chargeApplePayDues']);
     Route::post('provider/dues/pay', [OrderPaymentMethodController::class, 'payDues']);
     Route::get('provider/dues/ledger', [OrderPaymentMethodController::class, 'duesLedger']);
 
@@ -298,15 +305,39 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::match(['patch', 'post'], 'admin/refunds/{id}/reject', [RefundAdminController::class, 'reject']);
 });
 
-// Public Tap Webhook Routes (Both root and v1)
+// Public Tap Webhook & Callback Routes
 Route::post('webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
 Route::post('v1/webhooks/tap', [TapWebhookController::class, 'handleWebhook']);
+Route::post('tap/webhook', [TapWebhookController::class, 'handleWebhook']);
+Route::post('v1/tap/webhook', [TapWebhookController::class, 'handleWebhook']);
+Route::post('tap-webhook', [TapWebhookController::class, 'handleWebhook']);
+Route::post('v1/tap-webhook', [TapWebhookController::class, 'handleWebhook']);
+
+// Tap 3DS Callback & Redirect Aliases
+Route::get('tap/callback', [TapWebhookController::class, 'handleRedirect']);
+Route::get('v1/tap/callback', [TapWebhookController::class, 'handleRedirect']);
+Route::get('tap/redirect', [TapWebhookController::class, 'handleRedirect']);
+Route::get('v1/tap/redirect', [TapWebhookController::class, 'handleRedirect']);
+
+// Admin Manual Clear Dues API Routes (Specification)
+Route::post('admin/providers/{id}/clear-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'clearDuesApi']);
+Route::post('v1/admin/providers/{id}/clear-dues', [\App\Http\Controllers\Admin\ProviderDuesAdminController::class, 'clearDuesApi']);
 
 // Root level aliases for payment and marketplace endpoints
 Route::middleware('auth:sanctum')->group(function () {
+    // Root level aliases for provider commission and dues
+    Route::get('provider/commission-status', [OrderPaymentMethodController::class, 'commissionStatus']);
+    Route::post('provider/initiate-due-payment', [OrderPaymentMethodController::class, 'initiateDuePayment']);
+    Route::post('provider/dues/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/verify-tap-payment', [OrderPaymentMethodController::class, 'verifyTapPayment']);
+    Route::post('provider/dues/apple-pay-charge', [OrderPaymentMethodController::class, 'chargeApplePayDues']);
+    Route::post('provider/dues/pay', [OrderPaymentMethodController::class, 'payDues']);
+    Route::get('provider/dues/ledger', [OrderPaymentMethodController::class, 'duesLedger']);
+
     Route::post('jobs/{job}/bids/{bid}/initiate-payment', [PaymentController::class, 'initiatePayment']);
     Route::post('jobs/{job}/bids/{bid}/verify-tap-payment', [PaymentController::class, 'verifyTapPayment']);
     Route::post('jobs/{job}/bids/{bid}/apple-pay-charge', [PaymentController::class, 'chargeApplePay']);
+    Route::post('jobs/{job}/bids/{bid}/charge', [PaymentController::class, 'charge']);
     Route::post('payments/charge', [PaymentController::class, 'charge']);
     Route::get('payments/{payment}/status', [PaymentController::class, 'status']);
     Route::post('marketplace/checkout/verify-tap-payment', [MarketplacePaymentController::class, 'verifyTapPayment']);

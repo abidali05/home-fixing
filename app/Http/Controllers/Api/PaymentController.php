@@ -177,20 +177,73 @@ class PaymentController extends Controller
     }
 
     /**
-     * API #2: Process Tap Charge
+     * API #2: Process Tap Charge (Supports Payment ID or Job & Bid + Card Token)
      * POST /api/payments/charge
+     * POST /api/v1/jobs/{job}/bids/{bid}/charge
      *
      * @param ProcessChargeRequest $request
+     * @param int|string|null $jobId
+     * @param int|string|null $bidId
      * @return JsonResponse
      */
-    public function charge(ProcessChargeRequest $request): JsonResponse
+    public function charge(ProcessChargeRequest $request, $jobId = null, $bidId = null): JsonResponse
     {
         try {
             $user = auth('sanctum')->user();
-            $paymentId = $request->input('payment_id');
-            $token = $request->input('token', 'src_all') ?: 'src_all';
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
 
-            $payment = Payment::with(['job', 'bid', 'user', 'provider'])->find($paymentId);
+            $paymentId = $request->input('payment_id');
+            $rawToken = $request->input('token') ?: $request->input('card_token');
+            $chargeIdParam = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id');
+
+            // If token passed is a charge ID
+            if (!empty($rawToken) && is_string($rawToken) && str_starts_with(trim($rawToken), 'chg_')) {
+                $chargeIdParam = trim($rawToken);
+                $rawToken = null;
+            }
+
+            $token = $rawToken ?: 'src_all';
+
+            $targetJobId = $jobId ?: $request->input('job_id');
+            $targetBidId = $bidId ?: $request->input('bid_id');
+
+            // If charge_id was provided directly, verify it
+            if (!empty($chargeIdParam) && $targetJobId && $targetBidId) {
+                return $this->verifyTapPayment($request, $targetJobId, $targetBidId);
+            }
+
+            $payment = null;
+            if ($paymentId) {
+                $payment = Payment::with(['job', 'bid', 'user', 'provider'])->find($paymentId);
+            }
+
+            if (!$payment && $targetJobId && $targetBidId) {
+                $jobModel = JobRequestModel::find($targetJobId);
+                $bidModel = BidModel::where('id', $targetBidId)->where('job_id', $targetJobId)->first();
+                if ($jobModel && $bidModel) {
+                    $settings = \App\Models\Admin\SystemSettingModel::first();
+                    $customerAppFee = ($settings && $settings->customer_app_fee !== null) ? (float) $settings->customer_app_fee : 0.00;
+                    $totalPayable = round((float) $bidModel->price + $customerAppFee, 2);
+
+                    $payment = Payment::firstOrCreate(
+                        [
+                            'job_id' => $jobModel->id,
+                            'bid_id' => $bidModel->id,
+                            'status' => 'pending',
+                        ],
+                        [
+                            'user_id' => $user->id,
+                            'provider_id' => $bidModel->provider_id,
+                            'amount' => $totalPayable,
+                            'currency' => 'SAR',
+                            'gateway' => 'tap',
+                        ]
+                    );
+                    $payment->load(['job', 'bid', 'user', 'provider']);
+                }
+            }
 
             if (!$payment) {
                 return $this->error('Payment record not found.', 404);
@@ -204,8 +257,10 @@ class PaymentController extends Controller
             // 2. Check if payment is already captured
             if ($payment->status === 'captured') {
                 return $this->success([
-                    'payment_id' => $payment->id,
-                    'status' => 'captured',
+                    'payment_id' => (int) $payment->id,
+                    'order_id' => $payment->job_id,
+                    'status' => 'CAPTURED',
+                    'is_paid' => true,
                     'tap_charge_id' => $payment->tap_charge_id,
                     'redirect_url' => null,
                     'is_hired' => true,
@@ -225,7 +280,7 @@ class PaymentController extends Controller
 
             $tapChargeId = $chargeResponse['id'] ?? null;
             $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
-            $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
+            $redirectUrl = $chargeResponse['transaction']['url'] ?? ($chargeResponse['redirect']['url'] ?? null);
 
             // 6. Always update tap_charge_id immediately so webhooks/redirects match
             if ($tapChargeId) {
@@ -235,31 +290,37 @@ class PaymentController extends Controller
                 ]);
             }
 
-            // 7. Handle 3DS Redirect if required by bank
+            // 7. Handle 3DS Redirect if required by bank (Case A)
             if (!empty($redirectUrl) && $chargeStatus !== 'CAPTURED') {
+                $payment->update(['status' => 'pending']);
+
                 return $this->success([
-                    'payment_id' => $payment->id,
-                    'status' => strtolower($chargeStatus),
+                    'payment_id' => (int) $payment->id,
+                    'order_id' => $payment->job_id,
+                    'status' => 'INITIATED',
                     'tap_charge_id' => $tapChargeId,
                     'redirect_url' => $redirectUrl,
+                    'is_paid' => false,
                     'is_hired' => false,
-                ], '3DS Authentication required. Please complete authentication via the redirect URL.');
+                ], '3DS Authentication Required');
             }
 
-            // 7. If status is CAPTURED immediately
+            // 8. If status is CAPTURED immediately (Case B)
             if ($chargeStatus === 'CAPTURED') {
                 $isHired = $this->tapPaymentService->verifyCharge($tapChargeId, $payment);
 
                 return $this->success([
-                    'payment_id' => $payment->id,
-                    'status' => 'captured',
+                    'payment_id' => (int) $payment->id,
+                    'order_id' => $payment->job_id,
+                    'status' => 'CAPTURED',
                     'tap_charge_id' => $tapChargeId,
                     'redirect_url' => null,
+                    'is_paid' => true,
                     'is_hired' => $isHired,
-                ], 'Payment processed successfully and provider hired.');
+                ], 'Payment captured successfully');
             }
 
-            // 8. If charge failed or declined
+            // 9. If charge failed or declined
             if (in_array($chargeStatus, ['FAILED', 'DECLINED', 'CANCELLED'])) {
                 $payment->update([
                     'status' => 'failed',
@@ -268,8 +329,9 @@ class PaymentController extends Controller
                 ]);
 
                 return $this->error('Payment failed. ' . ($chargeResponse['response']['message'] ?? 'Transaction was declined.'), 400, [
-                    'payment_id' => $payment->id,
-                    'status' => 'failed',
+                    'payment_id' => (int) $payment->id,
+                    'order_id' => $payment->job_id,
+                    'status' => 'FAILED',
                     'tap_charge_id' => $tapChargeId,
                 ]);
             }

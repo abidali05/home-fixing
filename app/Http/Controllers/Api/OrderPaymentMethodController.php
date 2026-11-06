@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendFcmTokenNotificationJob;
 use App\Models\Orders;
 use App\Models\Payment;
+use App\Models\ProviderCommissionRepayment;
 use App\Models\ProviderDuesLedger;
 use App\Models\User;
 use App\Services\Payment\CashPaymentService;
@@ -12,6 +14,7 @@ use App\Services\Payment\TapPaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
@@ -98,21 +101,55 @@ class OrderPaymentMethodController extends Controller
     }
 
     /**
-     * 5.3 Provider Clears Due Balance via Online Payment (Tap)
+     * Get Provider Commission Status
+     * GET /api/provider/commission-status
+     */
+    public function commissionStatus(Request $request): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user() ?? auth()->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $due = (float) ($user->payment_due ?? 0.0);
+            $threshold = (float) ($user->max_due_threshold ?? 25.00);
+            $isBlocked = ($due >= $threshold) || ((int) ($user->is_due_blocked ?? 0) === 1);
+
+            $unpaidOrdersCount = ProviderDuesLedger::where('provider_id', $user->id)
+                ->where('type', 'debit_cash_order')
+                ->count();
+
+            return response()->json([
+                'status' => true,
+                'code' => 200,
+                'message' => 'Provider commission status retrieved successfully.',
+                'data' => [
+                    'outstanding_commission' => (float) number_format($due, 2, '.', ''),
+                    'threshold_limit' => (float) number_format($threshold, 2, '.', ''),
+                    'is_blocked' => (bool) $isBlocked,
+                    'currency' => 'SAR',
+                    'unpaid_orders_count' => (int) $unpaidOrdersCount,
+                    'payment_methods' => ['tap_card', 'apple_pay', 'bank_transfer'],
+                ],
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Provider Initiates Dues Repayment (Card / Mada / Visa)
+     * POST /api/provider/initiate-due-payment
      * POST /api/provider/dues/pay
      */
-    public function payDues(Request $request): JsonResponse
+    public function initiateDuePayment(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'amount' => 'required|numeric|gt:0',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->validationError($validator->errors(), 'Validation failed.');
-        }
-
         try {
-            $user = auth('sanctum')->user();
+            $user = auth('sanctum')->user() ?? auth()->user();
             if (!$user) {
                 return $this->error('Unauthorized.', 401);
             }
@@ -121,16 +158,35 @@ class OrderPaymentMethodController extends Controller
                 return $this->error('Only providers can pay platform dues.', 403);
             }
 
-            $currentDue = (float) ($user->payment_due ?? 0.0);
-            $amountToPay = (float) $request->amount;
-
-            if ($currentDue <= 0) {
-                return $this->error('You do not have any pending platform dues to pay.', 400);
+            // CRITICAL: If Flutter already completed payment in Tap SDK and sent charge_id
+            $incomingChargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (!empty($incomingChargeId) && is_string($incomingChargeId) && (str_starts_with($incomingChargeId, 'chg_') || str_starts_with($incomingChargeId, 'tap_'))) {
+                return $this->verifyTapPayment($request);
             }
 
+            $currentDue = (float) ($user->payment_due ?? 0.0);
+            if ($currentDue <= 0) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'You do not have any pending platform dues to pay.',
+                ], 400);
+            }
+
+            $amountToPay = $request->filled('amount') ? (float) $request->amount : $currentDue;
+            if ($amountToPay <= 0) {
+                $amountToPay = $currentDue;
+            }
             if ($amountToPay > $currentDue) {
                 $amountToPay = $currentDue;
             }
+
+            // If mobile sent an already captured charge ID (chg_...)
+            $chargeIdParam = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id');
+            if (!empty($chargeIdParam) && is_string($chargeIdParam) && str_starts_with(trim($chargeIdParam), 'chg_')) {
+                return $this->verifyTapPayment($request);
+            }
+
+            $refCode = 'AZHL-DUE-' . date('YmdHis') . '-' . $user->id;
 
             // Create a Payment record for dues clearance
             $payment = Payment::create([
@@ -140,36 +196,471 @@ class OrderPaymentMethodController extends Controller
                 'currency' => 'SAR',
                 'gateway' => 'tap',
                 'status' => 'pending',
-                'gateway_response' => json_encode([
-                    'type' => 'provider_dues_clearance',
+                'gateway_response' => [
+                    'type' => 'commission_repayment',
+                    'reference_code' => $refCode,
                     'original_due' => $currentDue,
                     'paying_amount' => $amountToPay,
-                ]),
+                    'payment_method' => $request->input('payment_method', 'card'),
+                ],
             ]);
 
-            // Create Tap Charge
-            $chargeResponse = $this->tapPaymentService->createCharge($payment, $request->input('token', 'src_all'));
+            // Create Tap Charge using token (tok_...) or source_id
+            $tokenInput = $request->input('token') ?: $request->input('charge_id') ?: $request->input('source_id') ?: 'src_all';
+            $chargeResponse = $this->tapPaymentService->createCharge($payment, $tokenInput);
             $tapChargeId = $chargeResponse['id'] ?? null;
-            $redirectUrl = $chargeResponse['transaction']['url'] ?? null;
+            $chargeStatus = strtoupper($chargeResponse['status'] ?? 'PENDING');
+            $redirectUrl = $chargeResponse['transaction']['url'] ?? ($chargeResponse['redirect']['url'] ?? null);
+
+            if ($chargeStatus === 'CAPTURED') {
+                return $this->settleDuesPayment($payment, $user, $tapChargeId, $chargeResponse, $amountToPay, $currentDue);
+            }
 
             if ($tapChargeId) {
                 $payment->update([
                     'tap_charge_id' => $tapChargeId,
                     'status' => 'processing',
+                    'gateway_response' => $chargeResponse,
                 ]);
             }
 
-            return $this->success([
-                'payment_id' => (string) $payment->id,
-                'tap_charge_id' => $tapChargeId,
-                'redirect_url' => $redirectUrl,
+            return response()->json([
+                'status' => true,
+                'code' => 200,
+                'message' => !empty($redirectUrl) ? '3DS Authentication Required' : 'Dues payment initiated successfully.',
+                'data' => [
+                    'payment_id' => (string) $payment->id,
+                    'charge_id' => $tapChargeId,
+                    'tap_charge_id' => $tapChargeId,
+                    'status' => !empty($redirectUrl) ? 'INITIATED' : $chargeStatus,
+                    'is_paid' => false,
+                    'payment_url' => $redirectUrl,
+                    'redirect_url' => $redirectUrl,
+                    'amount' => $amountToPay,
+                    'currency' => 'SAR',
+                    'reference_code' => $refCode,
+                    'current_due' => $currentDue,
+                    'is_blocked' => (bool) ($currentDue >= ($user->max_due_threshold ?? 25.00) || (int) ($user->is_due_blocked ?? 0) === 1),
+                ],
+            ], 200);
+        } catch (\Throwable $e) {
+            Log::error('OrderPaymentMethodController initiateDuePayment error: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage() ?: 'Failed to initiate dues payment.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Provider Verifies Tap Payment (Called by Flutter Tap SDK upon onSuccess)
+     * POST /api/provider/dues/verify-tap-payment
+     * POST /api/provider/verify-tap-payment
+     */
+    public function verifyTapPayment(Request $request): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user() ?? auth()->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            $chargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (empty($chargeId) || !is_string($chargeId)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'The charge_id field is required.',
+                ], 422);
+            }
+
+            // 1. Retrieve charge directly from Tap Payments API
+            try {
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+            } catch (\Throwable $e) {
+                Log::error("verifyTapPayment dues: Error retrieving charge {$chargeId}: " . $e->getMessage());
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Failed to verify payment with Tap Gateway. ' . $e->getMessage(),
+                ], 400);
+            }
+
+            $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            $chargedAmount = (float) ($chargeData['amount'] ?? 0);
+            $chargedCurrency = strtoupper($chargeData['currency'] ?? 'SAR');
+
+            if ($chargeStatus !== 'CAPTURED') {
+                return response()->json([
+                    'status' => false,
+                    'message' => "Payment not captured on Tap. Status: {$chargeStatus}",
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'status' => strtolower($chargeStatus),
+                    ],
+                ], 400);
+            }
+
+            // 2. Find or create Payment record
+            $payment = Payment::where('tap_charge_id', $chargeId)->first();
+            if ($payment && $payment->status === 'captured') {
+                $threshold = (float) ($user->max_due_threshold ?? 25.00);
+                $due = (float) ($user->payment_due ?? 0.0);
+                return response()->json([
+                    'status' => true,
+                    'code' => 200,
+                    'message' => 'Dues already settled successfully. Account unblocked.',
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'amount_paid' => (float) $payment->amount,
+                        'currency' => $payment->currency ?: 'SAR',
+                        'payment_due' => $due,
+                        'is_due_blocked' => (int) ($user->is_due_blocked ?? 0),
+                        'is_blocked' => (bool) (($due >= $threshold) || ((int) $user->is_due_blocked === 1)),
+                    ],
+                ], 200);
+            }
+
+            if (!$payment) {
+                $payment = Payment::create([
+                    'user_id' => $user->id,
+                    'provider_id' => $user->id,
+                    'amount' => $chargedAmount,
+                    'currency' => $chargedCurrency,
+                    'gateway' => 'tap',
+                    'status' => 'pending',
+                    'tap_charge_id' => $chargeId,
+                ]);
+            }
+
+            // 3. Atomic settlement & Instant Unblock
+            return $this->settleDuesPayment($payment, $user, $chargeId, $chargeData, $chargedAmount, (float) ($user->payment_due ?? 0.0));
+
+        } catch (\Throwable $e) {
+            Log::error('OrderPaymentMethodController verifyTapPayment error: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to verify Tap payment: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Shared helper to settle dues payment atomically and unblock provider
+     */
+    protected function settleDuesPayment(Payment $payment, User $user, string $chargeId, array $chargeData, float $amountToPay, float $currentDue): JsonResponse
+    {
+        return DB::transaction(function () use ($payment, $user, $chargeId, $chargeData, $amountToPay, $currentDue) {
+            $user = User::where('id', $user->id)->lockForUpdate()->first();
+            $previousDue = (float) ($user->payment_due ?? 0.0);
+            $newDue = max(0.0, round($previousDue - $amountToPay, 2));
+
+            $user->payment_due = $newDue;
+            $threshold = (float) ($user->max_due_threshold ?? 25.00);
+            if ($newDue < $threshold) {
+                $user->is_due_blocked = 0;
+            }
+            $user->save();
+
+            // Determine method
+            $rawMethod = strtolower($chargeData['charge']['source']['payment_method'] ?? $chargeData['source']['payment_method'] ?? $chargeData['source']['id'] ?? 'card');
+            if (str_contains($rawMethod, 'mada')) {
+                $methodFormatted = 'tap_card_mada';
+            } elseif (str_contains($rawMethod, 'apple')) {
+                $methodFormatted = 'apple_pay';
+            } else {
+                $methodFormatted = 'tap_card_visa';
+            }
+
+            $refCode = $chargeData['metadata']['reference_code'] ?? ('AZHL-DUE-' . $user->id . '-' . time());
+
+            // 1. Repayment audit
+            ProviderCommissionRepayment::updateOrCreate(
+                ['tap_charge_id' => $chargeId],
+                [
+                    'provider_id' => $user->id,
+                    'transaction_reference' => $refCode,
+                    'amount_paid' => $amountToPay,
+                    'payment_method' => $methodFormatted,
+                    'status' => 'verified',
+                    'verified_at' => now(),
+                    'gateway_response' => $chargeData,
+                ]
+            );
+
+            // 2. Ledger audit
+            ProviderDuesLedger::create([
+                'provider_id' => $user->id,
+                'order_id' => null,
+                'type' => 'credit_online_payment',
                 'amount' => $amountToPay,
-                'currency' => 'SAR',
-                'current_due' => $currentDue,
-            ], 'Dues payment initiated successfully.');
-        } catch (\Exception $e) {
-            Log::error('OrderPaymentMethodController payDues error: ' . $e->getMessage());
-            return $this->error($e->getMessage() ?: 'Failed to initiate dues payment.', 500);
+                'previous_due' => $previousDue,
+                'current_due' => $newDue,
+                'notes' => "Cleared dues online via Tap ({$methodFormatted}). Instant Auto-unblock (Charge {$chargeId})",
+            ]);
+
+            // 3. Mark payment captured
+            $payment->update([
+                'status' => 'captured',
+                'tap_charge_id' => $chargeId,
+                'gateway_response' => $chargeData,
+            ]);
+
+            // 4. Instant FCM Push Notification
+            if (!empty($user->fcm_token)) {
+                try {
+                    dispatch(new SendFcmTokenNotificationJob([$user->fcm_token], [
+                        'title' => 'تم سداد المستحقات بنجاح | Dues Cleared',
+                        'body' => "تم تسوية عمولة أزهل بقيمة {$amountToPay} ر.س بنجاح عبر Tap وإلغاء حظر حسابك فوراً.",
+                        'data' => [
+                            'type' => 'commission_repayment_confirmed',
+                            'charge_id' => (string) $chargeId,
+                            'amount_paid' => (string) $amountToPay,
+                            'new_due' => (string) $newDue,
+                            'is_due_blocked' => (string) ($user->is_due_blocked ?? 0),
+                        ],
+                    ]));
+                } catch (\Throwable $e) {
+                    Log::warning("settleDuesPayment FCM error: " . $e->getMessage());
+                }
+            }
+
+            return response()->json([
+                'status' => true,
+                'code' => 200,
+                'message' => 'Dues settled successfully. Account unblocked.',
+                'data' => [
+                    'charge_id' => $chargeId,
+                    'tap_charge_id' => $chargeId,
+                    'status' => 'CAPTURED',
+                    'is_paid' => true,
+                    'amount_paid' => $amountToPay,
+                    'currency' => 'SAR',
+                    'payment_due' => $newDue,
+                    'is_due_blocked' => (int) ($user->is_due_blocked ?? 0),
+                    'is_blocked' => (bool) (($newDue >= $threshold) || ((int) $user->is_due_blocked === 1)),
+                ],
+            ], 200);
+        });
+    }
+
+    /**
+     * Backward-compatible alias for payDues
+     * POST /api/provider/dues/pay
+     */
+    public function payDues(Request $request): JsonResponse
+    {
+        return $this->initiateDuePayment($request);
+    }
+
+    /**
+     * Provider Clears Dues via Native Apple Pay
+     * POST /api/provider/dues/apple-pay-charge
+     */
+    public function chargeApplePayDues(Request $request): JsonResponse
+    {
+        try {
+            $user = auth('sanctum')->user() ?? auth()->user();
+            if (!$user) {
+                return $this->error('Unauthorized.', 401);
+            }
+
+            if ((int) $user->role !== 1) {
+                return $this->error('Only providers can pay platform dues.', 403);
+            }
+
+            // CRITICAL: If Flutter already completed payment in Tap SDK and sent charge_id
+            $incomingChargeId = $request->input('charge_id') ?: $request->input('chargeId') ?: $request->input('tap_id') ?: $request->input('id');
+            if (!empty($incomingChargeId) && is_string($incomingChargeId) && (str_starts_with($incomingChargeId, 'chg_') || str_starts_with($incomingChargeId, 'tap_'))) {
+                return $this->verifyTapPayment($request);
+            }
+
+            $currentDue = (float) ($user->payment_due ?? 0.0);
+            if ($currentDue <= 0) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'You do not have any pending platform dues to pay.',
+                ], 400);
+            }
+
+            $amountToPay = $request->filled('amount') ? (float) $request->amount : $currentDue;
+            if ($amountToPay <= 0) {
+                $amountToPay = $currentDue;
+            }
+            if ($amountToPay > $currentDue) {
+                $amountToPay = $currentDue;
+            }
+
+            $chargeData = null;
+            $chargeId = null;
+            $chargeStatus = null;
+
+            if ($request->filled('charge_id')) {
+                $chargeId = $request->input('charge_id');
+                $chargeData = $this->tapPaymentService->retrieveCharge($chargeId);
+                $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            } elseif ($request->filled('token')) {
+                $token = $request->input('token');
+                $secretKey = config('services.tap.secret_key');
+                if (empty($secretKey)) {
+                    throw new \RuntimeException('Tap Payments API Secret Key is not configured.');
+                }
+
+                $phoneDigits = preg_replace('/\D/', '', $user->phone ?? '500000000');
+                if (strlen($phoneDigits) > 9) {
+                    $phoneDigits = substr($phoneDigits, -9);
+                }
+
+                $refCode = 'AZHL-DUE-' . date('YmdHis') . '-' . $user->id;
+
+                $payload = [
+                    'amount' => $amountToPay,
+                    'currency' => 'SAR',
+                    'customer' => [
+                        'first_name' => $user->name ?? 'Provider',
+                        'email' => $user->email ?? 'provider@azhlksa.com',
+                        'phone' => [
+                            'country_code' => '966',
+                            'number' => $phoneDigits,
+                        ],
+                    ],
+                    'source' => [
+                        'id' => $token,
+                    ],
+                    'description' => "Azhl Commission Dues Clearance #{$user->id}",
+                    'statement_descriptor' => 'Azhal App Dues',
+                    'metadata' => [
+                        'provider_id' => (string) $user->id,
+                        'user_id' => (string) $user->id,
+                        'type' => 'commission_repayment',
+                        'reference_code' => $refCode,
+                    ],
+                ];
+
+                $response = Http::withHeaders([
+                    'Authorization' => "Bearer {$secretKey}",
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ])->post('https://api.tap.company/v2/charges', $payload);
+
+                $chargeData = $response->json();
+
+                if (!$response->successful() || !empty($chargeData['errors'])) {
+                    $errorMessage = $chargeData['errors'][0]['description'] ?? 'Apple Pay charge failed via Tap.';
+                    return response()->json([
+                        'status' => false,
+                        'message' => $errorMessage,
+                        'charge_data' => $chargeData,
+                    ], 400);
+                }
+
+                $chargeId = $chargeData['id'] ?? null;
+                $chargeStatus = strtoupper($chargeData['status'] ?? 'UNKNOWN');
+            } else {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Either token or charge_id is required.',
+                ], 422);
+            }
+
+            if ($chargeStatus !== 'CAPTURED') {
+                return response()->json([
+                    'status' => false,
+                    'message' => "Payment not captured. Status: {$chargeStatus}",
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'status' => strtolower((string) $chargeStatus),
+                    ],
+                ], 400);
+            }
+
+            // Atomic Settlement & Instant Unblock
+            return DB::transaction(function () use ($user, $amountToPay, $chargeId, $chargeData) {
+                $user = User::where('id', $user->id)->lockForUpdate()->first();
+                $previousDue = (float) ($user->payment_due ?? 0.0);
+                $newDue = max(0.0, round($previousDue - $amountToPay, 2));
+
+                $user->payment_due = $newDue;
+                $threshold = (float) ($user->max_due_threshold ?? 25.00);
+                if ($newDue < $threshold) {
+                    $user->is_due_blocked = 0;
+                }
+                $user->save();
+
+                $refCode = $chargeData['metadata']['reference_code'] ?? ('AZHL-DUE-' . $user->id . '-' . time());
+
+                // 1. Audit repayment
+                ProviderCommissionRepayment::create([
+                    'provider_id' => $user->id,
+                    'tap_charge_id' => $chargeId,
+                    'transaction_reference' => $refCode,
+                    'amount_paid' => $amountToPay,
+                    'payment_method' => 'apple_pay',
+                    'status' => 'verified',
+                    'verified_at' => now(),
+                    'gateway_response' => $chargeData,
+                ]);
+
+                // 2. Audit ledger
+                ProviderDuesLedger::create([
+                    'provider_id' => $user->id,
+                    'order_id' => null,
+                    'type' => 'credit_online_payment',
+                    'amount' => $amountToPay,
+                    'previous_due' => $previousDue,
+                    'current_due' => $newDue,
+                    'notes' => "Cleared dues via Native Apple Pay (Charge {$chargeId}). Instant Auto-unblock.",
+                ]);
+
+                // 3. Create captured Payment record
+                Payment::create([
+                    'user_id' => $user->id,
+                    'provider_id' => $user->id,
+                    'amount' => $amountToPay,
+                    'currency' => 'SAR',
+                    'gateway' => 'tap',
+                    'status' => 'captured',
+                    'tap_charge_id' => $chargeId,
+                    'gateway_response' => $chargeData,
+                ]);
+
+                // 4. Instant FCM Notification
+                if (!empty($user->fcm_token)) {
+                    try {
+                        dispatch(new SendFcmTokenNotificationJob([$user->fcm_token], [
+                            'title' => 'تم سداد المستحقات بنجاح | Dues Cleared',
+                            'body' => "تم تسوية عمولة أزهل بقيمة {$amountToPay} ر.س بنجاح عبر Apple Pay وإلغاء حظر حسابك فوراً.",
+                            'data' => [
+                                'type' => 'commission_repayment_confirmed',
+                                'charge_id' => (string) $chargeId,
+                                'amount_paid' => (string) $amountToPay,
+                                'new_due' => (string) $newDue,
+                                'is_due_blocked' => (string) ($user->is_due_blocked ?? 0),
+                            ],
+                        ]));
+                    } catch (\Throwable $e) {
+                        Log::warning("chargeApplePayDues FCM dispatch error: " . $e->getMessage());
+                    }
+                }
+
+                return response()->json([
+                    'status' => true,
+                    'code' => 200,
+                    'message' => 'Dues settled successfully via Apple Pay. Account unblocked.',
+                    'data' => [
+                        'charge_id' => $chargeId,
+                        'amount_paid' => $amountToPay,
+                        'currency' => 'SAR',
+                        'payment_due' => $newDue,
+                        'is_due_blocked' => (int) ($user->is_due_blocked ?? 0),
+                        'is_blocked' => (bool) (($newDue >= $threshold) || ((int) $user->is_due_blocked === 1)),
+                    ],
+                ], 200);
+            });
+        } catch (\Throwable $e) {
+            Log::error('OrderPaymentMethodController chargeApplePayDues error: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to process Apple Pay dues payment: ' . $e->getMessage(),
+            ], 500);
         }
     }
 

@@ -695,9 +695,15 @@ class PaymentController extends Controller
                         $phoneDigits = substr($phoneDigits, -9);
                     }
 
+                    $merchantId = (string) (config('services.tap.merchant_id') ?: '68066910');
+
                     $payload = [
+                        'merchant' => [
+                            'id' => $merchantId,
+                        ],
                         'amount' => $totalPayable,
                         'currency' => 'SAR',
+                        'statement_descriptor' => 'Azhl',
                         'customer' => [
                             'first_name' => $user->name ?? 'Customer',
                             'email' => $user->email ?? 'customer@azhal.app',
@@ -713,7 +719,7 @@ class PaymentController extends Controller
                             'transaction' => "PAY-{$payment->id}",
                             'order' => "JOB-{$job->id}",
                         ],
-                        'description' => "Azhal Job #{$job->id} payment via Apple Pay",
+                        'description' => 'Azhl',
                         'metadata' => [
                             'payment_id' => (string) $payment->id,
                             'job_id' => (string) $job->id,

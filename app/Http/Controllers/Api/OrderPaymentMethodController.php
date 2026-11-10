@@ -510,10 +510,15 @@ class OrderPaymentMethodController extends Controller
                 }
 
                 $refCode = 'AZHL-DUE-' . date('YmdHis') . '-' . $user->id;
+                $merchantId = (string) (config('services.tap.merchant_id') ?: '68066910');
 
                 $payload = [
+                    'merchant' => [
+                        'id' => $merchantId,
+                    ],
                     'amount' => $amountToPay,
                     'currency' => 'SAR',
+                    'statement_descriptor' => 'Azhl',
                     'customer' => [
                         'first_name' => $user->name ?? 'Provider',
                         'email' => $user->email ?? 'provider@azhlksa.com',
@@ -525,8 +530,11 @@ class OrderPaymentMethodController extends Controller
                     'source' => [
                         'id' => $token,
                     ],
-                    'description' => "Azhl Commission Dues Clearance #{$user->id}",
-                    'statement_descriptor' => 'Azhal App Dues',
+                    'reference' => [
+                        'transaction' => "PAY-DUE-{$user->id}-" . time(),
+                        'order' => "DUES-{$user->id}",
+                    ],
+                    'description' => 'Azhl',
                     'metadata' => [
                         'provider_id' => (string) $user->id,
                         'user_id' => (string) $user->id,

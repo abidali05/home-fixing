@@ -54,13 +54,18 @@ class TapPaymentService
         $paymentType = $gwRespMeta['type'] ?? ($payment->job_id ? 'job_payment' : ($payment->marketplace_order_id ? 'marketplace_payment' : 'commission_repayment'));
         $refCode = $gwRespMeta['reference_code'] ?? "PAY-{$payment->id}";
 
+        $merchantId = (string) (config('services.tap.merchant_id') ?: '68066910');
+
         $payload = [
+            'merchant' => [
+                'id' => $merchantId,
+            ],
             'amount' => (float) $payment->amount,
             'currency' => strtoupper($payment->currency ?: 'SAR'),
             'threeDSecure' => true,
             'save_card' => false,
-            'description' => $payment->job_id ? "Payment for Job #{$payment->job_id} (Bid #{$payment->bid_id})" : "Provider Platform Dues Clearance #{$payment->id}",
-            'statement_descriptor' => $payment->job_id ? "AZHL JOB {$payment->job_id}" : "AZHL DUES {$payment->id}",
+            'description' => 'Azhl',
+            'statement_descriptor' => 'Azhl',
             'metadata' => [
                 'payment_id' => (string) $payment->id,
                 'job_id' => (string) ($payment->job_id ?? ''),
@@ -180,14 +185,18 @@ class TapPaymentService
         }
 
         $orderNumber = $order ? $order->order_number : ("CART-{$payment->id}");
+        $merchantId = (string) (config('services.tap.merchant_id') ?: '68066910');
 
         $payload = [
+            'merchant' => [
+                'id' => $merchantId,
+            ],
             'amount' => (float) $payment->amount,
             'currency' => strtoupper($payment->currency ?: 'SAR'),
             'threeDSecure' => true,
             'save_card' => false,
-            'description' => $order ? "Payment for Marketplace Order #{$order->order_number}" : "Payment for Marketplace Cart Checkout #{$payment->id}",
-            'statement_descriptor' => "AZHL MARKETPLACE",
+            'description' => 'Azhl',
+            'statement_descriptor' => 'Azhl',
             'metadata' => [
                 'payment_id' => (string) $payment->id,
                 'marketplace_order_id' => $order ? (string) $order->id : '',

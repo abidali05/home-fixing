@@ -2,6 +2,34 @@
 
 @section('title', 'System Settings & Financial Configuration')
 
+@push('css')
+    <style>
+        .tab-content .tab-pane {
+            display: none !important;
+        }
+        .tab-content .tab-pane.active {
+            display: block !important;
+        }
+        .nav-tabs .nav-link {
+            color: #64748b;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 0.65rem 1.1rem;
+            font-size: 0.88rem;
+        }
+        .nav-tabs .nav-link:hover {
+            color: #4F2396;
+            border-bottom: 2px solid #cbd5e1;
+        }
+        .nav-tabs .nav-link.active {
+            color: #4F2396 !important;
+            font-weight: 700 !important;
+            border-bottom: 2px solid #4F2396 !important;
+            background: transparent !important;
+        }
+    </style>
+@endpush
+
 @section('content')
     <main class="main-content position-relative border-radius-lg">
         <div class="container-fluid py-4">
@@ -74,7 +102,7 @@
                             </ul>
                         </div>
 
-                        <div class="card-body px-4 pt-4 pb-4">
+                        <div class="card-body px-4 pt-3 pb-4">
                             <div class="tab-content" id="settingsTabsContent">
 
                                 {{-- Main Settings Form (General, Commissions, Gateway, Referral) --}}

@@ -2,12 +2,12 @@
 
 @section('title', 'System Settings & Financial Configuration')
 
-@push('css')
+@push('styles')
     <style>
-        .tab-content .tab-pane {
+        .tab-content > .tab-pane {
             display: none !important;
         }
-        .tab-content .tab-pane.active {
+        .tab-content > .tab-pane.active {
             display: block !important;
         }
         .nav-tabs .nav-link {
@@ -30,7 +30,33 @@
     </style>
 @endpush
 
+@push('css')
+    <style>
+        .tab-content > .tab-pane {
+            display: none !important;
+        }
+        .tab-content > .tab-pane.active {
+            display: block !important;
+        }
+    </style>
+@endpush
+
 @section('content')
+    <style>
+        .tab-content > .tab-pane {
+            display: none !important;
+        }
+        .tab-content > .tab-pane.active {
+            display: block !important;
+        }
+        .settings-tab-pane {
+            display: none !important;
+        }
+        .settings-tab-pane.active {
+            display: block !important;
+        }
+    </style>
+
     <main class="main-content position-relative border-radius-lg">
         <div class="container-fluid py-4">
 
@@ -102,211 +128,211 @@
                             </ul>
                         </div>
 
+                        {{-- Main Global Settings Form --}}
+                        <form action="{{ route('settings.update') }}" method="POST" enctype="multipart/form-data" id="mainSettingsForm">
+                            @csrf
+                            <input type="hidden" name="azhl_fee" value="{{ $settings->azhl_fee ?? 5.00 }}">
+                        </form>
+
                         <div class="card-body px-4 pt-3 pb-4">
                             <div class="tab-content" id="settingsTabsContent">
 
-                                {{-- Main Settings Form (General, Commissions, Gateway, Referral) --}}
-                                <form action="{{ route('settings.update') }}" method="POST" enctype="multipart/form-data" id="mainSettingsForm">
-                                    @csrf
-                                    <input type="hidden" name="azhl_fee" value="{{ $settings->azhl_fee ?? 5.00 }}">
-
-                                    {{-- 1. General Settings Tab --}}
-                                    <div class="tab-pane fade show active" id="general-pane" role="tabpanel">
-                                        <div class="row g-3">
-                                            <div class="col-md-6">
-                                                <label for="system_name" class="form-label text-dark font-weight-bold text-xs">System Name <span class="text-danger">*</span></label>
-                                                <input type="text" class="form-control @error('system_name') is-invalid @enderror"
-                                                    name="system_name" id="system_name"
-                                                    value="{{ old('system_name', $settings->system_name ?? 'Azhl') }}" required>
-                                                <small class="text-muted text-xs">The public application and brand name.</small>
-                                                @error('system_name') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                            </div>
-
-                                            <div class="col-md-6">
-                                                <label for="currency" class="form-label text-dark font-weight-bold text-xs">Default Currency <span class="text-danger">*</span></label>
-                                                <select name="currency" id="currency" class="form-select @error('currency') is-invalid @enderror" required>
-                                                    <option value="SAR" {{ old('currency', $settings->currency ?? 'SAR') == 'SAR' ? 'selected' : '' }}>SAR - Saudi Riyal</option>
-                                                    <option value="USD" {{ old('currency', $settings->currency ?? '') == 'USD' ? 'selected' : '' }}>USD - US Dollar</option>
-                                                    <option value="PKR" {{ old('currency', $settings->currency ?? '') == 'PKR' ? 'selected' : '' }}>PKR - Pakistani Rupee</option>
-                                                </select>
-                                                <small class="text-muted text-xs">Primary currency used for all transactions.</small>
-                                                @error('currency') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                            </div>
-
-                                            <div class="col-md-6">
-                                                <label for="payment_method" class="form-label text-dark font-weight-bold text-xs">Default Payment Method <span class="text-danger">*</span></label>
-                                                <select name="payment_method" id="payment_method" class="form-select @error('payment_method') is-invalid @enderror" required>
-                                                    <option value="applepay" {{ old('payment_method', $settings->payment_method ?? 'applepay') == 'applepay' ? 'selected' : '' }}>Apple Pay & Cards (Tap Payments)</option>
-                                                    <option value="tap" {{ old('payment_method', $settings->payment_method ?? '') == 'tap' ? 'selected' : '' }}>Tap Payments (Gateway)</option>
-                                                    <option value="cash" {{ old('payment_method', $settings->payment_method ?? '') == 'cash' ? 'selected' : '' }}>Cash on Delivery</option>
-                                                </select>
-                                                <small class="text-muted text-xs">Default payment gateway activated for mobile checkout.</small>
-                                                @error('payment_method') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                            </div>
-
-                                            <div class="col-md-6">
-                                                <label for="system_logo" class="form-label text-dark font-weight-bold text-xs">System Logo</label>
-                                                <input type="file" class="form-control @error('logo') is-invalid @enderror"
-                                                    name="logo" id="system_logo" accept="image/*">
-                                                <small class="text-muted text-xs">Upload PNG, JPG, or SVG logo (max 2MB).</small>
-                                                @error('logo') <div class="invalid-feedback">{{ $message }}</div> @enderror
-
-                                                @if (!empty($settings->logo))
-                                                    <div class="mt-2 p-2 border rounded bg-light d-inline-flex align-items-center gap-2">
-                                                        <img src="{{ asset('uploads/system_settings/' . $settings->logo) }}" alt="Logo" id="logoPreview" style="max-height: 40px; max-width: 120px;" class="img-fluid">
-                                                        <small class="text-muted text-xs">Current Logo</small>
-                                                    </div>
-                                                @endif
-                                            </div>
+                                {{-- 1. General Settings Tab (Direct child of tab-content) --}}
+                                <div class="tab-pane fade show active settings-tab-pane" id="general-pane" role="tabpanel">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="system_name" class="form-label text-dark font-weight-bold text-xs">System Name <span class="text-danger">*</span></label>
+                                            <input form="mainSettingsForm" type="text" class="form-control @error('system_name') is-invalid @enderror"
+                                                name="system_name" id="system_name"
+                                                value="{{ old('system_name', $settings->system_name ?? 'Azhl') }}" required>
+                                            <small class="text-muted text-xs">The public application and brand name.</small>
+                                            @error('system_name') <div class="invalid-feedback">{{ $message }}</div> @enderror
                                         </div>
 
-                                        <div class="mt-4 pt-3 border-top d-flex justify-content-end">
-                                            <button type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
-                                                <i class="bi bi-check-lg me-1"></i> Save General Settings
-                                            </button>
+                                        <div class="col-md-6">
+                                            <label for="currency" class="form-label text-dark font-weight-bold text-xs">Default Currency <span class="text-danger">*</span></label>
+                                            <select form="mainSettingsForm" name="currency" id="currency" class="form-select @error('currency') is-invalid @enderror" required>
+                                                <option value="SAR" {{ old('currency', $settings->currency ?? 'SAR') == 'SAR' ? 'selected' : '' }}>SAR - Saudi Riyal</option>
+                                                <option value="USD" {{ old('currency', $settings->currency ?? '') == 'USD' ? 'selected' : '' }}>USD - US Dollar</option>
+                                                <option value="PKR" {{ old('currency', $settings->currency ?? '') == 'PKR' ? 'selected' : '' }}>PKR - Pakistani Rupee</option>
+                                            </select>
+                                            <small class="text-muted text-xs">Primary currency used for all transactions.</small>
+                                            @error('currency') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
+
+                                        <div class="col-md-6">
+                                            <label for="payment_method" class="form-label text-dark font-weight-bold text-xs">Default Payment Method <span class="text-danger">*</span></label>
+                                            <select form="mainSettingsForm" name="payment_method" id="payment_method" class="form-select @error('payment_method') is-invalid @enderror" required>
+                                                <option value="applepay" {{ old('payment_method', $settings->payment_method ?? 'applepay') == 'applepay' ? 'selected' : '' }}>Apple Pay & Cards (Tap Payments)</option>
+                                                <option value="tap" {{ old('payment_method', $settings->payment_method ?? '') == 'tap' ? 'selected' : '' }}>Tap Payments (Gateway)</option>
+                                                <option value="cash" {{ old('payment_method', $settings->payment_method ?? '') == 'cash' ? 'selected' : '' }}>Cash on Delivery</option>
+                                            </select>
+                                            <small class="text-muted text-xs">Default payment gateway activated for mobile checkout.</small>
+                                            @error('payment_method') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
+
+                                        <div class="col-md-6">
+                                            <label for="system_logo" class="form-label text-dark font-weight-bold text-xs">System Logo</label>
+                                            <input form="mainSettingsForm" type="file" class="form-control @error('logo') is-invalid @enderror"
+                                                name="logo" id="system_logo" accept="image/*">
+                                            <small class="text-muted text-xs">Upload PNG, JPG, or SVG logo (max 2MB).</small>
+                                            @error('logo') <div class="invalid-feedback">{{ $message }}</div> @enderror
+
+                                            @if (!empty($settings->logo))
+                                                <div class="mt-2 p-2 border rounded bg-light d-inline-flex align-items-center gap-2">
+                                                    <img src="{{ asset('uploads/system_settings/' . $settings->logo) }}" alt="Logo" id="logoPreview" style="max-height: 40px; max-width: 120px;" class="img-fluid">
+                                                    <small class="text-muted text-xs">Current Logo</small>
+                                                </div>
+                                            @endif
                                         </div>
                                     </div>
 
-                                    {{-- 2. Commissions & Platform Fees Tab --}}
-                                    <div class="tab-pane fade" id="commissions-pane" role="tabpanel">
-                                        <div class="row g-4">
-                                            {{-- Services Section --}}
-                                            <div class="col-lg-6">
-                                                <div class="p-3 border rounded bg-light h-100">
-                                                    <h6 class="text-dark font-weight-bold mb-1">
-                                                        <i class="bi bi-tools text-primary me-1"></i> Customer Maintenance & Repair Services
-                                                    </h6>
-                                                    <p class="text-muted text-xs mb-3">Commissions and customer app charges applied on service jobs.</p>
+                                    <div class="mt-4 pt-3 border-top d-flex justify-content-end">
+                                        <button form="mainSettingsForm" type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
+                                            <i class="bi bi-check-lg me-1"></i> Save Settings
+                                        </button>
+                                    </div>
+                                </div>
 
-                                                    <div class="mb-3">
-                                                        <label for="azhl_percentage" class="form-label text-dark font-weight-bold text-xs">Provider Commission Fee (%) <span class="text-danger">*</span></label>
-                                                        <div class="input-group">
-                                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('azhl_percentage') is-invalid @enderror"
-                                                                name="azhl_percentage" id="azhl_percentage"
-                                                                value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 5.00) }}" placeholder="5.00" required>
-                                                            <span class="input-group-text">%</span>
-                                                        </div>
-                                                        <small class="text-muted text-xs">Percentage deducted from provider's service earnings per job.</small>
-                                                        @error('azhl_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
-                                                    </div>
+                                {{-- 2. Commissions & Platform Fees Tab (Direct child of tab-content) --}}
+                                <div class="tab-pane fade settings-tab-pane" id="commissions-pane" role="tabpanel">
+                                    <div class="row g-4">
+                                        {{-- Services Section --}}
+                                        <div class="col-lg-6">
+                                            <div class="p-3 border rounded bg-light h-100">
+                                                <h6 class="text-dark font-weight-bold mb-1">
+                                                    <i class="bi bi-tools text-primary me-1"></i> Customer Maintenance & Repair Services
+                                                </h6>
+                                                <p class="text-muted text-xs mb-3">Commissions and customer app charges applied on service jobs.</p>
 
-                                                    <div class="mb-2">
-                                                        <label for="customer_app_fee" class="form-label text-dark font-weight-bold text-xs">Customer App Service Fee (SAR) <span class="text-danger">*</span></label>
-                                                        <div class="input-group">
-                                                            <input type="number" step="0.01" min="0" class="form-control @error('customer_app_fee') is-invalid @enderror"
-                                                                name="customer_app_fee" id="customer_app_fee"
-                                                                value="{{ old('customer_app_fee', $settings->customer_app_fee ?? 0.00) }}" placeholder="0.00" required>
-                                                            <span class="input-group-text">SAR</span>
-                                                        </div>
-                                                        <small class="text-muted text-xs">Fixed fee added to customer's repair total at checkout.</small>
-                                                        @error('customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                                <div class="mb-3">
+                                                    <label for="azhl_percentage" class="form-label text-dark font-weight-bold text-xs">Provider Commission Fee (%) <span class="text-danger">*</span></label>
+                                                    <div class="input-group">
+                                                        <input form="mainSettingsForm" type="number" step="0.01" min="0" max="100" class="form-control @error('azhl_percentage') is-invalid @enderror"
+                                                            name="azhl_percentage" id="azhl_percentage"
+                                                            value="{{ old('azhl_percentage', $settings->azhl_percentage ?? 5.00) }}" placeholder="5.00" required>
+                                                        <span class="input-group-text">%</span>
                                                     </div>
+                                                    <small class="text-muted text-xs">Percentage deducted from provider's service earnings per job.</small>
+                                                    @error('azhl_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                                 </div>
-                                            </div>
 
-                                            {{-- Marketplace Section --}}
-                                            <div class="col-lg-6">
-                                                <div class="p-3 border rounded bg-light h-100">
-                                                    <h6 class="text-dark font-weight-bold mb-1">
-                                                        <i class="bi bi-shop text-success me-1"></i> Marketplace Product Sales
-                                                    </h6>
-                                                    <p class="text-muted text-xs mb-3">Commissions and customer app charges applied on marketplace items.</p>
-
-                                                    <div class="mb-3">
-                                                        <label for="marketplace_commission_percentage" class="form-label text-dark font-weight-bold text-xs">Seller Commission Fee (%) <span class="text-danger">*</span></label>
-                                                        <div class="input-group">
-                                                            <input type="number" step="0.01" min="0" max="100" class="form-control @error('marketplace_commission_percentage') is-invalid @enderror"
-                                                                name="marketplace_commission_percentage" id="marketplace_commission_percentage"
-                                                                value="{{ old('marketplace_commission_percentage', $settings->marketplace_commission_percentage ?? 10.00) }}" placeholder="10.00" required>
-                                                            <span class="input-group-text">%</span>
-                                                        </div>
-                                                        <small class="text-muted text-xs">Percentage deducted from seller product subtotal.</small>
-                                                        @error('marketplace_commission_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                                <div class="mb-2">
+                                                    <label for="customer_app_fee" class="form-label text-dark font-weight-bold text-xs">Customer App Service Fee (SAR) <span class="text-danger">*</span></label>
+                                                    <div class="input-group">
+                                                        <input form="mainSettingsForm" type="number" step="0.01" min="0" class="form-control @error('customer_app_fee') is-invalid @enderror"
+                                                            name="customer_app_fee" id="customer_app_fee"
+                                                            value="{{ old('customer_app_fee', $settings->customer_app_fee ?? 0.00) }}" placeholder="0.00" required>
+                                                        <span class="input-group-text">SAR</span>
                                                     </div>
-
-                                                    <div class="mb-2">
-                                                        <label for="marketplace_customer_app_fee" class="form-label text-dark font-weight-bold text-xs">Marketplace App Fee (SAR) <span class="text-danger">*</span></label>
-                                                        <div class="input-group">
-                                                            <input type="number" step="0.01" min="0" class="form-control @error('marketplace_customer_app_fee') is-invalid @enderror"
-                                                                name="marketplace_customer_app_fee" id="marketplace_customer_app_fee"
-                                                                value="{{ old('marketplace_customer_app_fee', $settings->marketplace_customer_app_fee ?? 3.00) }}" placeholder="3.00" required>
-                                                            <span class="input-group-text">SAR</span>
-                                                        </div>
-                                                        <small class="text-muted text-xs">Fixed platform fee added to customer's marketplace cart checkout.</small>
-                                                        @error('marketplace_customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
-                                                    </div>
+                                                    <small class="text-muted text-xs">Fixed fee added to customer's repair total at checkout.</small>
+                                                    @error('customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                                 </div>
                                             </div>
                                         </div>
 
-                                        <div class="mt-4 pt-3 border-top d-flex justify-content-end">
-                                            <button type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
-                                                <i class="bi bi-check-lg me-1"></i> Save Commission Settings
-                                            </button>
+                                        {{-- Marketplace Section --}}
+                                        <div class="col-lg-6">
+                                            <div class="p-3 border rounded bg-light h-100">
+                                                <h6 class="text-dark font-weight-bold mb-1">
+                                                    <i class="bi bi-shop text-success me-1"></i> Marketplace Product Sales
+                                                </h6>
+                                                <p class="text-muted text-xs mb-3">Commissions and customer app charges applied on marketplace items.</p>
+
+                                                <div class="mb-3">
+                                                    <label for="marketplace_commission_percentage" class="form-label text-dark font-weight-bold text-xs">Seller Commission Fee (%) <span class="text-danger">*</span></label>
+                                                    <div class="input-group">
+                                                        <input form="mainSettingsForm" type="number" step="0.01" min="0" max="100" class="form-control @error('marketplace_commission_percentage') is-invalid @enderror"
+                                                            name="marketplace_commission_percentage" id="marketplace_commission_percentage"
+                                                            value="{{ old('marketplace_commission_percentage', $settings->marketplace_commission_percentage ?? 10.00) }}" placeholder="10.00" required>
+                                                        <span class="input-group-text">%</span>
+                                                    </div>
+                                                    <small class="text-muted text-xs">Percentage deducted from seller product subtotal.</small>
+                                                    @error('marketplace_commission_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                                </div>
+
+                                                <div class="mb-2">
+                                                    <label for="marketplace_customer_app_fee" class="form-label text-dark font-weight-bold text-xs">Marketplace App Fee (SAR) <span class="text-danger">*</span></label>
+                                                    <div class="input-group">
+                                                        <input form="mainSettingsForm" type="number" step="0.01" min="0" class="form-control @error('marketplace_customer_app_fee') is-invalid @enderror"
+                                                            name="marketplace_customer_app_fee" id="marketplace_customer_app_fee"
+                                                            value="{{ old('marketplace_customer_app_fee', $settings->marketplace_customer_app_fee ?? 3.00) }}" placeholder="3.00" required>
+                                                        <span class="input-group-text">SAR</span>
+                                                    </div>
+                                                    <small class="text-muted text-xs">Fixed platform fee added to customer's marketplace cart checkout.</small>
+                                                    @error('marketplace_customer_app_fee') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {{-- 3. Payment Gateway (Tap Payments) Tab --}}
-                                    <div class="tab-pane fade" id="gateway-pane" role="tabpanel">
-                                        <div class="row g-3">
-                                            <div class="col-md-6">
-                                                <label for="payment_gateway_fee_percentage" class="form-label text-dark font-weight-bold text-xs">Tap Gateway Processing Fee (%) <span class="text-danger">*</span></label>
-                                                <div class="input-group">
-                                                    <input type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_fee_percentage') is-invalid @enderror"
-                                                        name="payment_gateway_fee_percentage" id="payment_gateway_fee_percentage"
-                                                        value="{{ old('payment_gateway_fee_percentage', $settings->payment_gateway_fee_percentage ?? 2.50) }}" placeholder="2.50" required>
-                                                    <span class="input-group-text">%</span>
-                                                </div>
-                                                <small class="text-muted text-xs">Transaction processing rate charged by Tap Payments.</small>
-                                                @error('payment_gateway_fee_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
-                                            </div>
+                                    <div class="mt-4 pt-3 border-top d-flex justify-content-end">
+                                        <button form="mainSettingsForm" type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
+                                            <i class="bi bi-check-lg me-1"></i> Save Settings
+                                        </button>
+                                    </div>
+                                </div>
 
-                                            <div class="col-md-6">
-                                                <label for="payment_gateway_vat_percentage" class="form-label text-dark font-weight-bold text-xs">Gateway Fee VAT (%) <span class="text-danger">*</span></label>
-                                                <div class="input-group">
-                                                    <input type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_vat_percentage') is-invalid @enderror"
-                                                        name="payment_gateway_vat_percentage" id="payment_gateway_vat_percentage"
-                                                        value="{{ old('payment_gateway_vat_percentage', $settings->payment_gateway_vat_percentage ?? 15.00) }}" placeholder="15.00" required>
-                                                    <span class="input-group-text">%</span>
-                                                </div>
-                                                <small class="text-muted text-xs">Saudi VAT rate applied strictly on the payment gateway processing fee.</small>
-                                                @error('payment_gateway_vat_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+                                {{-- 3. Payment Gateway (Tap Payments) Tab (Direct child of tab-content) --}}
+                                <div class="tab-pane fade settings-tab-pane" id="gateway-pane" role="tabpanel">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="payment_gateway_fee_percentage" class="form-label text-dark font-weight-bold text-xs">Tap Gateway Processing Fee (%) <span class="text-danger">*</span></label>
+                                            <div class="input-group">
+                                                <input form="mainSettingsForm" type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_fee_percentage') is-invalid @enderror"
+                                                    name="payment_gateway_fee_percentage" id="payment_gateway_fee_percentage"
+                                                    value="{{ old('payment_gateway_fee_percentage', $settings->payment_gateway_fee_percentage ?? 2.50) }}" placeholder="2.50" required>
+                                                <span class="input-group-text">%</span>
                                             </div>
+                                            <small class="text-muted text-xs">Transaction processing rate charged by Tap Payments.</small>
+                                            @error('payment_gateway_fee_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                         </div>
 
-                                        <div class="mt-4 pt-3 border-top d-flex justify-content-end">
-                                            <button type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
-                                                <i class="bi bi-check-lg me-1"></i> Save Gateway Settings
-                                            </button>
+                                        <div class="col-md-6">
+                                            <label for="payment_gateway_vat_percentage" class="form-label text-dark font-weight-bold text-xs">Gateway Fee VAT (%) <span class="text-danger">*</span></label>
+                                            <div class="input-group">
+                                                <input form="mainSettingsForm" type="number" step="0.01" min="0" max="100" class="form-control @error('payment_gateway_vat_percentage') is-invalid @enderror"
+                                                    name="payment_gateway_vat_percentage" id="payment_gateway_vat_percentage"
+                                                    value="{{ old('payment_gateway_vat_percentage', $settings->payment_gateway_vat_percentage ?? 15.00) }}" placeholder="15.00" required>
+                                                <span class="input-group-text">%</span>
+                                            </div>
+                                            <small class="text-muted text-xs">Saudi VAT rate applied strictly on the payment gateway processing fee.</small>
+                                            @error('payment_gateway_vat_percentage') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                         </div>
                                     </div>
 
-                                    {{-- 4. Referral Rewards Tab --}}
-                                    <div class="tab-pane fade" id="referral-pane" role="tabpanel">
-                                        <div class="row g-3">
-                                            <div class="col-md-6">
-                                                <label for="referral_amount" class="form-label text-dark font-weight-bold text-xs">Referral Bonus Reward (SAR) <span class="text-danger">*</span></label>
-                                                <div class="input-group">
-                                                    <input type="number" step="0.01" min="0" class="form-control @error('referral_amount') is-invalid @enderror"
-                                                        name="referral_amount" id="referral_amount"
-                                                        value="{{ old('referral_amount', $settings->referral_amount ?? 10.00) }}" placeholder="10.00" required>
-                                                    <span class="input-group-text">SAR</span>
-                                                </div>
-                                                <small class="text-muted text-xs">Bonus credited to user wallet balance when a referred friend completes an order.</small>
-                                                @error('referral_amount') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
-                                            </div>
-                                        </div>
+                                    <div class="mt-4 pt-3 border-top d-flex justify-content-end">
+                                        <button form="mainSettingsForm" type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
+                                            <i class="bi bi-check-lg me-1"></i> Save Settings
+                                        </button>
+                                    </div>
+                                </div>
 
-                                        <div class="mt-4 pt-3 border-top d-flex justify-content-end">
-                                            <button type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
-                                                <i class="bi bi-check-lg me-1"></i> Save Referral Settings
-                                            </button>
+                                {{-- 4. Referral Rewards Tab (Direct child of tab-content) --}}
+                                <div class="tab-pane fade settings-tab-pane" id="referral-pane" role="tabpanel">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="referral_amount" class="form-label text-dark font-weight-bold text-xs">Referral Bonus Reward (SAR) <span class="text-danger">*</span></label>
+                                            <div class="input-group">
+                                                <input form="mainSettingsForm" type="number" step="0.01" min="0" class="form-control @error('referral_amount') is-invalid @enderror"
+                                                    name="referral_amount" id="referral_amount"
+                                                    value="{{ old('referral_amount', $settings->referral_amount ?? 10.00) }}" placeholder="10.00" required>
+                                                <span class="input-group-text">SAR</span>
+                                            </div>
+                                            <small class="text-muted text-xs">Bonus credited to user wallet balance when a referred friend completes an order.</small>
+                                            @error('referral_amount') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
                                         </div>
                                     </div>
-                                </form>
 
-                                {{-- 5. Mobile Banners Tab --}}
-                                <div class="tab-pane fade" id="banners-pane" role="tabpanel">
+                                    <div class="mt-4 pt-3 border-top d-flex justify-content-end">
+                                        <button form="mainSettingsForm" type="submit" class="btn btn-primary mb-0" style="background-color: #4F2396; border-color: #4F2396;">
+                                            <i class="bi bi-check-lg me-1"></i> Save Settings
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {{-- 5. Mobile Banners Tab (Direct child of tab-content) --}}
+                                <div class="tab-pane fade settings-tab-pane" id="banners-pane" role="tabpanel">
                                     {{-- Upload New Banner Form --}}
                                     <form action="{{ route('mobile_banners.update') }}" method="POST" enctype="multipart/form-data" class="p-3 border rounded bg-light mb-4">
                                         @csrf
@@ -435,5 +461,22 @@
                 }
             });
         }
+
+        // Failsafe JavaScript Tab Switcher (Ensures exact inline display styling)
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabButtons = document.querySelectorAll('#settingsTabs button[data-bs-toggle="tab"]');
+            tabButtons.forEach(function(btn) {
+                btn.addEventListener('shown.bs.tab', function(e) {
+                    const targetSelector = e.target.getAttribute('data-bs-target');
+                    document.querySelectorAll('.tab-content > .tab-pane').forEach(function(pane) {
+                        pane.style.display = 'none';
+                    });
+                    const activePane = document.querySelector(targetSelector);
+                    if (activePane) {
+                        activePane.style.display = 'block';
+                    }
+                });
+            });
+        });
     </script>
 @endpush

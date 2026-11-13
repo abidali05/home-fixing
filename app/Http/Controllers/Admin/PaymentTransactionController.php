@@ -28,21 +28,27 @@ class PaymentTransactionController extends Controller
             ->orderByDesc('id')
             ->get();
 
-        $capturedPayments = $allPayments->where('status', 'captured');
-        $totalVolume = (float) $capturedPayments->sum('amount');
-        $systemEarnings = $totalVolume * ($azhlPercentage / 100);
-        $providerPayouts = max(0, $totalVolume - $systemEarnings);
+        $marketplaceCommissionPct = (float) ($settings->marketplace_commission_percentage ?? 10.00);
 
-        // Marketplace specific stats
+        $capturedPayments = $allPayments->where('status', 'captured');
+        $capturedServices = $servicePayments->where('status', 'captured');
         $capturedMarketplace = $marketplacePayments->where('status', 'captured');
+
+        $serviceVolume = (float) $capturedServices->sum('amount');
         $marketplaceVolume = (float) $capturedMarketplace->sum('amount');
-        $marketplaceEarnings = $marketplaceVolume * ($azhlPercentage / 100);
+        $totalVolume = $serviceVolume + $marketplaceVolume;
+
+        $serviceEarnings = $serviceVolume * ($azhlPercentage / 100);
+        $marketplaceEarnings = $marketplaceVolume * ($marketplaceCommissionPct / 100);
+        $systemEarnings = $serviceEarnings + $marketplaceEarnings;
+        $providerPayouts = max(0, $totalVolume - $systemEarnings);
 
         $stats = [
             'total_volume' => $totalVolume,
             'system_earnings' => $systemEarnings,
             'provider_payouts' => $providerPayouts,
             'azhl_percentage' => $azhlPercentage,
+            'marketplace_commission_percentage' => $marketplaceCommissionPct,
             'azhl_fee' => (float) ($settings->azhl_fee ?? 5.00),
             'total_transactions' => $allPayments->count(),
             'captured_count' => $capturedPayments->count(),

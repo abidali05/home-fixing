@@ -36,7 +36,7 @@
                         <div class="row">
                             <div class="col-8">
                                 <div class="numbers">
-                                    <p class="text-sm mb-0 text-uppercase font-weight-bold text-muted">Azhl Earnings ({{ number_format($stats['azhl_fee'], 2) }} SAR/Order)</p>
+                                    <p class="text-sm mb-0 text-uppercase font-weight-bold text-muted">Azhl Earnings ({{ number_format($stats['azhl_percentage'], 1) }}%)</p>
                                     <h5 class="font-weight-bolder mb-0 text-success">
                                         {{ number_format($stats['system_earnings'], 2) }} SAR
                                     </h5>
@@ -114,7 +114,7 @@
                                 </button>
                             </li>
                         </ul>
-                        <span class="badge bg-light text-dark">Azhl Fixed Fee: <strong>{{ number_format($stats['azhl_fee'], 2) }} SAR / order</strong></span>
+                        <span class="badge bg-light text-dark">Azhl Service Commission: <strong>{{ number_format($stats['azhl_percentage'], 1) }}%</strong></span>
                     </div>
 
                     <div class="card-body px-4 pt-3 pb-3">
@@ -131,7 +131,7 @@
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Provider</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Job / Bid</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Amount (Gross)</th>
-                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['azhl_fee'], 2) }} SAR)</th>
+                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['azhl_percentage'], 1) }}%)</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Tap Charge ID</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Status</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder text-center">Action</th>
@@ -142,7 +142,9 @@
                                                 @php
                                                     $isCaptured = strtolower($payment->status) === 'captured';
                                                     $grossAmount = (float) $payment->amount;
-                                                    $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
+                                                    $jobOrder = $payment->job_id ? \App\Models\Orders::where('job_id', $payment->job_id)->first() : null;
+                                                    $pct = (float) ($jobOrder->azhl_percentage ?? $stats['azhl_percentage'] ?? 5.00);
+                                                    $azhlCut = $isCaptured ? ($jobOrder && (float) $jobOrder->azhl_fee > 0 ? (float) $jobOrder->azhl_fee : round($grossAmount * ($pct / 100), 2)) : 0;
                                                 @endphp
                                                 <tr>
                                                     <td>
@@ -205,7 +207,7 @@
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Customer</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Marketplace Order</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Amount (Gross)</th>
-                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['azhl_fee'], 2) }} SAR)</th>
+                                                <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Azhl Fee ({{ number_format($stats['marketplace_commission_percentage'] ?? 10.00, 1) }}%)</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Tap Charge ID</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder">Status</th>
                                                 <th class="text-uppercase text-secondary text-xxs font-weight-bolder text-center">Action</th>
@@ -216,7 +218,8 @@
                                                 @php
                                                     $isCaptured = strtolower($payment->status) === 'captured';
                                                     $grossAmount = (float) $payment->amount;
-                                                    $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
+                                                    $mkCommissionPct = (float) ($stats['marketplace_commission_percentage'] ?? 10.00);
+                                                    $azhlCut = $isCaptured ? round($grossAmount * ($mkCommissionPct / 100), 2) : 0;
                                                     $mkOrder = $payment->marketplaceOrder;
                                                 @endphp
                                                 <tr>
@@ -279,7 +282,15 @@
             @php
                 $isCaptured = strtolower($payment->status) === 'captured';
                 $grossAmount = (float) $payment->amount;
-                $azhlCut = $isCaptured ? min($grossAmount, $stats['azhl_fee']) : 0;
+                $isMarketplace = !empty($payment->marketplace_order_id);
+                if ($isMarketplace) {
+                    $appliedPct = (float) ($stats['marketplace_commission_percentage'] ?? 10.00);
+                    $azhlCut = $isCaptured ? round($grossAmount * ($appliedPct / 100), 2) : 0;
+                } else {
+                    $jobOrder = $payment->job_id ? \App\Models\Orders::where('job_id', $payment->job_id)->first() : null;
+                    $appliedPct = (float) ($jobOrder->azhl_percentage ?? $stats['azhl_percentage'] ?? 5.00);
+                    $azhlCut = $isCaptured ? ($jobOrder && (float) $jobOrder->azhl_fee > 0 ? (float) $jobOrder->azhl_fee : round($grossAmount * ($appliedPct / 100), 2)) : 0;
+                }
                 $providerCut = max(0, $grossAmount - $azhlCut);
             @endphp
             <div class="modal fade text-start" id="paymentModal{{ $payment->id }}" tabindex="-1" aria-hidden="true">
@@ -307,7 +318,7 @@
                                 </div>
                                 <hr class="my-2">
                                 <div class="col-6">
-                                    <small class="text-muted d-block">Azhl Fixed Fee (SAR)</small>
+                                    <small class="text-muted d-block">Azhl Commission ({{ number_format($appliedPct, 1) }}%)</small>
                                     <strong class="text-success">+{{ number_format($azhlCut, 2) }} SAR</strong>
                                 </div>
                                 <div class="col-6">

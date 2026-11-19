@@ -138,9 +138,9 @@ class GeneralContoller extends Controller
                 ->whereIn('id', $topCategoryIds)
                 ->get()
                 ->map(function ($service) {
-                    $service->name_en = $service->name;
+                    $service->name_en = (string) ($service->getRawOriginal('name') ?? $service->name);
                     $service->name = $service->getLocalizedName();
-                    $service->path = $service->path ? asset('uploads/service_category/' . $service->path) : asset('assets/img/default.jpg');
+                    $service->path = $service->path ? (str_starts_with($service->path, 'http') ? $service->path : asset('uploads/service_category/' . $service->path)) : asset('assets/img/default.jpg');
                     return $service;
                 });
 
@@ -164,6 +164,8 @@ class GeneralContoller extends Controller
                     $serviceCategories = $this->getProviderServiceCategories($provider);
                     $provider->categories = ServiceCategoryModel::whereIn('id', $serviceCategories)->get()
                         ->map(function ($cat) {
+                            $cat->name_en = (string) ($cat->getRawOriginal('name') ?? $cat->name);
+                            $cat->name = $cat->getLocalizedName();
                             $cat->path = $cat->path && !str_starts_with($cat->path, 'http')
                                 ? asset('uploads/service_category/' . $cat->path)
                                 : $cat->path;
@@ -192,8 +194,15 @@ class GeneralContoller extends Controller
                     $serviceIds = $this->resolveCategoryIds(optional($marketplace->marketplaceProfile)->service_category);
                     $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
-                        ->get(['id', 'name'])
-                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
+                        ->get(['id', 'name', 'name_ar', 'name_ur', 'path'])
+                        ->map(fn($s) => [
+                            'id' => $s->id,
+                            'name' => $s->getLocalizedName(),
+                            'name_en' => (string) ($s->getRawOriginal('name') ?? $s->name),
+                            'name_ar' => $s->name_ar,
+                            'name_ur' => $s->name_ur,
+                            'path' => $s->path ? (str_starts_with($s->path, 'http') ? $s->path : asset('uploads/service_category/' . $s->path)) : asset('assets/img/default.jpg'),
+                        ])
                         ->values();
                     return $marketplace;
                 });
@@ -335,9 +344,9 @@ class GeneralContoller extends Controller
     {
         try {
             $data = ServiceCategoryModel::select('id', 'name', 'name_ar', 'name_ur', 'path')->get()->map(function ($service) {
-                $service->name_en = $service->name;
+                $service->name_en = (string) ($service->getRawOriginal('name') ?? $service->name);
                 $service->name = $service->getLocalizedName();
-                $service->path = $service->path ? asset('uploads/service_category/' . $service->path) : asset('assets/img/default.jpg');
+                $service->path = $service->path ? (str_starts_with($service->path, 'http') ? $service->path : asset('uploads/service_category/' . $service->path)) : asset('assets/img/default.jpg');
                 return $service;
             });
             return $this->success($data, 'All services fetched successfully');
@@ -381,6 +390,8 @@ class GeneralContoller extends Controller
                 $serviceCategories = $this->getProviderServiceCategories($provider);
                 $provider->categories = !empty($serviceCategories)
                     ? ServiceCategoryModel::whereIn('id', $serviceCategories)->get()->map(function ($cat) {
+                        $cat->name_en = (string) ($cat->getRawOriginal('name') ?? $cat->name);
+                        $cat->name = $cat->getLocalizedName();
                         $cat->path = $cat->path && !str_starts_with($cat->path, 'http')
                             ? asset('uploads/service_category/' . $cat->path)
                             : $cat->path;
@@ -454,8 +465,10 @@ class GeneralContoller extends Controller
                         $serviceIds = $this->getProviderServiceCategories($provider);
                         $providerProfile->services = ServiceCategoryModel::query()
                             ->whereIn('id', $serviceIds)
-                            ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                            ->get(['id', 'name', 'name_ar', 'name_ur', 'path', 'created_at', 'updated_at'])
                             ->map(function ($category) {
+                                $category->name_en = (string) ($category->getRawOriginal('name') ?? $category->name);
+                                $category->name = $category->getLocalizedName();
                                 $category->path = $category->path && !str_starts_with($category->path, 'http')
                                     ? asset('uploads/service_category/' . $category->path)
                                     : $category->path;
@@ -495,6 +508,8 @@ class GeneralContoller extends Controller
 
                     $provider->categories = ServiceCategoryModel::whereIn('id', $serviceIds)->get()
                         ->map(function ($category) {
+                            $category->name_en = (string) ($category->getRawOriginal('name') ?? $category->name);
+                            $category->name = $category->getLocalizedName();
                             $category->path = $category->path && !str_starts_with($category->path, 'http')
                                 ? asset('uploads/service_category/' . $category->path)
                                 : $category->path;
@@ -552,9 +567,17 @@ class GeneralContoller extends Controller
         }
 
         try {
-            $services = ServiceCategoryModel::where('name', 'like', '%' . $request->name . '%')->get();
+            $searchTerm = trim((string) $request->name);
+            $services = ServiceCategoryModel::where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('name_ar', 'like', '%' . $searchTerm . '%')
+                  ->orWhere('name_ur', 'like', '%' . $searchTerm . '%');
+            })->get();
 
             foreach ($services as $service) {
+                $service->name_en = (string) ($service->getRawOriginal('name') ?? $service->name);
+                $service->name = $service->getLocalizedName();
+                $service->path = $service->path ? (str_starts_with($service->path, 'http') ? $service->path : asset('uploads/service_category/' . $service->path)) : asset('assets/img/default.jpg');
                 $providers = User::with('providerProfile')
                     ->whereHas('providerProfile')
                     ->where('status', 'active')

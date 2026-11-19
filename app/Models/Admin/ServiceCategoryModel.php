@@ -12,9 +12,12 @@ class ServiceCategoryModel extends Model
 
     protected $appends = ['name_en'];
 
+    /**
+     * Always return the original English name.
+     */
     public function getNameEnAttribute(): string
     {
-        return (string) ($this->attributes['name'] ?? '');
+        return (string) ($this->getRawOriginal('name') ?? $this->attributes['name'] ?? '');
     }
 
     /**
@@ -22,17 +25,29 @@ class ServiceCategoryModel extends Model
      */
     public function getLocalizedName(?string $locale = null): string
     {
-        $locale = $locale ?: request()->header('Accept-Language') ?: app()->getLocale() ?: 'en';
+        $locale = $locale ?: request()->header('Accept-Language') ?: request()->input('lang') ?: app()->getLocale() ?: 'en';
         $locale = strtolower(substr((string) $locale, 0, 2));
 
-        if ($locale === 'ar' && !empty($this->name_ar)) {
-            return $this->name_ar;
+        if ($locale === 'ar' && !empty($this->attributes['name_ar'])) {
+            return $this->attributes['name_ar'];
         }
 
-        if ($locale === 'ur' && !empty($this->name_ur)) {
-            return $this->name_ur;
+        if ($locale === 'ur' && !empty($this->attributes['name_ur'])) {
+            return $this->attributes['name_ur'];
         }
 
-        return (string) ($this->name ?? '');
+        return (string) ($this->getRawOriginal('name') ?? $this->attributes['name'] ?? '');
+    }
+
+    /**
+     * In API requests, return localized name for 'name' while preserving raw English for web/admin panel.
+     */
+    public function getNameAttribute($value)
+    {
+        if (!request()->is('api/*')) {
+            return $value;
+        }
+
+        return $this->getLocalizedName();
     }
 }

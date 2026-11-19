@@ -2033,8 +2033,15 @@ class AuthController extends Controller
 
                     $marketplace->services = ServiceCategoryModel::query()
                         ->whereIn('id', $serviceIds ?: [])
-                        ->get(['id', 'name'])
-                        ->map(fn($s) => ['id' => $s->id, 'name' => $s->name])
+                        ->get(['id', 'name', 'name_ar', 'name_ur', 'path'])
+                        ->map(fn($s) => [
+                            'id' => $s->id,
+                            'name' => $s->getLocalizedName(),
+                            'name_en' => (string) ($s->getRawOriginal('name') ?? $s->name),
+                            'name_ar' => $s->name_ar,
+                            'name_ur' => $s->name_ur,
+                            'path' => $s->path ? (str_starts_with($s->path, 'http') ? $s->path : asset('uploads/service_category/' . $s->path)) : asset('assets/img/default.jpg'),
+                        ])
                         ->values();
 
                     return $marketplace;
@@ -2112,13 +2119,15 @@ class AuthController extends Controller
 
             $marketplace->services = ServiceCategoryModel::query()
                 ->whereIn('id', $serviceIds ?: [])
-                ->get(['id', 'name'])
-                ->map(function ($service) {
-                    return [
-                        'id' => $service->id,
-                        'name' => $service->name,
-                    ];
-                })
+                ->get(['id', 'name', 'name_ar', 'name_ur', 'path'])
+                ->map(fn($s) => [
+                    'id' => $s->id,
+                    'name' => $s->getLocalizedName(),
+                    'name_en' => (string) ($s->getRawOriginal('name') ?? $s->name),
+                    'name_ar' => $s->name_ar,
+                    'name_ur' => $s->name_ur,
+                    'path' => $s->path ? (str_starts_with($s->path, 'http') ? $s->path : asset('uploads/service_category/' . $s->path)) : asset('assets/img/default.jpg'),
+                ])
                 ->values();
 
             $products = Product::query()
@@ -3593,7 +3602,13 @@ class AuthController extends Controller
             $categoryIds = $this->resolveCategoryIds($serviceCategory);
             $providerServices = ServiceCategoryModel::query()
                 ->whereIn('id', $categoryIds)
-                ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                ->get(['id', 'name', 'name_ar', 'name_ur', 'path', 'created_at', 'updated_at'])
+                ->map(function ($s) {
+                    $s->name_en = (string) ($s->getRawOriginal('name') ?? $s->name);
+                    $s->name = $s->getLocalizedName();
+                    $s->path = $s->path ? (str_starts_with($s->path, 'http') ? $s->path : asset('uploads/service_category/' . $s->path)) : asset('assets/img/default.jpg');
+                    return $s;
+                })
                 ->values();
 
             $referrerUser = $providerProfile?->referred_by_id ? User::with('providerProfile')->find($providerProfile->referred_by_id) : null;
@@ -3668,7 +3683,13 @@ class AuthController extends Controller
             $categoryIds = $this->resolveCategoryIds($serviceCategory);
             $marketPlaceServices = ServiceCategoryModel::query()
                 ->whereIn('id', $categoryIds)
-                ->get(['id', 'name', 'path', 'created_at', 'updated_at'])
+                ->get(['id', 'name', 'name_ar', 'name_ur', 'path', 'created_at', 'updated_at'])
+                ->map(function ($s) {
+                    $s->name_en = (string) ($s->getRawOriginal('name') ?? $s->name);
+                    $s->name = $s->getLocalizedName();
+                    $s->path = $s->path ? (str_starts_with($s->path, 'http') ? $s->path : asset('uploads/service_category/' . $s->path)) : asset('assets/img/default.jpg');
+                    return $s;
+                })
                 ->values();
             $shopReviews = $this->formatMarketplaceShopReviews($user->id);
 

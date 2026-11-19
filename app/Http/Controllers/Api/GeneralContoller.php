@@ -134,10 +134,12 @@ class GeneralContoller extends Controller
                 $topCategoryIds = array_merge($topCategoryIds, $randomIds);
             }
 
-            $popular_services = ServiceCategoryModel::select('id', 'name', 'path')
+            $popular_services = ServiceCategoryModel::select('id', 'name', 'name_ar', 'name_ur', 'path')
                 ->whereIn('id', $topCategoryIds)
                 ->get()
                 ->map(function ($service) {
+                    $service->name_en = $service->name;
+                    $service->name = $service->getLocalizedName();
                     $service->path = $service->path ? asset('uploads/service_category/' . $service->path) : asset('assets/img/default.jpg');
                     return $service;
                 });
@@ -332,7 +334,9 @@ class GeneralContoller extends Controller
     public function view_all_services()
     {
         try {
-            $data = ServiceCategoryModel::select('id', 'name', 'path')->get()->map(function ($service) {
+            $data = ServiceCategoryModel::select('id', 'name', 'name_ar', 'name_ur', 'path')->get()->map(function ($service) {
+                $service->name_en = $service->name;
+                $service->name = $service->getLocalizedName();
                 $service->path = $service->path ? asset('uploads/service_category/' . $service->path) : asset('assets/img/default.jpg');
                 return $service;
             });

@@ -453,7 +453,7 @@ class OrdersController extends Controller
             'order_id' => 'required|exists:orders,id',
             'provider_id' => 'required|exists:users,id',
             'rating' => 'required|numeric|min:1|max:5',
-            'review' => 'required|string',
+            'review' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
